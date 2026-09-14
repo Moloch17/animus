@@ -197,6 +197,12 @@ void Animus::BotFactory::Discard(Player* bot)
 {
     WorldSession* session = bot->GetSession();
 
+    // ~Unit asserts that every aura (passives included) is gone; this is what removing it from a map would have done.
+    // A failed placement may have set the map already.
+    bot->CleanupsBeforeDelete();
+    if (bot->FindMap())
+        bot->ResetMap();
+
     sCharacterCache->DeleteCharacterCacheEntry(bot->GetGUID(), bot->GetName());
     sSocialMgr->RemovePlayerSocial(bot->GetGUID());
 
