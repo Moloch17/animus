@@ -1,0 +1,38 @@
+#
+# mod-animus -- companions whose combat decisions come from a model trained in mod-animus-forge.
+#
+[worldserver]
+
+###################################################################################################
+# GENERAL
+#
+#    Animus.Enable
+#        Description: Enable the module. When disabled no companions can be summoned, existing ones
+#                     are removed on the next update and no model is loaded.
+#        Default:     1 - (Enabled)
+#                     0 - (Disabled)
+
+Animus.Enable = 1
+
+###################################################################################################
+# MODEL
+#
+#    Animus.ModelDir
+#        Description: Directory holding the exported models (<scenario>.amdl, written by
+#                     "python -m animus.export" in mod-animus-forge). A relative path is resolved
+#                     against the worldserver's working directory. The model is reloaded on
+#                     ".reload config"; a model that fails to load keeps the previous one in use.
+#        Default:     "modules/mod-animus/models"
+
+Animus.ModelDir = "modules/mod-animus/models"
+
+#
+#    Animus.DecisionMs
+#        Description: Game time between model decisions, in milliseconds. Match the decision
+#                     interval the model was trained with (mod-animus-forge: 50 ms per
+#                     AnimusForge.DecisionTicks).
+#        Default:     50
+
+Animus.DecisionMs = 50
+
+###################################################################################################
