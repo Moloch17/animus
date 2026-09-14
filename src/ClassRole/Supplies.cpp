@@ -112,9 +112,21 @@ Animus::ClassRole::StablePool::StablePool()
         } while (result->NextRow());
     }
 
+    // Creatures that walk waypoint paths are scripted set pieces (rares on patrol, escorts): not fair opponents or pets.
+    std::unordered_set<uint32> walkers;
+    if (QueryResult result = WorldDatabase.Query("SELECT DISTINCT c.id FROM creature c "
+        "LEFT JOIN creature_addon a ON a.guid = c.guid WHERE c.MovementType = 2 OR IFNULL(a.path_id, 0) <> 0 "
+        "UNION SELECT entry FROM creature_template_addon WHERE path_id <> 0"))
+    {
+        do
+        {
+            walkers.insert(result->Fetch()[0].Get<uint32>());
+        } while (result->NextRow());
+    }
+
     std::map<uint32, std::vector<uint32>> beastsByFamily;
     for (auto const& [entry, info] : *sObjectMgr->GetCreatureTemplates())
-        if (spawned.contains(entry) && info.IsTameable(false))
+        if (spawned.contains(entry) && !walkers.contains(entry) && info.IsTameable(false))
             beastsByFamily[info.family].push_back(entry);
 
     for (auto& [family, entries] : beastsByFamily)
