@@ -21,6 +21,7 @@
 #include "SpellInfo.h"
 #include "SpellMgr.h"
 #include "StringFormat.h"
+#include <cmath>
 
 namespace
 {
@@ -51,6 +52,11 @@ namespace
             out += (i ? "," : "") + std::to_string(actions[i].FirstRank);
         return out + "]";
     }
+}
+
+float Animus::ClassRole::DamageScale(uint8 level)
+{
+    return 15.0f * std::exp(0.068f * float(level));
 }
 
 char const* Animus::ClassRole::StageScenarioName(Stage stage)

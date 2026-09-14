@@ -39,3 +39,27 @@ Animus.ModelDir = "animus"
 Animus.DecisionMs = 50
 
 ###################################################################################################
+# CLASS/ROLE COMPANIONS
+#
+#    Animus.ClassRole.Stage
+#        Description: Which curriculum stage's models class/role companions (".animus summon") play:
+#                     <class>_<role>_<stage>.amdl in Animus.ModelDir, exported by mod-animus-forge with
+#                     its layout manifest (<class>_<role>_<stage>.json) beside it. A model whose manifest
+#                     differs from this server's layout is refused. Companions summoned before a
+#                     ".reload config" keep the stage they were summoned with.
+#        Default:     "party"  - four companions that play together (class_role_party)
+#                     "companion", "gauntlet", "pack", "duel", "dummy", "pvp", "arena"
+#                              - the models of that stage (class_role_<stage>)
+
+Animus.ClassRole.Stage = "party"
+
+#
+#    Animus.ClassRole.EpisodeSeconds
+#        Description: The episode length the models were trained with (AnimusForge.EpisodeSeconds). A
+#                     companion sees how far into an episode it is; an episode starts with the first
+#                     pull after 20 seconds without fighting, or once the last one has run this long.
+#        Default:     300
+
+Animus.ClassRole.EpisodeSeconds = 300
+
+###################################################################################################

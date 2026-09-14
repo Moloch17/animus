@@ -1,21 +1,50 @@
 # mod-animus
 
-Companions for a normal AzerothCore realm whose combat decisions come from a policy trained in
-[mod-animus-forge](../mod-animus-forge). The module needs no core changes and adds no dependencies.
+Companions for a normal AzerothCore realm whose combat decisions come from trained policies. The module needs no
+core changes and adds no dependencies: it builds against a stock AzerothCore on its own.
 
-First slice: a level 1 human warrior that fights a training dummy using the `warrior_dummy`
-policy.
+- **Class/role companions:** up to four characters of any class and role at your level join your party and play
+  their class/role models.
+- **`warrior_dummy`:** the first slice, a level 1 human warrior that fights a training dummy.
 
 ## Commands (GM)
 
 | Command | Effect |
 |---|---|
+| `.animus summon <class_role>` | A class/role companion (`priest_heal`, `warrior_tank`, `mage_dps`, ...) at your level joins your party |
+| `.animus list` | Your class/role companions and whether their models are loaded |
 | `.animus spawn` | A level 1 human warrior (`Animus<N>`) appears beside you and follows you |
-| `.animus attack` | Your companion attacks the training dummy you have targeted |
-| `.animus dismiss` | Removes your companion |
+| `.animus attack` | Your warrior companion attacks the training dummy you have targeted |
+| `.animus dismiss` | Removes all your companions |
 
-Each player can have one companion. It can only be summoned in the open world, not in instances,
-on transports or in flight. It is removed when its owner logs out, changes map or dismisses it.
+Companions can only be summoned in the open world, not in instances, on transports or in flight, and are removed
+when their owner logs out.
+
+## Class/role companions
+
+`.animus summon <class_role>` builds a character of that class and role (the 18 class/roles: `warrior_dps`,
+`warrior_tank`, `paladin_heal`, ... `druid_heal`) at your level: a race of your faction, one of the role's specs
+with a random talent build, the class trainers' spells, level-appropriate gear, food and drink, and for hunters a
+stable of beasts to call. It joins your group (one is created if you have none; only the leader can add
+companions, and the group must have room). Up to four companions per player.
+
+- **Models:** each companion plays `<class>_<role><stage suffix>.amdl` from `Animus.ModelDir` for
+  `Animus.ClassRole.Stage` (`warrior_tank_party.amdl` for the default `party` stage). Every model must have its layout
+  manifest beside it (`warrior_tank_party.json`, exported with the model), and the manifest must be exactly the one
+  this server builds for the layout: same stage, class/role, sizes, block offsets, actions and talents. A model
+  without a manifest or with a different one is refused (logged once, and shown by `.animus list`); its companion
+  only follows you.
+- **Decisions:** every `Animus.DecisionMs` each companion observes itself, its target, the enemies, you and the
+  other companions (`src/ClassRole/SeatEncoder.*`), its model picks an allowed action, and the action is applied as
+  a client would: casts, item uses, movement, target selection, pet commands, heals on party members.
+- **Enemies:** everything attacking you, a companion or their pets, and what any of you attack, fills up to four
+  enemy slots for the current fight; the fight is over when none of them is still alive and fighting.
+- **Upkeep:** out of combat, companions more than 30 yards away run back to you and more than 100 yards away (or
+  on another open-world map) are teleported to you. While you are in an instance they wait where they are. A dead
+  companion stands up 10 seconds after the fight.
+- **Nothing is saved:** companions and their pets have no character rows. Their group membership is written like
+  any group member's and removed when they are dismissed; rows left behind by a crash are cleaned up by the core
+  at startup (group members without a character).
 
 ## How a companion decides
 
@@ -42,7 +71,7 @@ every world update                      every Animus.DecisionMs while it has a t
 
 ## Installing
 
-1. Put the module in `modules/`, then rebuild and install the worldserver.
+1. Put the module in a stock AzerothCore's `modules/`, then rebuild and install the worldserver.
 2. Copy `conf/mod_animus.conf.dist` to your config directory as `mod_animus.conf`.
 3. Check the startup log for the model:
 
@@ -69,20 +98,16 @@ At startup the worldserver reads `<DataDir>/<Animus.ModelDir>/warrior_dummy.amdl
   working directory. Either set `DataDir` to `<install prefix>/data`, configure with
   `-DANIMUS_MODELS_INSTALL_DIR=<DataDir>/animus`, or give `Animus.ModelDir` an absolute path.
 
-After exporting a new model, run the install step again, then restart the worldserver or run
-`.reload config`.
+After adding a model, run the install step again (or copy it to `Animus.ModelDir` yourself), then restart the
+worldserver or run `.reload config`. Class/role models are loaded the first time a companion needs them, and again
+after `.reload config`.
 
-## Producing the model
+## Models
 
-Train in mod-animus-forge, then export the checkpoint:
-
-```
-cd ../mod-animus-forge/python
-python -m animus.train  --config configs/warrior_dummy.yaml
-python -m animus.export --checkpoint runs/warrior_dummy/latest.pt --out ../../mod-animus/models/warrior_dummy.amdl
-```
-
-The `.amdl` format is documented in `mod-animus-forge/python/animus/export.py`.
+Models are exported by the trainer (`.amdl` files, with a `.json` layout manifest beside each class/role model) and
+copied into `models/` or `Animus.ModelDir` by hand; nothing copies them automatically. The `.amdl` format: dense
+layers with tanh between them, fed the observation followed by a one-hot agent id, the greedy allowed action out
+(`src/Model/MlpPolicy.cpp` reads it).
 
 ## Debugging
 

@@ -25,9 +25,8 @@
 
 namespace Animus
 {
-    /// A trained actor exported by mod-animus-forge (python -m animus.export): dense layers with tanh
-    /// between them, fed the observation followed by a one-hot agent id. The .amdl format is
-    /// documented in mod-animus-forge/python/animus/export.py; change both together.
+    /// An exported trained actor (.amdl, format version AMDL_VERSION): dense layers with tanh between
+    /// them, fed the observation followed by a one-hot agent id.
     class MlpPolicy
     {
     public:

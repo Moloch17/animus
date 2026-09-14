@@ -27,10 +27,9 @@
 
 /*
  * What a class/role policy sees and does at a curriculum stage: the observation features and actions, their
- * positions, and the stage blocks each stage appends. mod-animus-forge trains with these layouts and mod-animus
- * plays with them; both build them here, so a model's inputs and outputs mean the same thing in training and in
- * play. A layout's manifest (Manifest) records everything its meaning depends on; a model carries the manifest it
- * was trained with, and a server whose own manifest differs must not use the model.
+ * positions, and the stage blocks each stage appends. A layout's manifest (Manifest) records everything its meaning
+ * depends on. A model is exported with the manifest of the layout it was trained on, and is only played by a layout
+ * whose manifest is the same (ModelLibrary).
  */
 namespace Animus::ClassRole
 {
@@ -66,6 +65,11 @@ namespace Animus::ClassRole
 
     /// Whether `stage` includes `block`'s features and actions (every stage keeps the previous stages' blocks).
     [[nodiscard]] inline bool HasBlock(Stage stage, Stage block) { return stage >= block; }
+
+    /// Per-decision damage scale of a level (the dummy block's last-step damage is damage / this): roughly how a
+    /// well-geared character's damage grows with level, so values have a similar size at every level (about 16 at
+    /// level 1, 230 at 40, 3500 at 80).
+    [[nodiscard]] float DamageScale(uint8 level);
 
     /// Stage scenario names: class_role, class_role_duel, ...; and the suffix a stage adds to model names.
     [[nodiscard]] char const* StageScenarioName(Stage stage);

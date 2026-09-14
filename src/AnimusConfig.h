@@ -19,6 +19,7 @@
 #ifndef ANIMUS_CONFIG_H
 #define ANIMUS_CONFIG_H
 
+#include "ClassRoleLayout.h"
 #include "Define.h"
 #include <string>
 
@@ -30,6 +31,8 @@ namespace Animus
         bool Enable = true;
         std::string ModelDir;
         uint32 DecisionMs = 50;
+        ClassRole::Stage ClassRoleStage = ClassRole::Stage::Party;
+        uint32 EpisodeMs = 300000;
 
         void Load();
     };

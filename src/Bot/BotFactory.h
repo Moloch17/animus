@@ -47,6 +47,11 @@ namespace Animus::BotFactory
     /// must be on a non-instanced map. On failure the bot is discarded and false returned.
     bool PlaceNear(Player* bot, Player* owner);
 
+    /// Teleport a placed bot beside `owner`, on the owner's map, and complete the teleport as the client's
+    /// acknowledgement would (MSG_MOVE_TELEPORT_ACK, or the worldport ack for another map). The owner must be on a
+    /// non-instanced map. False if the bot could not be teleported.
+    bool TeleportNear(Player* bot, Player* owner);
+
     /// Log an in-world bot out without saving and delete it and its session.
     void Destroy(Player* bot);
 

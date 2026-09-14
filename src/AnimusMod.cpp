@@ -18,6 +18,7 @@
 
 #include "AnimusMod.h"
 #include "BotFactory.h"
+#include "ClassRoleProfile.h"
 #include "Creature.h"
 #include "Log.h"
 #include "Map.h"
@@ -25,6 +26,7 @@
 #include "Player.h"
 #include "StringFormat.h"
 #include "World.h"
+#include <algorithm>
 #include <filesystem>
 #include <vector>
 
@@ -55,6 +57,7 @@ void Animus::AnimusMod::LoadConfig()
     if (!_config.Enable)
     {
         _policy.Unload();
+        _models.Reset("");
         _modelError = "the module is disabled";
         LOG_INFO("module.animus", "Animus is disabled (Animus.Enable = 0)");
         return;
@@ -69,6 +72,9 @@ void Animus::AnimusMod::LoadModel()
     std::filesystem::path dir(_config.ModelDir);
     if (dir.is_relative())
         dir = std::filesystem::path(sWorld->GetDataPath()) / dir;
+
+    // Class/role models load when a companion first needs them.
+    _models.Reset(dir.lexically_normal().string());
 
     std::string const path = (dir / Acore::StringFormat("{}.amdl", WarriorDummy::SCENARIO_NAME)).lexically_normal()
         .string();
@@ -95,7 +101,7 @@ void Animus::AnimusMod::LoadModel()
 
 void Animus::AnimusMod::OnUpdate(uint32 diff)
 {
-    if (_companions.empty())
+    if (_companions.empty() && _parties.empty())
         return;
 
     if (!_config.Enable)
@@ -114,6 +120,15 @@ void Animus::AnimusMod::OnUpdate(uint32 diff)
 
     for (ObjectGuid const& owner : dismissed)
         Remove(owner);
+
+    ClassRoleParty::Settings const settings{ _config.DecisionMs, _config.EpisodeMs };
+    std::vector<ObjectGuid> gone;
+    for (auto const& [owner, party] : _parties)
+        if (party->Update(diff, settings, _models) == ClassRoleParty::Status::Dismiss)
+            gone.push_back(owner);
+
+    for (ObjectGuid const& owner : gone)
+        RemoveParty(owner);
 }
 
 void Animus::AnimusMod::OnShutdown()
@@ -226,31 +241,108 @@ bool Animus::AnimusMod::Attack(Player* owner, Unit* target, std::string& message
 
 bool Animus::AnimusMod::Dismiss(Player* owner, std::string& message)
 {
-    if (!_companions.contains(owner->GetGUID()))
+    auto const party = _parties.find(owner->GetGUID());
+    std::size_t const count = (_companions.contains(owner->GetGUID()) ? 1 : 0)
+        + (party != _parties.end() ? party->second->Size() : 0);
+    if (!count)
     {
-        message = "You have no companion.";
+        message = "You have no companions.";
         return false;
     }
 
     Remove(owner->GetGUID());
-    message = "Companion dismissed.";
+    RemoveParty(owner->GetGUID());
+    message = count == 1 ? "Companion dismissed." : Acore::StringFormat("{} companions dismissed.", count);
     return true;
+}
+
+bool Animus::AnimusMod::Summon(Player* owner, std::string_view classRole, std::string& message)
+{
+    if (!_config.Enable)
+    {
+        message = "Animus is disabled.";
+        return false;
+    }
+
+    if (owner->GetMap()->Instanceable())
+    {
+        message = "Companions can only be summoned in the open world.";
+        return false;
+    }
+
+    if (owner->GetTransport() || owner->IsInFlight())
+    {
+        message = "Companions cannot be summoned while on a transport or in flight.";
+        return false;
+    }
+
+    std::vector<ClassRole::ClassRoleProfile> const& profiles = ClassRole::ClassRoleProfiles();
+    auto const profile = std::find_if(profiles.begin(), profiles.end(),
+        [&](ClassRole::ClassRoleProfile const& candidate) { return candidate.ScenarioName == classRole; });
+    if (profile == profiles.end())
+    {
+        message = "Unknown class/role. Choose one of:";
+        for (ClassRole::ClassRoleProfile const& candidate : profiles)
+            message += " " + candidate.ScenarioName;
+        return false;
+    }
+
+    ClassRole::Layout const& layout = LayoutFor(*profile);
+
+    std::unique_ptr<ClassRoleParty>& party = _parties[owner->GetGUID()];
+    if (!party)
+        party = std::make_unique<ClassRoleParty>(owner->GetGUID());
+
+    if (!party->Add(owner, layout, message))
+    {
+        if (!party->Size())
+            _parties.erase(owner->GetGUID());
+        return false;
+    }
+
+    for (ObjectGuid const& bot : party->GetBotGUIDs())
+        _partyByBot[bot] = party.get();
+
+    std::string error;
+    if (!_models.Find(layout, error))
+        message += Acore::StringFormat(" Its model is not available ({}), so it only follows you.", error);
+
+    return true;
+}
+
+std::vector<std::string> Animus::AnimusMod::List(Player* owner)
+{
+    auto const itr = _parties.find(owner->GetGUID());
+    if (itr == _parties.end())
+        return {};
+
+    return itr->second->Describe(_models);
 }
 
 void Animus::AnimusMod::OnPlayerLogout(Player* player)
 {
     Remove(player->GetGUID());
+    RemoveParty(player->GetGUID());
 }
 
 void Animus::AnimusMod::RecordDamage(Unit const* attacker, Unit const* victim, uint32 damage, DamageEffectType type)
 {
-    if (_byBot.empty() || !attacker || !victim || !damage
+    if ((_byBot.empty() && _partyByBot.empty()) || !attacker || !victim || !damage
         || (type != DIRECT_DAMAGE && type != SPELL_DIRECT_DAMAGE && type != DOT))
         return;
 
     auto const itr = _byBot.find(attacker->GetGUID());
     if (itr != _byBot.end())
         itr->second->RecordDamage(victim, damage);
+
+    // A companion's damage dealt and taken (the forge's step damage and damage taken).
+    auto const dealer = _partyByBot.find(attacker->GetGUID());
+    auto const taker = _partyByBot.find(victim->GetGUID());
+    if (dealer != _partyByBot.end())
+        dealer->second->RecordDamage(attacker->GetGUID(), victim->GetGUID(), damage,
+            taker != _partyByBot.end() && taker->second == dealer->second ? damage : 0);
+    if (taker != _partyByBot.end() && (dealer == _partyByBot.end() || taker->second != dealer->second))
+        taker->second->RecordDamage(attacker->GetGUID(), victim->GetGUID(), 0, damage);
 }
 
 void Animus::AnimusMod::Remove(ObjectGuid owner)
@@ -271,8 +363,40 @@ void Animus::AnimusMod::Remove(ObjectGuid owner)
     }
 }
 
+void Animus::AnimusMod::RemoveParty(ObjectGuid owner)
+{
+    auto const itr = _parties.find(owner);
+    if (itr == _parties.end())
+        return;
+
+    // Unlink before destroying: logging the bots out re-enters the module through OnPlayerLogout.
+    std::unique_ptr<ClassRoleParty> const party = std::move(itr->second);
+    _parties.erase(itr);
+    std::erase_if(_partyByBot, [&](auto const& entry) { return entry.second == party.get(); });
+
+    party->DestroyAll();
+}
+
 void Animus::AnimusMod::RemoveAll()
 {
     while (!_companions.empty())
         Remove(_companions.begin()->first);
+
+    while (!_parties.empty())
+        RemoveParty(_parties.begin()->first);
+}
+
+Animus::ClassRole::Layout const& Animus::AnimusMod::LayoutFor(ClassRole::ClassRoleProfile const& profile)
+{
+    std::string const name = profile.ScenarioName + ClassRole::StageSuffix(_config.ClassRoleStage);
+    auto itr = _layouts.find(name);
+    if (itr == _layouts.end())
+    {
+        // Builds the class/role's assets on first use (trainer data and item pools: a few seconds).
+        itr = _layouts.emplace(name, ClassRole::Layout::Build(profile, _config.ClassRoleStage)).first;
+        LOG_INFO("module.animus", "Animus built the {} layout (obs {}, actions {})", name, itr->second.ObsDim,
+            itr->second.NumActions);
+    }
+
+    return itr->second;
 }

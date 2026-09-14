@@ -31,9 +31,9 @@ class Unit;
 
 /*
  * A class/role policy's inputs and outputs in the world: the observation row and action mask of one bot, and what
- * each action does. mod-animus-forge trains with it and mod-animus plays with it, so a model sees and acts the same
- * way in both. The caller describes the bot's situation (SeatView) -- who its enemies, owner, teammates and opponent
- * are, and the episode facts only it knows -- and the encoder reads everything else from the world.
+ * each action does, as the models were trained to see and act. The caller describes the bot's situation (SeatView)
+ * -- who its enemies, owner, teammates and opponent are, and the episode facts only it knows -- and the encoder reads
+ * everything else from the world.
  */
 namespace Animus::ClassRole
 {

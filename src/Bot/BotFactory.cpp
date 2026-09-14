@@ -39,9 +39,11 @@
 #include "MotionMaster.h"
 #include "ObjectAccessor.h"
 #include "ObjectMgr.h"
+#include "Pet.h"
 #include "Player.h"
 #include "SocialMgr.h"
 #include "StringFormat.h"
+#include "WorldPacket.h"
 #include "WorldSession.h"
 
 namespace
@@ -177,6 +179,34 @@ bool Animus::BotFactory::PlaceNear(Player* bot, Player* owner)
     return true;
 }
 
+bool Animus::BotFactory::TeleportNear(Player* bot, Player* owner)
+{
+    if (owner->GetMap()->Instanceable() || bot->IsBeingTeleported())
+        return false;
+
+    float x = 0.0f;
+    float y = 0.0f;
+    float z = 0.0f;
+    owner->GetClosePoint(x, y, z, owner->GetCombatReach(), SPAWN_DISTANCE, SPAWN_ANGLE);
+
+    bool const sameMap = bot->GetMapId() == owner->GetMapId();
+    if (!bot->TeleportTo(owner->GetMapId(), x, y, z, owner->GetOrientation()))
+        return false;
+
+    // The bot has no client to acknowledge the teleport; the session handles the acknowledgement it would send.
+    if (sameMap)
+    {
+        WorldPacket ack(MSG_MOVE_TELEPORT_ACK);
+        ack << bot->GetPackGUID();
+        ack << uint32(0) << uint32(0);
+        bot->GetSession()->HandleMoveTeleportAck(ack);
+    }
+    else
+        bot->GetSession()->HandleMoveWorldportAck();
+
+    return true;
+}
+
 void Animus::BotFactory::Destroy(Player* bot)
 {
     WorldSession* session = bot->GetSession();
@@ -184,6 +214,17 @@ void Animus::BotFactory::Destroy(Player* bot)
     // A dead bot would be repopped at a graveyard (a far teleport) by LogoutPlayer.
     if (!bot->IsAlive())
         bot->ResurrectPlayer(1.0f);
+
+    // The pet goes first, unsaved: LogoutPlayer would save it to the character database. Totems and guardians go
+    // with it, while the bot is still in its map.
+    if (bot->FindMap())
+    {
+        if (Pet* pet = bot->GetPet())
+            bot->RemovePet(pet, PET_SAVE_AS_DELETED);
+
+        bot->UnsummonAllTotems();
+        bot->RemoveAllControlled();
+    }
 
     sCharacterCache->DeleteCharacterCacheEntry(bot->GetGUID(), bot->GetName());
 

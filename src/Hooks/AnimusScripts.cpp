@@ -50,6 +50,8 @@ namespace
                 { "spawn",      HandleSpawnCommand,     SEC_GAMEMASTER, Console::No },
                 { "attack",     HandleAttackCommand,    SEC_GAMEMASTER, Console::No },
                 { "dismiss",    HandleDismissCommand,   SEC_GAMEMASTER, Console::No },
+                { "summon",     HandleSummonCommand,    SEC_GAMEMASTER, Console::No },
+                { "list",       HandleListCommand,      SEC_GAMEMASTER, Console::No },
             };
 
             static ChatCommandTable commandTable =
@@ -75,11 +77,31 @@ namespace
                 message);
         }
 
-        /// .animus dismiss: remove your companion.
+        /// .animus dismiss: remove all your companions.
         static bool HandleDismissCommand(ChatHandler* handler)
         {
             std::string message;
             return Reply(handler, sAnimusMod->Dismiss(handler->GetPlayer(), message), message);
+        }
+
+        /// .animus summon <class_role>: a companion of that class and role (priest_heal, warrior_tank, ...) at your
+        /// level joins your party and plays its trained model.
+        static bool HandleSummonCommand(ChatHandler* handler, std::string_view classRole)
+        {
+            std::string message;
+            return Reply(handler, sAnimusMod->Summon(handler->GetPlayer(), classRole, message), message);
+        }
+
+        /// .animus list: your class/role companions and their models.
+        static bool HandleListCommand(ChatHandler* handler)
+        {
+            std::vector<std::string> const lines = sAnimusMod->List(handler->GetPlayer());
+            if (lines.empty())
+                return Reply(handler, false, "You have no class/role companions.");
+
+            for (std::string const& line : lines)
+                handler->SendSysMessage(line);
+            return true;
         }
     };
 
