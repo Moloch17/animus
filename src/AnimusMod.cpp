@@ -24,6 +24,8 @@
 #include "ObjectAccessor.h"
 #include "Player.h"
 #include "StringFormat.h"
+#include "World.h"
+#include <filesystem>
 #include <vector>
 
 namespace
@@ -63,7 +65,13 @@ void Animus::AnimusMod::LoadConfig()
 
 void Animus::AnimusMod::LoadModel()
 {
-    std::string const path = Acore::StringFormat("{}/{}.amdl", _config.ModelDir, WarriorDummy::SCENARIO_NAME);
+    // A relative ModelDir lives in the data directory, where the build installs the models.
+    std::filesystem::path dir(_config.ModelDir);
+    if (dir.is_relative())
+        dir = std::filesystem::path(sWorld->GetDataPath()) / dir;
+
+    std::string const path = (dir / Acore::StringFormat("{}.amdl", WarriorDummy::SCENARIO_NAME)).lexically_normal()
+        .string();
 
     MlpPolicy policy;
     std::string error;

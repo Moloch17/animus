@@ -42,15 +42,35 @@ every world update                      every Animus.DecisionMs while it has a t
 
 ## Installing
 
-1. Put the module in `modules/` and rebuild the worldserver.
+1. Put the module in `modules/`, then rebuild and install the worldserver.
 2. Copy `conf/mod_animus.conf.dist` to your config directory as `mod_animus.conf`.
-3. Place the model at `<Animus.ModelDir>/warrior_dummy.amdl`. The startup log confirms it:
+3. Check the startup log for the model:
 
    ```
-   Animus loaded warrior_dummy model from modules/mod-animus/models/warrior_dummy.amdl (9+1 -> 128 -> 128 -> 3)
+   Animus loaded warrior_dummy model from /azerothcore/env/dist/data/animus/warrior_dummy.amdl (9+1 -> 128 -> 128 -> 3)
    ```
 
 Without a model, companions can still be summoned and follow you, but `.animus attack` is refused.
+The error line gives the full path that was tried.
+
+### Where the model goes
+
+The install step copies `models/*.amdl` into the data directory. The rule is in `mod-animus.cmake`.
+At startup the worldserver reads `<DataDir>/<Animus.ModelDir>/warrior_dummy.amdl`.
+
+| Setting | Default | Notes |
+|---|---|---|
+| CMake `ANIMUS_MODELS_INSTALL_DIR` | `<install prefix>/data/animus` | Where the install copies the models |
+| `Animus.ModelDir` | `animus` | Relative paths resolve against `DataDir`; absolute paths are used as-is |
+
+- **Docker:** the defaults line up. `AC_DATA_DIR` is `/azerothcore/env/dist/data`, and installing in
+  `ac-dev-server` writes into the shared client-data volume that `ac-worldserver` also mounts.
+- **Other setups:** the stock `worldserver.conf` sets `DataDir = "."`, which is the worldserver's
+  working directory. Either set `DataDir` to `<install prefix>/data`, configure with
+  `-DANIMUS_MODELS_INSTALL_DIR=<DataDir>/animus`, or give `Animus.ModelDir` an absolute path.
+
+After exporting a new model, run the install step again, then restart the worldserver or run
+`.reload config`.
 
 ## Producing the model
 

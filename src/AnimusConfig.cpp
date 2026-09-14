@@ -23,6 +23,6 @@
 void Animus::AnimusConfig::Load()
 {
     Enable = sConfigMgr->GetOption<bool>("Animus.Enable", true);
-    ModelDir = sConfigMgr->GetOption<std::string>("Animus.ModelDir", "modules/mod-animus/models");
+    ModelDir = sConfigMgr->GetOption<std::string>("Animus.ModelDir", "animus");
     DecisionMs = std::max<uint32>(1, sConfigMgr->GetOption<uint32>("Animus.DecisionMs", 50));
 }
