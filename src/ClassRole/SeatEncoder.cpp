@@ -494,7 +494,7 @@ namespace
         }
 
         duel[LayoutConstants::DUEL_OBS_SHAPESHIFTED] = CancellableForm(bot) ? 1.0f : 0.0f;
-        duel[LayoutConstants::DUEL_OBS_EPISODE_TIME] = view.EpisodeTime;
+        duel[LayoutConstants::DUEL_OBS_COMBAT_TIME] = view.CombatTime;
 
         // Hunters: what each stable slot offers, so the policy can find the pet it prefers.
         for (uint32 slot = 0; slot < view.StableCount && slot < LayoutConstants::STABLE_SLOTS; ++slot)
@@ -628,7 +628,7 @@ namespace
 
         gauntlet[LayoutConstants::GAUNTLET_OBS_PULLS_CLEARED] = std::min(1.0f, float(view.PullsCleared) / 10.0f);
         gauntlet[LayoutConstants::GAUNTLET_OBS_PULL_ACTIVE] = pullActive ? 1.0f : 0.0f;
-        gauntlet[LayoutConstants::GAUNTLET_OBS_NEXT_PULL] = pullActive ? 0.0f : view.NextPull;
+        gauntlet[LayoutConstants::GAUNTLET_OBS_QUIET_TIME] = pullActive ? 0.0f : view.QuietTime;
         gauntlet[LayoutConstants::GAUNTLET_OBS_PULL_TIME] = pullActive ? view.PullTime : 0.0f;
         gauntlet[LayoutConstants::GAUNTLET_OBS_ELITE_PULL] = pullActive && view.ElitePull ? 1.0f : 0.0f;
         gauntlet[LayoutConstants::GAUNTLET_OBS_EATING] = bot->HasAuraType(SPELL_AURA_MOD_REGEN) ? 1.0f : 0.0f;

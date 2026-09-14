@@ -43,7 +43,8 @@ namespace Animus
     ///
     /// The party stands in for a training env: the owner is the scripted owner, the companions are the seats, and
     /// the enemies attacking any of them (or attacked by them or the owner) are the current pull, kept in stable
-    /// enemy slots until the pull is over. A new episode starts with the first pull after a quiet spell.
+    /// enemy slots until the pull is over. A new episode (pulls cleared counted from 0, bags restocked) starts with
+    /// the first pull after a quiet spell.
     ///
     /// World thread, except RecordDamage (map threads). Holds GUIDs; objects are resolved every update.
     class ClassRoleParty
@@ -57,8 +58,7 @@ namespace Animus
 
         struct Settings
         {
-            uint32 DecisionMs = 50;
-            uint32 EpisodeMs = 300000;
+            uint32 DecisionMs = 100;
         };
 
         explicit ClassRoleParty(ObjectGuid owner);
@@ -104,6 +104,8 @@ namespace Animus
             uint32 TargetSlot = 0;
             uint32 SinceDecisionMs = 0;
             uint32 DeadMs = 0;
+            bool InCombat = false;
+            uint64 CombatStartMs = 0;
             uint32 LastPower = 0;
             float LastStepDamage = 0.0f;
             float LastStepPowerDelta = 0.0f;
@@ -117,14 +119,13 @@ namespace Animus
         };
 
         /// Refresh the pull: new enemies into free (or dead) slots, and the end of the pull.
-        void UpdatePull(Player* owner, std::vector<Player*> const& bots, Settings const& settings);
+        void UpdatePull(Player* owner, std::vector<Player*> const& bots);
         void UpdateMember(Member& member, Player* bot, Player* owner, uint32 diff, Settings const& settings,
             ModelLibrary& models);
-        void Decide(Member& member, Player* bot, Player* owner, Settings const& settings, MlpPolicy& policy);
+        void Decide(Member& member, Player* bot, Player* owner, MlpPolicy& policy);
         /// Forge's CurrentTarget: the selected enemy, else the nearest living one (which becomes the selection).
         [[nodiscard]] Unit* CurrentTarget(Member& member, Player* bot) const;
-        [[nodiscard]] ClassRole::SeatView View(Member const& member, Player* bot, Player* owner, Unit* target,
-            Settings const& settings) const;
+        [[nodiscard]] ClassRole::SeatView View(Member const& member, Player* bot, Player* owner, Unit* target) const;
         void StartEpisode();
         static void Destroy(Player* bot);
 
@@ -137,7 +138,7 @@ namespace Animus
         uint64 _nowMs = 0;
         uint64 _pullStartMs = 0;
         uint64 _quietSinceMs = 0;
-        uint64 _episodeStartMs = 0;
+        bool _foughtBefore = false;                         // quiet time counts from the first fight's end
         bool _episodeStarted = false;
         uint32 _pullsCleared = 0;
     };

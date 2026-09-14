@@ -121,7 +121,7 @@ void Animus::AnimusMod::OnUpdate(uint32 diff)
     for (ObjectGuid const& owner : dismissed)
         Remove(owner);
 
-    ClassRoleParty::Settings const settings{ _config.DecisionMs, _config.EpisodeMs };
+    ClassRoleParty::Settings const settings{ _config.ClassRoleDecisionMs };
     std::vector<ObjectGuid> gone;
     for (auto const& [owner, party] : _parties)
         if (party->Update(diff, settings, _models) == ClassRoleParty::Status::Dismiss)

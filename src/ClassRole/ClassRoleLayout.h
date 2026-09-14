@@ -141,7 +141,7 @@ namespace Animus::ClassRole
             DUEL_OBS_PET_OUT            = 13,
             DUEL_OBS_PET_HEALTH         = 14,
             DUEL_OBS_PET_ATTACKING      = 15,   // the pet's victim is the opponent
-            DUEL_OBS_EPISODE_TIME       = 16,   // elapsed / episode length
+            DUEL_OBS_COMBAT_TIME        = 16,   // time the bot has been in combat / 60 s; 0 out of combat
             DUEL_OBS_CAST_PROGRESS      = 17,   // fraction of the current cast time done; 0 when not casting
             DUEL_OBS_CAST_REMAINING     = 18,   // seconds left of the current cast / 3
             DUEL_OBS_SHAPESHIFTED       = 19,   // in a form the bot can cancel
@@ -210,7 +210,7 @@ namespace Animus::ClassRole
         {
             GAUNTLET_OBS_PULLS_CLEARED  = 0,    // / 10
             GAUNTLET_OBS_PULL_ACTIVE    = 1,
-            GAUNTLET_OBS_NEXT_PULL      = 2,    // time until the next pull / 20 s
+            GAUNTLET_OBS_QUIET_TIME     = 2,    // time since the last fight ended / 20 s; 0 during a fight
             GAUNTLET_OBS_PULL_TIME      = 3,    // time into the current pull / 60 s
             GAUNTLET_OBS_ELITE_PULL     = 4,
             GAUNTLET_OBS_EATING         = 5,

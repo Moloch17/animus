@@ -31,9 +31,8 @@ Animus.ModelDir = "animus"
 
 #
 #    Animus.DecisionMs
-#        Description: Game time between model decisions, in milliseconds. Match the decision
-#                     interval the model was trained with (mod-animus-forge: 50 ms per
-#                     AnimusForge.DecisionTicks).
+#        Description: Game time between the warrior_dummy companion's model decisions, in
+#                     milliseconds: the decision interval its model was trained with.
 #        Default:     50
 
 Animus.DecisionMs = 50
@@ -54,12 +53,12 @@ Animus.DecisionMs = 50
 Animus.ClassRole.Stage = "party"
 
 #
-#    Animus.ClassRole.EpisodeSeconds
-#        Description: The episode length the models were trained with (AnimusForge.EpisodeSeconds). A
-#                     companion sees how far into an episode it is; an episode starts with the first
-#                     pull after 20 seconds without fighting, or once the last one has run this long.
-#        Default:     300
+#    Animus.ClassRole.DecisionMs
+#        Description: Game time between a class/role companion's model decisions, in milliseconds: the
+#                     decision interval its models were trained with (50 ms per world tick of
+#                     AnimusForge.DecisionTicks in training).
+#        Default:     100
 
-Animus.ClassRole.EpisodeSeconds = 300
+Animus.ClassRole.DecisionMs = 100
 
 ###################################################################################################

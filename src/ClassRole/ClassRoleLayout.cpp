@@ -188,7 +188,7 @@ std::string Animus::ClassRole::Layout::Manifest() const
     specs += "]";
 
     return Acore::StringFormat(
-        R"({{"format":1,"model":"{}","scenario":"{}","class_role":"{}","class":{},"role":"{}","obs_dim":{},)"
+        R"({{"format":2,"model":"{}","scenario":"{}","class_role":"{}","class":{},"role":"{}","obs_dim":{},)"
         R"("num_actions":{},"blocks":{{"action_obs":{},"talent_obs":{},"tree_obs":{},"duel_obs":{},"duel_actions":[{},{}],)"
         R"("pack_obs":{},"pack_actions":[{},{}],"gauntlet_obs":{},"gauntlet_actions":[{},{}],"companion_obs":{},)"
         R"("companion_actions":[{},{}],"party_obs":{},"party_actions":[{},{}],"pvp_obs":{}}},"specs":{},)"

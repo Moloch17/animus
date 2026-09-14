@@ -34,7 +34,7 @@ companions, and the group must have room). Up to four companions per player.
   this server builds for the layout: same stage, class/role, sizes, block offsets, actions and talents. A model
   without a manifest or with a different one is refused (logged once, and shown by `.animus list`); its companion
   only follows you.
-- **Decisions:** every `Animus.DecisionMs` each companion observes itself, its target, the enemies, you and the
+- **Decisions:** every `Animus.ClassRole.DecisionMs` (100) each companion observes itself, its target, the enemies, you and the
   other companions (`src/ClassRole/SeatEncoder.*`), its model picks an allowed action, and the action is applied as
   a client would: casts, item uses, movement, target selection, pet commands, heals on party members.
 - **Enemies:** everything attacking you, a companion or their pets, and what any of you attack, fills up to four

@@ -55,7 +55,7 @@ namespace Animus::ClassRole
         float LastStepDamage = 0.0f;                // damage done / the level's damage scale
         float LastStepPowerDelta = 0.0f;            // primary power change, as a fraction of max
         float LastStepDamageTaken = 0.0f;           // / the bot's max health
-        float EpisodeTime = 0.0f;                   // elapsed / episode length; 0 without a length
+        float CombatTime = 0.0f;                    // time in combat / 60 s, clamped; 0 out of combat
 
         // Duel on: hunters' beasts on offer.
         std::array<uint32, STABLE_SLOTS> Stable{};
@@ -68,7 +68,7 @@ namespace Animus::ClassRole
 
         // Gauntlet on.
         uint32 PullsCleared = 0;
-        float NextPull = 0.0f;                      // time until the next pull / 20 s, clamped (used between pulls)
+        float QuietTime = 0.0f;                     // time since the last fight ended / 20 s, clamped (used between fights)
         float PullTime = 0.0f;                      // time into the current pull / 60 s, clamped (used during one)
         bool ElitePull = false;
         uint32 FoodItem = 0;

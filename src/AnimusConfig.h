@@ -32,7 +32,7 @@ namespace Animus
         std::string ModelDir;
         uint32 DecisionMs = 50;
         ClassRole::Stage ClassRoleStage = ClassRole::Stage::Party;
-        uint32 EpisodeMs = 300000;
+        uint32 ClassRoleDecisionMs = 100;
 
         void Load();
     };

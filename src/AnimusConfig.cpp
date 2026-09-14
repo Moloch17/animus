@@ -28,7 +28,7 @@ void Animus::AnimusConfig::Load()
     Enable = sConfigMgr->GetOption<bool>("Animus.Enable", true);
     ModelDir = sConfigMgr->GetOption<std::string>("Animus.ModelDir", "animus");
     DecisionMs = std::max<uint32>(1, sConfigMgr->GetOption<uint32>("Animus.DecisionMs", 50));
-    EpisodeMs = std::max<uint32>(1, sConfigMgr->GetOption<uint32>("Animus.ClassRole.EpisodeSeconds", 300)) * 1000;
+    ClassRoleDecisionMs = std::max<uint32>(1, sConfigMgr->GetOption<uint32>("Animus.ClassRole.DecisionMs", 100));
 
     // Stage names as in the forge's scenario names (class_role_<stage>).
     static constexpr std::array<std::pair<std::string_view, ClassRole::Stage>, 8> STAGES =

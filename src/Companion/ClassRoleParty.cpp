@@ -52,6 +52,8 @@ namespace
     /// Quiet this long between pulls and the next pull starts a new episode (the gauntlet's longest break).
     constexpr uint64 NEW_EPISODE_QUIET_MS = 20000;
     constexpr float PULL_TIME_SCALE_MS = 60000.0f;
+    constexpr float COMBAT_TIME_SCALE_MS = 60000.0f;
+    constexpr float QUIET_TIME_SCALE_MS = 20000.0f;
 
     /// Out of combat between pulls: companions further than this run back to the owner (training's follow shaping
     /// starts at 25 yd), and further than TELEPORT_DISTANCE (or on another map) they are teleported.
@@ -245,7 +247,7 @@ Animus::ClassRoleParty::Status Animus::ClassRoleParty::Update(uint32 diff, Setti
         if (Player* bot = FindBot(member->Bot); bot->IsInWorld() && bot->GetMap() == owner->GetMap())
             present.push_back(bot);
 
-    UpdatePull(owner, present, settings);
+    UpdatePull(owner, present);
 
     for (std::unique_ptr<Member> const& member : _members)
         UpdateMember(*member, FindBot(member->Bot), owner, diff, settings, models);
@@ -253,7 +255,7 @@ Animus::ClassRoleParty::Status Animus::ClassRoleParty::Update(uint32 diff, Setti
     return Status::Active;
 }
 
-void Animus::ClassRoleParty::UpdatePull(Player* owner, std::vector<Player*> const& bots, Settings const& settings)
+void Animus::ClassRoleParty::UpdatePull(Player* owner, std::vector<Player*> const& bots)
 {
     Map* map = owner->GetMap();
 
@@ -307,9 +309,7 @@ void Animus::ClassRoleParty::UpdatePull(Player* owner, std::vector<Player*> cons
         {
             if (_enemies.empty())
             {
-                // After a quiet spell, or once the episode has run its length, as training's episodes do.
-                if (!_episodeStarted || _nowMs - _quietSinceMs >= NEW_EPISODE_QUIET_MS
-                    || _nowMs - _episodeStartMs >= settings.EpisodeMs)
+                if (!_episodeStarted || _nowMs - _quietSinceMs >= NEW_EPISODE_QUIET_MS)
                     StartEpisode();
                 _pullStartMs = _nowMs;
             }
@@ -338,6 +338,7 @@ void Animus::ClassRoleParty::UpdatePull(Player* owner, std::vector<Player*> cons
     _enemies.clear();
     _enemyUnits.fill(nullptr);
     _quietSinceMs = _nowMs;
+    _foughtBefore = true;
     for (std::unique_ptr<Member> const& member : _members)
         member->TargetSlot = 0;
 }
@@ -345,7 +346,6 @@ void Animus::ClassRoleParty::UpdatePull(Player* owner, std::vector<Player*> cons
 void Animus::ClassRoleParty::StartEpisode()
 {
     _episodeStarted = true;
-    _episodeStartMs = _nowMs;
     _pullsCleared = 0;
 
     // Training starts every episode with full bags.
@@ -417,12 +417,16 @@ void Animus::ClassRoleParty::UpdateMember(Member& member, Player* bot, Player* o
         return;
 
     member.SinceDecisionMs %= settings.DecisionMs;
-    Decide(member, bot, owner, settings, *policy);
+    Decide(member, bot, owner, *policy);
 }
 
-void Animus::ClassRoleParty::Decide(Member& member, Player* bot, Player* owner, Settings const& settings,
-    MlpPolicy& policy)
+void Animus::ClassRoleParty::Decide(Member& member, Player* bot, Player* owner, MlpPolicy& policy)
 {
+    bool const inCombat = bot->IsInCombat();
+    if (inCombat && !member.InCombat)
+        member.CombatStartMs = _nowMs;
+    member.InCombat = inCombat;
+
     // What the forge's reward step records for the next observation.
     member.LastStepDamage = float(member.StepDamage.exchange(0, std::memory_order_relaxed)) / DamageScale(member.Level);
     member.LastStepDamageTaken = float(member.StepDamageTaken.exchange(0, std::memory_order_relaxed))
@@ -435,7 +439,7 @@ void Animus::ClassRoleParty::Decide(Member& member, Player* bot, Player* owner, 
     member.LastPower = current;
 
     Unit* target = CurrentTarget(member, bot);
-    SeatView view = View(member, bot, owner, target, settings);
+    SeatView view = View(member, bot, owner, target);
     SeatEncoder::Observe(view, member.Obs.data(), member.Mask.data());
 
     int32 const action = policy.Decide(member.Obs.data(), member.Mask.data());
@@ -473,7 +477,7 @@ Unit* Animus::ClassRoleParty::CurrentTarget(Member& member, Player* bot) const
 }
 
 Animus::ClassRole::SeatView Animus::ClassRoleParty::View(Member const& member, Player* bot, Player* owner,
-    Unit* target, Settings const& settings) const
+    Unit* target) const
 {
     Layout const& layout = *member.L;
 
@@ -488,8 +492,8 @@ Animus::ClassRole::SeatView Animus::ClassRoleParty::View(Member const& member, P
     view.LastStepDamage = member.LastStepDamage;
     view.LastStepPowerDelta = member.LastStepPowerDelta;
     view.LastStepDamageTaken = member.LastStepDamageTaken;
-    view.EpisodeTime = _episodeStarted && settings.EpisodeMs
-        ? std::min(1.0f, float(_nowMs - _episodeStartMs) / float(settings.EpisodeMs)) : 0.0f;
+    view.CombatTime = member.InCombat
+        ? std::min(1.0f, float(_nowMs - member.CombatStartMs) / COMBAT_TIME_SCALE_MS) : 0.0f;
 
     view.StableCount = uint32(std::min<std::size_t>(member.Stable.size(), LayoutConstants::STABLE_SLOTS));
     std::copy_n(member.Stable.begin(), view.StableCount, view.Stable.begin());
@@ -506,7 +510,7 @@ Animus::ClassRole::SeatView Animus::ClassRoleParty::View(Member const& member, P
                 elite = true;
 
         view.PullsCleared = _pullsCleared;
-        view.NextPull = 1.0f;           // nothing is scheduled: the next pull is whenever the owner starts one
+        view.QuietTime = _foughtBefore ? std::min(1.0f, float(_nowMs - _quietSinceMs) / QUIET_TIME_SCALE_MS) : 1.0f;
         view.PullTime = _enemies.empty() ? 0.0f : std::min(1.0f, float(_nowMs - _pullStartMs) / PULL_TIME_SCALE_MS);
         view.ElitePull = elite;
     }
