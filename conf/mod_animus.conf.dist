@@ -364,5 +364,54 @@ Animus.Curriculum.ScriptedPlayers.RangedMin = 20.0
 Animus.Curriculum.ScriptedPlayers.RangedMax = 30.0
 #   PvP: percent of engagements a rogue sneaks up in stealth
 Animus.Curriculum.ScriptedPlayers.StealthChance = 50
+#   PvP: percent of engagements it plays its kit: interrupts, crowd control, snares, defensives, breaks
+Animus.Curriculum.ScriptedPlayers.TacticsChance = 75
+#   ... time between crowd control attempts
+Animus.Curriculum.ScriptedPlayers.ControlMinMs = 8000
+Animus.Curriculum.ScriptedPlayers.ControlMaxMs = 15000
+#   ... a defensive when its health is under this
+Animus.Curriculum.ScriptedPlayers.DefensiveBelow = 0.35
+#   ... breaks crowd control when its health is under this
+Animus.Curriculum.ScriptedPlayers.BreakBelow = 0.6
+
+#   Travel arenas. Ground: a place this many yards away by path
+Animus.Curriculum.Travel.ObjectiveMin = 60.0
+Animus.Curriculum.Travel.ObjectiveMax = 320.0
+#   flying arenas: yards from the start
+Animus.Curriculum.Travel.FlyingMin = 350.0
+Animus.Curriculum.Travel.FlyingMax = 700.0
+#   potential shaping: per 100 yd closed (taken back for leaving)
+Animus.Curriculum.Travel.Progress = 1.0
+Animus.Curriculum.Travel.Arrive = 3.0
+#   times the fraction of the episode still left
+Animus.Curriculum.Travel.FastArrive = 3.0
+#   fraction of the bot's health (falls, what it rode past)
+Animus.Curriculum.Travel.DamageTaken = 1.0
+Animus.Curriculum.Travel.Death = 3.0
+#   per decision
+Animus.Curriculum.Travel.StepCost = 0.0002
+
+#   Flag match (Warsong Gulch's rules). Yards between the bases, by path
+Animus.Curriculum.Flag.BaseMin = 100.0
+Animus.Curriculum.Flag.BaseMax = 180.0
+Animus.Curriculum.Flag.CapturesToWin = 3
+#   the dead stand up at their base after this (a graveyard wave)
+Animus.Curriculum.Flag.RespawnMs = 15000
+#   a dropped flag goes home on its own after this
+Animus.Curriculum.Flag.DroppedReturnMs = 10000
+#   yards to pick up, return or capture
+Animus.Curriculum.Flag.TouchDistance = 4.0
+Animus.Curriculum.Flag.Capture = 5.0
+Animus.Curriculum.Flag.Pickup = 1.0
+Animus.Curriculum.Flag.Return = 1.0
+#   killing the one carrying the seat's flag
+Animus.Curriculum.Flag.CarrierKill = 1.5
+#   the other side captured the seat's flag
+Animus.Curriculum.Flag.Lost = 3.0
+#   potential shaping toward the seat's current objective, per 100 yd
+Animus.Curriculum.Flag.Progress = 0.5
+Animus.Curriculum.Flag.Death = 1.0
+#   per decision
+Animus.Curriculum.Flag.StepCost = 0.0002
 
 ###################################################################################################
