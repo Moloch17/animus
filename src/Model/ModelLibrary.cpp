@@ -17,7 +17,7 @@
  */
 
 #include "ModelLibrary.h"
-#include "ClassRoleLayout.h"
+#include "Layout.h"
 #include "Log.h"
 #include "StringFormat.h"
 #include <cctype>
@@ -41,7 +41,7 @@ void Animus::ModelLibrary::Reset(std::string dir)
     _models.clear();
 }
 
-Animus::MlpPolicy* Animus::ModelLibrary::Find(ClassRole::Layout const& layout, std::string& error)
+Animus::MlpPolicy* Animus::ModelLibrary::Find(Curriculum::Layout const& layout, std::string& error)
 {
     std::string const name = layout.ModelName();
     auto [itr, inserted] = _models.try_emplace(name);

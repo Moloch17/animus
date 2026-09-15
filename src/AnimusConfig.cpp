@@ -28,23 +28,23 @@ void Animus::AnimusConfig::Load()
     Enable = sConfigMgr->GetOption<bool>("Animus.Enable", true);
     ModelDir = sConfigMgr->GetOption<std::string>("Animus.ModelDir", "animus");
     DecisionMs = std::max<uint32>(1, sConfigMgr->GetOption<uint32>("Animus.DecisionMs", 50));
-    ClassRoleDecisionMs = std::max<uint32>(1, sConfigMgr->GetOption<uint32>("Animus.ClassRole.DecisionMs", 100));
+    CurriculumDecisionMs = std::max<uint32>(1, sConfigMgr->GetOption<uint32>("Animus.Curriculum.DecisionMs", 100));
 
     // Stage names as in the forge's scenario names (class_role_<stage>).
-    static constexpr std::array<std::pair<std::string_view, ClassRole::Stage>, 8> STAGES =
+    static constexpr std::array<std::pair<std::string_view, Curriculum::Stage>, 8> STAGES =
     { {
-        { "dummy", ClassRole::Stage::Dummy }, { "duel", ClassRole::Stage::Duel }, { "pack", ClassRole::Stage::Pack },
-        { "gauntlet", ClassRole::Stage::Gauntlet }, { "companion", ClassRole::Stage::Companion },
-        { "party", ClassRole::Stage::Party }, { "pvp", ClassRole::Stage::Pvp }, { "arena", ClassRole::Stage::Arena },
+        { "dummy", Curriculum::Stage::Dummy }, { "duel", Curriculum::Stage::Duel }, { "pack", Curriculum::Stage::Pack },
+        { "gauntlet", Curriculum::Stage::Gauntlet }, { "companion", Curriculum::Stage::Companion },
+        { "party", Curriculum::Stage::Party }, { "pvp", Curriculum::Stage::Pvp }, { "arena", Curriculum::Stage::Arena },
     } };
 
-    std::string const stage = sConfigMgr->GetOption<std::string>("Animus.ClassRole.Stage", "party");
+    std::string const stage = sConfigMgr->GetOption<std::string>("Animus.Curriculum.Stage", "party");
     auto const itr = std::find_if(STAGES.begin(), STAGES.end(), [&](auto const& entry) { return entry.first == stage; });
     if (itr != STAGES.end())
-        ClassRoleStage = itr->second;
+        CurriculumStage = itr->second;
     else
     {
-        ClassRoleStage = ClassRole::Stage::Party;
-        LOG_ERROR("module.animus", "Animus.ClassRole.Stage \"{}\" is not a stage; using \"party\"", stage);
+        CurriculumStage = Curriculum::Stage::Party;
+        LOG_ERROR("module.animus", "Animus.Curriculum.Stage \"{}\" is not a stage; using \"party\"", stage);
     }
 }

@@ -16,8 +16,8 @@
  * with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
-#ifndef ANIMUS_CLASS_ROLE_GEAR_BUILDER_H
-#define ANIMUS_CLASS_ROLE_GEAR_BUILDER_H
+#ifndef ANIMUS_CURRICULUM_GEAR_BUILDER_H
+#define ANIMUS_CURRICULUM_GEAR_BUILDER_H
 
 #include "ClassRoleProfile.h"
 #include <array>
@@ -26,7 +26,7 @@
 
 class Player;
 
-namespace Animus::ClassRole
+namespace Animus::Curriculum
 {
     class ClassKit;
 

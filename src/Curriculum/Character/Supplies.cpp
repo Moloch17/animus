@@ -17,8 +17,8 @@
  */
 
 #include "Supplies.h"
-#include "ClassRoleLayout.h"
 #include "DatabaseEnv.h"
+#include "Layout.h"
 #include "Log.h"
 #include "Map.h"
 #include "ObjectMgr.h"
@@ -42,13 +42,13 @@ namespace
     constexpr uint8 HUNTER_PET_LEVEL = 10;
 }
 
-Animus::ClassRole::ConsumablePool const& Animus::ClassRole::ConsumablePool::Instance()
+Animus::Curriculum::ConsumablePool const& Animus::Curriculum::ConsumablePool::Instance()
 {
     static ConsumablePool const pool;
     return pool;
 }
 
-Animus::ClassRole::ConsumablePool::ConsumablePool()
+Animus::Curriculum::ConsumablePool::ConsumablePool()
 {
     std::unordered_set<uint32> sold;
     if (QueryResult result = WorldDatabase.Query("SELECT DISTINCT CAST(item AS SIGNED) FROM npc_vendor"))
@@ -85,7 +85,7 @@ Animus::ClassRole::ConsumablePool::ConsumablePool()
     LOG_INFO("module.animus", "Consumables: {} foods, {} drinks sold by vendors", _food.size(), _drink.size());
 }
 
-uint32 Animus::ClassRole::ConsumablePool::Best(std::vector<std::pair<uint8, uint32>> const& items, uint8 level)
+uint32 Animus::Curriculum::ConsumablePool::Best(std::vector<std::pair<uint8, uint32>> const& items, uint8 level)
 {
     uint32 best = 0;
     for (auto const& [reqLevel, itemId] : items)
@@ -95,13 +95,13 @@ uint32 Animus::ClassRole::ConsumablePool::Best(std::vector<std::pair<uint8, uint
     return best;
 }
 
-Animus::ClassRole::StablePool const& Animus::ClassRole::StablePool::Instance()
+Animus::Curriculum::StablePool const& Animus::Curriculum::StablePool::Instance()
 {
     static StablePool const pool;
     return pool;
 }
 
-Animus::ClassRole::StablePool::StablePool()
+Animus::Curriculum::StablePool::StablePool()
 {
     std::unordered_set<uint32> spawned;
     if (QueryResult result = WorldDatabase.Query("SELECT DISTINCT id FROM creature"))
@@ -135,7 +135,7 @@ Animus::ClassRole::StablePool::StablePool()
     LOG_INFO("module.animus", "Stable: {} tameable beast families", _beastsByFamily.size());
 }
 
-std::vector<uint32> Animus::ClassRole::StablePool::Random(uint32 count) const
+std::vector<uint32> Animus::Curriculum::StablePool::Random(uint32 count) const
 {
     std::vector<uint32> families(_beastsByFamily.size());
     for (uint32 i = 0; i < families.size(); ++i)
@@ -153,7 +153,7 @@ std::vector<uint32> Animus::ClassRole::StablePool::Random(uint32 count) const
     return stable;
 }
 
-void Animus::ClassRole::StockConsumables(Player* bot, uint32 food, uint32 drink)
+void Animus::Curriculum::StockConsumables(Player* bot, uint32 food, uint32 drink)
 {
     for (uint32 item : { food, drink })
     {
@@ -166,7 +166,7 @@ void Animus::ClassRole::StockConsumables(Player* bot, uint32 food, uint32 drink)
     }
 }
 
-bool Animus::ClassRole::CallHunterBeast(Player* bot, uint32 entry)
+bool Animus::Curriculum::CallHunterBeast(Player* bot, uint32 entry)
 {
     if (bot->getClass() != CLASS_HUNTER || bot->GetPetGUID() || bot->GetLevel() < HUNTER_PET_LEVEL || !entry)
         return false;

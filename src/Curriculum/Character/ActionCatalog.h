@@ -16,8 +16,8 @@
  * with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
-#ifndef ANIMUS_CLASS_ROLE_ACTION_CATALOG_H
-#define ANIMUS_CLASS_ROLE_ACTION_CATALOG_H
+#ifndef ANIMUS_CURRICULUM_ACTION_CATALOG_H
+#define ANIMUS_CURRICULUM_ACTION_CATALOG_H
 
 #include "Define.h"
 #include <string>
@@ -26,7 +26,7 @@
 class Player;
 class SpellInfo;
 
-namespace Animus::ClassRole
+namespace Animus::Curriculum
 {
     class ClassKit;
     class TalentBuilder;

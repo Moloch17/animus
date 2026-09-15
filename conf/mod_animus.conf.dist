@@ -40,7 +40,7 @@ Animus.DecisionMs = 50
 ###################################################################################################
 # CLASS/ROLE COMPANIONS
 #
-#    Animus.ClassRole.Stage
+#    Animus.Curriculum.Stage
 #        Description: Which curriculum stage's models class/role companions (".animus summon") play:
 #                     <class>_<role>_<stage>.amdl in Animus.ModelDir, exported by mod-animus-forge with
 #                     its layout manifest (<class>_<role>_<stage>.json) beside it. A model whose manifest
@@ -50,15 +50,15 @@ Animus.DecisionMs = 50
 #                     "companion", "gauntlet", "pack", "duel", "dummy", "pvp", "arena"
 #                              - the models of that stage (class_role_<stage>)
 
-Animus.ClassRole.Stage = "party"
+Animus.Curriculum.Stage = "party"
 
 #
-#    Animus.ClassRole.DecisionMs
+#    Animus.Curriculum.DecisionMs
 #        Description: Game time between a class/role companion's model decisions, in milliseconds: the
 #                     decision interval its models were trained with (50 ms per world tick of
 #                     AnimusForge.DecisionTicks in training).
 #        Default:     100
 
-Animus.ClassRole.DecisionMs = 100
+Animus.Curriculum.DecisionMs = 100
 
 ###################################################################################################

@@ -182,7 +182,7 @@ namespace
     }
 }
 
-bool Animus::ClassRole::ActionCatalog::IsCombatSpell(SpellInfo const* info)
+bool Animus::Curriculum::ActionCatalog::IsCombatSpell(SpellInfo const* info)
 {
     if (!info || info->IsPassive())
         return false;
@@ -233,7 +233,7 @@ bool Animus::ClassRole::ActionCatalog::IsCombatSpell(SpellInfo const* info)
     return useful;
 }
 
-SpellInfo const* Animus::ClassRole::ActionCatalog::KnownRank(Player const* bot, uint32 firstRank)
+SpellInfo const* Animus::Curriculum::ActionCatalog::KnownRank(Player const* bot, uint32 firstRank)
 {
     SpellInfo const* first = sSpellMgr->GetSpellInfo(firstRank);
     if (!first)
@@ -251,7 +251,7 @@ SpellInfo const* Animus::ClassRole::ActionCatalog::KnownRank(Player const* bot, 
     return bot->HasSpell(first->Id) ? first : nullptr;
 }
 
-Animus::ClassRole::ActionCatalog::ActionCatalog(uint8 playerClass, ClassKit const& kit, TalentBuilder const& talents)
+Animus::Curriculum::ActionCatalog::ActionCatalog(uint8 playerClass, ClassKit const& kit, TalentBuilder const& talents)
 {
     std::set<uint32> candidates;
 
@@ -346,7 +346,7 @@ Animus::ClassRole::ActionCatalog::ActionCatalog(uint8 playerClass, ClassKit cons
         _actions.size(), _tactical.size(), _sustain.size(), candidates.size());
 }
 
-bool Animus::ClassRole::ActionCatalog::IsTacticalSpell(SpellInfo const* info)
+bool Animus::Curriculum::ActionCatalog::IsTacticalSpell(SpellInfo const* info)
 {
     if (!info || info->IsPassive())
         return false;
@@ -396,7 +396,7 @@ bool Animus::ClassRole::ActionCatalog::IsTacticalSpell(SpellInfo const* info)
     return tactical;
 }
 
-bool Animus::ClassRole::ActionCatalog::IsSustainSpell(SpellInfo const* info)
+bool Animus::Curriculum::ActionCatalog::IsSustainSpell(SpellInfo const* info)
 {
     if (!info || info->IsPassive())
         return false;
@@ -435,7 +435,7 @@ bool Animus::ClassRole::ActionCatalog::IsSustainSpell(SpellInfo const* info)
     return sustain;
 }
 
-bool Animus::ClassRole::ActionCatalog::IsInterruptingSpell(SpellInfo const* info)
+bool Animus::Curriculum::ActionCatalog::IsInterruptingSpell(SpellInfo const* info)
 {
     for (SpellEffectInfo const& effect : info->GetEffects())
     {

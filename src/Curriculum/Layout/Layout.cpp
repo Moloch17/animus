@@ -16,7 +16,7 @@
  * with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include "ClassRoleLayout.h"
+#include "Layout.h"
 #include "SharedDefines.h"
 #include "SpellInfo.h"
 #include "SpellMgr.h"
@@ -25,7 +25,7 @@
 
 namespace
 {
-    using Animus::ClassRole::ActionCatalog;
+    using Animus::Curriculum::ActionCatalog;
 
     std::string ActionJson(ActionCatalog::Action const& action)
     {
@@ -54,12 +54,12 @@ namespace
     }
 }
 
-float Animus::ClassRole::DamageScale(uint8 level)
+float Animus::Curriculum::DamageScale(uint8 level)
 {
     return 15.0f * std::exp(0.068f * float(level));
 }
 
-char const* Animus::ClassRole::StageScenarioName(Stage stage)
+char const* Animus::Curriculum::StageScenarioName(Stage stage)
 {
     switch (stage)
     {
@@ -76,12 +76,12 @@ char const* Animus::ClassRole::StageScenarioName(Stage stage)
     return "class_role";
 }
 
-char const* Animus::ClassRole::StageSuffix(Stage stage)
+char const* Animus::Curriculum::StageSuffix(Stage stage)
 {
     return StageScenarioName(stage) + std::char_traits<char>::length("class_role");
 }
 
-Animus::ClassRole::Layout Animus::ClassRole::Layout::Build(ClassRoleProfile const& profile, Stage stage)
+Animus::Curriculum::Layout Animus::Curriculum::Layout::Build(ClassRoleProfile const& profile, Stage stage)
 {
     // Every stage keeps the previous stage's layout unchanged and appends its own (see Stage).
     Layout layout;
@@ -163,12 +163,12 @@ Animus::ClassRole::Layout Animus::ClassRole::Layout::Build(ClassRoleProfile cons
     return layout;
 }
 
-std::string Animus::ClassRole::Layout::ModelName() const
+std::string Animus::Curriculum::Layout::ModelName() const
 {
     return Profile->ScenarioName + StageSuffix(StageId);
 }
 
-std::string Animus::ClassRole::Layout::Manifest() const
+std::string Animus::Curriculum::Layout::Manifest() const
 {
     std::string actions = "[";
     std::vector<ActionCatalog::Action> const& catalog = Catalog().Actions();

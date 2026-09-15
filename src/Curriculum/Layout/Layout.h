@@ -16,8 +16,8 @@
  * with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
-#ifndef ANIMUS_CLASS_ROLE_LAYOUT_H
-#define ANIMUS_CLASS_ROLE_LAYOUT_H
+#ifndef ANIMUS_CURRICULUM_LAYOUT_H
+#define ANIMUS_CURRICULUM_LAYOUT_H
 
 #include "ActionCatalog.h"
 #include "ClassRoleAssets.h"
@@ -31,7 +31,7 @@
  * depends on. A model is exported with the manifest of the layout it was trained on, and is only played by a layout
  * whose manifest is the same (ModelLibrary).
  */
-namespace Animus::ClassRole
+namespace Animus::Curriculum
 {
     /// A curriculum stage. Each stage is its own scenario (`class_role`, `class_role_duel`, ...), so every earlier
     /// stage stays repeatable, and each stage's observations and actions extend the previous stage's per layout,

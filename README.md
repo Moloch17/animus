@@ -29,13 +29,13 @@ stable of beasts to call. It joins your group (one is created if you have none; 
 companions, and the group must have room). Up to four companions per player.
 
 - **Models:** each companion plays `<class>_<role><stage suffix>.amdl` from `Animus.ModelDir` for
-  `Animus.ClassRole.Stage` (`warrior_tank_party.amdl` for the default `party` stage). Every model must have its layout
+  `Animus.Curriculum.Stage` (`warrior_tank_party.amdl` for the default `party` stage). Every model must have its layout
   manifest beside it (`warrior_tank_party.json`, exported with the model), and the manifest must be exactly the one
   this server builds for the layout: same stage, class/role, sizes, block offsets, actions and talents. A model
   without a manifest or with a different one is refused (logged once, and shown by `.animus list`); its companion
   only follows you.
-- **Decisions:** every `Animus.ClassRole.DecisionMs` (100) each companion observes itself, its target, the enemies, you and the
-  other companions (`src/ClassRole/SeatEncoder.*`), its model picks an allowed action, and the action is applied as
+- **Decisions:** every `Animus.Curriculum.DecisionMs` (100) each companion observes itself, its target, the enemies, you and the
+  other companions (`src/Curriculum/Layout/SeatEncoder.*`), its model picks an allowed action, and the action is applied as
   a client would: casts, item uses, movement, target selection, pet commands, heals on party members.
 - **Enemies:** everything attacking you, a companion or their pets, and what any of you attack, fills up to four
   enemy slots for the current fight; the fight is over when none of them is still alive and fighting.

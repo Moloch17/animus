@@ -25,7 +25,7 @@
 
 namespace Animus
 {
-    namespace ClassRole
+    namespace Curriculum
     {
         struct Layout;
     }
@@ -45,7 +45,7 @@ namespace Animus
         void Reset(std::string dir);
 
         /// The layout's model, or null with `error` set. A failure is remembered until the next Reset.
-        MlpPolicy* Find(ClassRole::Layout const& layout, std::string& error);
+        MlpPolicy* Find(Curriculum::Layout const& layout, std::string& error);
 
     private:
         struct Entry

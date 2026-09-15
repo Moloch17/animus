@@ -21,11 +21,11 @@
 
 namespace
 {
-    using Animus::ClassRole::RangeBand;
-    using Animus::ClassRole::Role;
-    using Animus::ClassRole::SpecProfile;
-    using Animus::ClassRole::StatProfile;
-    using Animus::ClassRole::WeaponLayout;
+    using Animus::Curriculum::RangeBand;
+    using Animus::Curriculum::Role;
+    using Animus::Curriculum::SpecProfile;
+    using Animus::Curriculum::StatProfile;
+    using Animus::Curriculum::WeaponLayout;
 
     SpecProfile Spec(std::string name, uint8 tabPage, StatProfile stats, RangeBand range,
         std::vector<WeaponLayout> weapons, bool wand = false)
@@ -41,7 +41,7 @@ namespace
     }
 }
 
-char const* Animus::ClassRole::RoleName(Role role)
+char const* Animus::Curriculum::RoleName(Role role)
 {
     switch (role)
     {
@@ -53,7 +53,7 @@ char const* Animus::ClassRole::RoleName(Role role)
     return "dps";
 }
 
-std::vector<Animus::ClassRole::ClassRoleProfile> const& Animus::ClassRole::ClassRoleProfiles()
+std::vector<Animus::Curriculum::ClassRoleProfile> const& Animus::Curriculum::ClassRoleProfiles()
 {
     using enum WeaponLayout;
     using SP = StatProfile;

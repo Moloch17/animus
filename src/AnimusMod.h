@@ -20,7 +20,7 @@
 #define ANIMUS_MOD_H
 
 #include "AnimusConfig.h"
-#include "ClassRoleParty.h"
+#include "CompanionParty.h"
 #include "MlpPolicy.h"
 #include "ModelLibrary.h"
 #include "MovementTree.h"
@@ -58,7 +58,7 @@ namespace Animus
         bool Dismiss(Player* owner, std::string& message);
 
         /// `classRole` is a class/role profile name (priest_heal). The companion plays that class/role's model for
-        /// Animus.ClassRole.Stage and joins the owner's group.
+        /// Animus.Curriculum.Stage and joins the owner's group.
         bool Summon(Player* owner, std::string_view classRole, std::string& message);
 
         /// One line per class/role companion of `owner`.
@@ -80,20 +80,20 @@ namespace Animus
         void RemoveAll();
 
         /// The layout of a profile at the configured stage, built on first use and kept (companions point at it).
-        ClassRole::Layout const& LayoutFor(ClassRole::ClassRoleProfile const& profile);
+        Curriculum::Layout const& LayoutFor(Curriculum::ClassRoleProfile const& profile);
 
         AnimusConfig _config;
         MlpPolicy _policy;
         std::string _modelError;
         MovementTree _tree;
         ModelLibrary _models;
-        std::unordered_map<std::string, ClassRole::Layout> _layouts;        // by model name
+        std::unordered_map<std::string, Curriculum::Layout> _layouts;        // by model name
 
         std::unordered_map<ObjectGuid, std::unique_ptr<WarriorCompanion>> _companions;  // by owner
         std::unordered_map<ObjectGuid, WarriorCompanion*> _byBot;
 
-        std::unordered_map<ObjectGuid, std::unique_ptr<ClassRoleParty>> _parties;   // by owner
-        std::unordered_map<ObjectGuid, ClassRoleParty*> _partyByBot;
+        std::unordered_map<ObjectGuid, std::unique_ptr<CompanionParty>> _parties;   // by owner
+        std::unordered_map<ObjectGuid, CompanionParty*> _partyByBot;
     };
 }
 

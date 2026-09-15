@@ -16,8 +16,8 @@
  * with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
-#ifndef ANIMUS_CLASS_ROLE_SUPPLIES_H
-#define ANIMUS_CLASS_ROLE_SUPPLIES_H
+#ifndef ANIMUS_CURRICULUM_SUPPLIES_H
+#define ANIMUS_CURRICULUM_SUPPLIES_H
 
 #include "Define.h"
 #include <utility>
@@ -29,7 +29,7 @@ class Player;
  * What a class/role character carries beyond its kit and gear, as in training: food and drink for its level, and a
  * hunter's stable of beasts to call.
  */
-namespace Animus::ClassRole
+namespace Animus::Curriculum
 {
     /// Vendor-sold food (health regeneration) and drink (mana regeneration) by required level.
     class ConsumablePool

@@ -16,7 +16,7 @@
  * with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include "ClassRoleParty.h"
+#include "CompanionParty.h"
 #include "BotFactory.h"
 #include "ClassRoleAssets.h"
 #include "Creature.h"
@@ -38,7 +38,7 @@
 
 namespace
 {
-    using namespace Animus::ClassRole;
+    using namespace Animus::Curriculum;
 
     enum PartySpells : uint32
     {
@@ -84,13 +84,13 @@ namespace
     }
 }
 
-Animus::ClassRoleParty::ClassRoleParty(ObjectGuid owner) : _owner(owner)
+Animus::CompanionParty::CompanionParty(ObjectGuid owner) : _owner(owner)
 {
 }
 
-Animus::ClassRoleParty::~ClassRoleParty() = default;
+Animus::CompanionParty::~CompanionParty() = default;
 
-bool Animus::ClassRoleParty::Add(Player* owner, ClassRole::Layout const& layout, std::string& message)
+bool Animus::CompanionParty::Add(Player* owner, Curriculum::Layout const& layout, std::string& message)
 {
     if (_members.size() >= MAX_COMPANIONS)
     {
@@ -155,7 +155,7 @@ bool Animus::ClassRoleParty::Add(Player* owner, ClassRole::Layout const& layout,
     member->Level = level;
     member->Spec = uint8(urand(0, uint32(profile.Specs.size()) - 1));
 
-    // As the forge builds a seat (ClassRoleScenario::BuildSeat, Configure, StartDuel, StartSeatPack). Talent points
+    // As the forge builds a seat (StageScenario::BuildSeat, Configure, StartDuel, StartSeatPack). Talent points
     // depend on the map for death knights; the bot is on the owner's map now.
     SpecProfile const& specProfile = profile.Specs[member->Spec];
     bot->InitTalentForLevel();
@@ -227,7 +227,7 @@ bool Animus::ClassRoleParty::Add(Player* owner, ClassRole::Layout const& layout,
     return true;
 }
 
-Animus::ClassRoleParty::Status Animus::ClassRoleParty::Update(uint32 diff, Settings const& settings,
+Animus::CompanionParty::Status Animus::CompanionParty::Update(uint32 diff, Settings const& settings,
     ModelLibrary& models)
 {
     _nowMs += diff;
@@ -255,7 +255,7 @@ Animus::ClassRoleParty::Status Animus::ClassRoleParty::Update(uint32 diff, Setti
     return Status::Active;
 }
 
-void Animus::ClassRoleParty::UpdatePull(Player* owner, std::vector<Player*> const& bots)
+void Animus::CompanionParty::UpdatePull(Player* owner, std::vector<Player*> const& bots)
 {
     Map* map = owner->GetMap();
 
@@ -343,7 +343,7 @@ void Animus::ClassRoleParty::UpdatePull(Player* owner, std::vector<Player*> cons
         member->TargetSlot = 0;
 }
 
-void Animus::ClassRoleParty::StartEpisode()
+void Animus::CompanionParty::StartEpisode()
 {
     _episodeStarted = true;
     _pullsCleared = 0;
@@ -354,7 +354,7 @@ void Animus::ClassRoleParty::StartEpisode()
             StockConsumables(bot, member->FoodItem, member->DrinkItem);
 }
 
-void Animus::ClassRoleParty::UpdateMember(Member& member, Player* bot, Player* owner, uint32 diff,
+void Animus::CompanionParty::UpdateMember(Member& member, Player* bot, Player* owner, uint32 diff,
     Settings const& settings, ModelLibrary& models)
 {
     if (!bot || !bot->IsInWorld() || bot->IsBeingTeleported())
@@ -420,7 +420,7 @@ void Animus::ClassRoleParty::UpdateMember(Member& member, Player* bot, Player* o
     Decide(member, bot, owner, *policy);
 }
 
-void Animus::ClassRoleParty::Decide(Member& member, Player* bot, Player* owner, MlpPolicy& policy)
+void Animus::CompanionParty::Decide(Member& member, Player* bot, Player* owner, MlpPolicy& policy)
 {
     bool const inCombat = bot->IsInCombat();
     if (inCombat && !member.InCombat)
@@ -452,7 +452,7 @@ void Animus::ClassRoleParty::Decide(Member& member, Player* bot, Player* owner, 
         SeatEncoder::StartCallBeastCooldown(bot);
 }
 
-Unit* Animus::ClassRoleParty::CurrentTarget(Member& member, Player* bot) const
+Unit* Animus::CompanionParty::CurrentTarget(Member& member, Player* bot) const
 {
     if (member.TargetSlot < _enemies.size())
         if (Unit* selected = _enemyUnits[member.TargetSlot]; selected && selected->IsAlive())
@@ -476,7 +476,7 @@ Unit* Animus::ClassRoleParty::CurrentTarget(Member& member, Player* bot) const
     return nearest;
 }
 
-Animus::ClassRole::SeatView Animus::ClassRoleParty::View(Member const& member, Player* bot, Player* owner,
+Animus::Curriculum::SeatView Animus::CompanionParty::View(Member const& member, Player* bot, Player* owner,
     Unit* target) const
 {
     Layout const& layout = *member.L;
@@ -561,7 +561,7 @@ Animus::ClassRole::SeatView Animus::ClassRoleParty::View(Member const& member, P
     return view;
 }
 
-void Animus::ClassRoleParty::RecordDamage(ObjectGuid attacker, ObjectGuid victim, uint32 dealt, uint32 taken)
+void Animus::CompanionParty::RecordDamage(ObjectGuid attacker, ObjectGuid victim, uint32 dealt, uint32 taken)
 {
     for (std::unique_ptr<Member> const& member : _members)
     {
@@ -572,7 +572,7 @@ void Animus::ClassRoleParty::RecordDamage(ObjectGuid attacker, ObjectGuid victim
     }
 }
 
-std::vector<ObjectGuid> Animus::ClassRoleParty::GetBotGUIDs() const
+std::vector<ObjectGuid> Animus::CompanionParty::GetBotGUIDs() const
 {
     std::vector<ObjectGuid> bots;
     for (std::unique_ptr<Member> const& member : _members)
@@ -580,7 +580,7 @@ std::vector<ObjectGuid> Animus::ClassRoleParty::GetBotGUIDs() const
     return bots;
 }
 
-std::vector<std::string> Animus::ClassRoleParty::Describe(ModelLibrary& models) const
+std::vector<std::string> Animus::CompanionParty::Describe(ModelLibrary& models) const
 {
     std::vector<std::string> lines;
     for (std::unique_ptr<Member> const& member : _members)
@@ -593,7 +593,7 @@ std::vector<std::string> Animus::ClassRoleParty::Describe(ModelLibrary& models) 
     return lines;
 }
 
-void Animus::ClassRoleParty::DestroyAll()
+void Animus::CompanionParty::DestroyAll()
 {
     std::vector<std::unique_ptr<Member>> members = std::move(_members);
     _members.clear();
@@ -603,7 +603,7 @@ void Animus::ClassRoleParty::DestroyAll()
             Destroy(bot);
 }
 
-void Animus::ClassRoleParty::Destroy(Player* bot)
+void Animus::CompanionParty::Destroy(Player* bot)
 {
     LOG_INFO("module.animus", "Removing companion {} ({})", bot->GetName(), bot->GetGUID().ToString());
 

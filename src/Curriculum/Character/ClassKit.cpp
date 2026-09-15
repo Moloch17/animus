@@ -84,7 +84,7 @@ namespace
     }
 }
 
-Animus::ClassRole::ClassKit::ClassKit(uint8 playerClass) : _class(playerClass)
+Animus::Curriculum::ClassKit::ClassKit(uint8 playerClass) : _class(playerClass)
 {
     std::set<uint32> seen;
 
@@ -126,12 +126,12 @@ Animus::ClassRole::ClassKit::ClassKit(uint8 playerClass) : _class(playerClass)
             playerClass);
 }
 
-uint8 Animus::ClassRole::ClassKit::MinLevel() const
+uint8 Animus::Curriculum::ClassKit::MinLevel() const
 {
     return _class == CLASS_DEATH_KNIGHT ? DEATH_KNIGHT_START_LEVEL : 1;
 }
 
-void Animus::ClassRole::ClassKit::Learn(Player* bot) const
+void Animus::Curriculum::ClassKit::Learn(Player* bot) const
 {
     uint8 const level = bot->GetLevel();
 
@@ -153,7 +153,7 @@ void Animus::ClassRole::ClassKit::Learn(Player* bot) const
     }
 }
 
-void Animus::ClassRole::ClassKit::StoreReagents(Player* bot) const
+void Animus::Curriculum::ClassKit::StoreReagents(Player* bot) const
 {
     for (Reagent const& reagent : _reagents)
     {
@@ -171,7 +171,7 @@ void Animus::ClassRole::ClassKit::StoreReagents(Player* bot) const
     }
 }
 
-uint32 Animus::ClassRole::ClassKit::ArmorSubclass(uint8 level) const
+uint32 Animus::Curriculum::ClassKit::ArmorSubclass(uint8 level) const
 {
     switch (_class)
     {

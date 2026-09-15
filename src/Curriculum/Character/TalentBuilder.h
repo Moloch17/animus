@@ -16,8 +16,8 @@
  * with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
-#ifndef ANIMUS_CLASS_ROLE_TALENT_BUILDER_H
-#define ANIMUS_CLASS_ROLE_TALENT_BUILDER_H
+#ifndef ANIMUS_CURRICULUM_TALENT_BUILDER_H
+#define ANIMUS_CURRICULUM_TALENT_BUILDER_H
 
 #include "Define.h"
 #include <array>
@@ -25,7 +25,7 @@
 
 class Player;
 
-namespace Animus::ClassRole
+namespace Animus::Curriculum
 {
     /// A class's three talent trees and random builds over them.
     ///

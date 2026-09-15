@@ -16,14 +16,14 @@
  * with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
-#ifndef ANIMUS_CLASS_ROLE_CLASS_ROLE_PROFILE_H
-#define ANIMUS_CLASS_ROLE_CLASS_ROLE_PROFILE_H
+#ifndef ANIMUS_CURRICULUM_CLASS_ROLE_PROFILE_H
+#define ANIMUS_CURRICULUM_CLASS_ROLE_PROFILE_H
 
 #include "Define.h"
 #include <string>
 #include <vector>
 
-namespace Animus::ClassRole
+namespace Animus::Curriculum
 {
     enum class Role : uint8
     {

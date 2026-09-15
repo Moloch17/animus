@@ -23,7 +23,7 @@
 #include <algorithm>
 #include <map>
 
-Animus::ClassRole::TalentBuilder::TalentBuilder(uint8 playerClass)
+Animus::Curriculum::TalentBuilder::TalentBuilder(uint8 playerClass)
 {
     uint32 const classMask = 1 << (playerClass - 1);
 
@@ -83,7 +83,7 @@ Animus::ClassRole::TalentBuilder::TalentBuilder(uint8 playerClass)
     }
 }
 
-Animus::ClassRole::TalentBuilder::Build Animus::ClassRole::TalentBuilder::Random(uint8 specTab, uint32 points) const
+Animus::Curriculum::TalentBuilder::Build Animus::Curriculum::TalentBuilder::Random(uint8 specTab, uint32 points) const
 {
     Build build;
     build.Ranks.assign(_talents.size(), 0);
@@ -100,7 +100,7 @@ Animus::ClassRole::TalentBuilder::Build Animus::ClassRole::TalentBuilder::Random
     return build;
 }
 
-void Animus::ClassRole::TalentBuilder::Spend(Build& build, uint32 treeMask, uint32 points) const
+void Animus::Curriculum::TalentBuilder::Spend(Build& build, uint32 treeMask, uint32 points) const
 {
     std::vector<uint32> candidates;
     for (uint32 point = 0; point < points; ++point)
@@ -131,7 +131,7 @@ void Animus::ClassRole::TalentBuilder::Spend(Build& build, uint32 treeMask, uint
     }
 }
 
-uint32 Animus::ClassRole::TalentBuilder::Apply(Player* bot, Build const& build) const
+uint32 Animus::Curriculum::TalentBuilder::Apply(Player* bot, Build const& build) const
 {
     for (Step const& step : build.Order)
         bot->LearnTalent(_talents[step.Index].TalentId, step.Rank);

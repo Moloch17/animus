@@ -121,10 +121,10 @@ void Animus::AnimusMod::OnUpdate(uint32 diff)
     for (ObjectGuid const& owner : dismissed)
         Remove(owner);
 
-    ClassRoleParty::Settings const settings{ _config.ClassRoleDecisionMs };
+    CompanionParty::Settings const settings{ _config.CurriculumDecisionMs };
     std::vector<ObjectGuid> gone;
     for (auto const& [owner, party] : _parties)
-        if (party->Update(diff, settings, _models) == ClassRoleParty::Status::Dismiss)
+        if (party->Update(diff, settings, _models) == CompanionParty::Status::Dismiss)
             gone.push_back(owner);
 
     for (ObjectGuid const& owner : gone)
@@ -276,22 +276,22 @@ bool Animus::AnimusMod::Summon(Player* owner, std::string_view classRole, std::s
         return false;
     }
 
-    std::vector<ClassRole::ClassRoleProfile> const& profiles = ClassRole::ClassRoleProfiles();
+    std::vector<Curriculum::ClassRoleProfile> const& profiles = Curriculum::ClassRoleProfiles();
     auto const profile = std::find_if(profiles.begin(), profiles.end(),
-        [&](ClassRole::ClassRoleProfile const& candidate) { return candidate.ScenarioName == classRole; });
+        [&](Curriculum::ClassRoleProfile const& candidate) { return candidate.ScenarioName == classRole; });
     if (profile == profiles.end())
     {
         message = "Unknown class/role. Choose one of:";
-        for (ClassRole::ClassRoleProfile const& candidate : profiles)
+        for (Curriculum::ClassRoleProfile const& candidate : profiles)
             message += " " + candidate.ScenarioName;
         return false;
     }
 
-    ClassRole::Layout const& layout = LayoutFor(*profile);
+    Curriculum::Layout const& layout = LayoutFor(*profile);
 
-    std::unique_ptr<ClassRoleParty>& party = _parties[owner->GetGUID()];
+    std::unique_ptr<CompanionParty>& party = _parties[owner->GetGUID()];
     if (!party)
-        party = std::make_unique<ClassRoleParty>(owner->GetGUID());
+        party = std::make_unique<CompanionParty>(owner->GetGUID());
 
     if (!party->Add(owner, layout, message))
     {
@@ -370,7 +370,7 @@ void Animus::AnimusMod::RemoveParty(ObjectGuid owner)
         return;
 
     // Unlink before destroying: logging the bots out re-enters the module through OnPlayerLogout.
-    std::unique_ptr<ClassRoleParty> const party = std::move(itr->second);
+    std::unique_ptr<CompanionParty> const party = std::move(itr->second);
     _parties.erase(itr);
     std::erase_if(_partyByBot, [&](auto const& entry) { return entry.second == party.get(); });
 
@@ -386,14 +386,14 @@ void Animus::AnimusMod::RemoveAll()
         RemoveParty(_parties.begin()->first);
 }
 
-Animus::ClassRole::Layout const& Animus::AnimusMod::LayoutFor(ClassRole::ClassRoleProfile const& profile)
+Animus::Curriculum::Layout const& Animus::AnimusMod::LayoutFor(Curriculum::ClassRoleProfile const& profile)
 {
-    std::string const name = profile.ScenarioName + ClassRole::StageSuffix(_config.ClassRoleStage);
+    std::string const name = profile.ScenarioName + Curriculum::StageSuffix(_config.CurriculumStage);
     auto itr = _layouts.find(name);
     if (itr == _layouts.end())
     {
         // Builds the class/role's assets on first use (trainer data and item pools: a few seconds).
-        itr = _layouts.emplace(name, ClassRole::Layout::Build(profile, _config.ClassRoleStage)).first;
+        itr = _layouts.emplace(name, Curriculum::Layout::Build(profile, _config.CurriculumStage)).first;
         LOG_INFO("module.animus", "Animus built the {} layout (obs {}, actions {})", name, itr->second.ObsDim,
             itr->second.NumActions);
     }

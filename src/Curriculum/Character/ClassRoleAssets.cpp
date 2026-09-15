@@ -31,13 +31,13 @@ namespace
     /// A class's kit, talents and catalog: the same for all of its roles.
     struct ClassAssets
     {
-        std::unique_ptr<Animus::ClassRole::ClassKit> Kit;
-        std::unique_ptr<Animus::ClassRole::TalentBuilder> Talents;
-        std::unique_ptr<Animus::ClassRole::ActionCatalog> Catalog;
+        std::unique_ptr<Animus::Curriculum::ClassKit> Kit;
+        std::unique_ptr<Animus::Curriculum::TalentBuilder> Talents;
+        std::unique_ptr<Animus::Curriculum::ActionCatalog> Catalog;
     };
 }
 
-Animus::ClassRole::ClassRoleAssets const& Animus::ClassRole::ClassRoleAssets::For(ClassRoleProfile const& profile)
+Animus::Curriculum::ClassRoleAssets const& Animus::Curriculum::ClassRoleAssets::For(ClassRoleProfile const& profile)
 {
     static std::map<uint8, ClassAssets> classes;
     static std::map<ClassRoleProfile const*, ClassRoleAssets> assets;
@@ -66,7 +66,8 @@ Animus::ClassRole::ClassRoleAssets const& Animus::ClassRole::ClassRoleAssets::Fo
     return entry;
 }
 
-Animus::ClassRole::ClassRoleProfile const* Animus::ClassRole::ClassRoleAssets::FindProfile(uint8 playerClass, Role role)
+Animus::Curriculum::ClassRoleProfile const* Animus::Curriculum::ClassRoleAssets::FindProfile(uint8 playerClass,
+    Role role)
 {
     for (ClassRoleProfile const& profile : ClassRoleProfiles())
         if (profile.Class == playerClass && profile.PlayRole == role)
@@ -75,7 +76,7 @@ Animus::ClassRole::ClassRoleProfile const* Animus::ClassRole::ClassRoleAssets::F
     return nullptr;
 }
 
-std::vector<uint8> Animus::ClassRole::ClassRoleAssets::ClassesForRole(uint8 level, Role role)
+std::vector<uint8> Animus::Curriculum::ClassRoleAssets::ClassesForRole(uint8 level, Role role)
 {
     std::vector<uint8> classes;
     for (ClassRoleProfile const& profile : ClassRoleProfiles())

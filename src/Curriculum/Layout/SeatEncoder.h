@@ -16,10 +16,10 @@
  * with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
-#ifndef ANIMUS_CLASS_ROLE_SEAT_ENCODER_H
-#define ANIMUS_CLASS_ROLE_SEAT_ENCODER_H
+#ifndef ANIMUS_CURRICULUM_SEAT_ENCODER_H
+#define ANIMUS_CURRICULUM_SEAT_ENCODER_H
 
-#include "ClassRoleLayout.h"
+#include "Layout.h"
 #include "ObjectGuid.h"
 #include "TalentBuilder.h"
 #include <array>
@@ -35,7 +35,7 @@ class Unit;
  * -- who its enemies, owner, teammates and opponent are, and the episode facts only it knows -- and the encoder reads
  * everything else from the world.
  */
-namespace Animus::ClassRole
+namespace Animus::Curriculum
 {
     /// One bot's situation at a decision.
     struct SeatView : LayoutConstants

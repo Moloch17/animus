@@ -16,8 +16,8 @@
  * with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
-#ifndef ANIMUS_CLASS_ROLE_CLASS_ROLE_ASSETS_H
-#define ANIMUS_CLASS_ROLE_CLASS_ROLE_ASSETS_H
+#ifndef ANIMUS_CURRICULUM_CLASS_ROLE_ASSETS_H
+#define ANIMUS_CURRICULUM_CLASS_ROLE_ASSETS_H
 
 #include "ActionCatalog.h"
 #include "ClassKit.h"
@@ -28,7 +28,7 @@
 #include <memory>
 #include <vector>
 
-namespace Animus::ClassRole
+namespace Animus::Curriculum
 {
     /// Everything needed to build and play a character of one class/role: the class's kit, talents and action
     /// catalog (shared by the class's roles), the role's gear, and the races that can be the class.

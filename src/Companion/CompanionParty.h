@@ -16,10 +16,10 @@
  * with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
-#ifndef ANIMUS_CLASS_ROLE_PARTY_H
-#define ANIMUS_CLASS_ROLE_PARTY_H
+#ifndef ANIMUS_COMPANION_PARTY_H
+#define ANIMUS_COMPANION_PARTY_H
 
-#include "ClassRoleLayout.h"
+#include "Layout.h"
 #include "ObjectGuid.h"
 #include "SeatEncoder.h"
 #include "TalentBuilder.h"
@@ -47,7 +47,7 @@ namespace Animus
     /// the first pull after a quiet spell.
     ///
     /// World thread, except RecordDamage (map threads). Holds GUIDs; objects are resolved every update.
-    class ClassRoleParty
+    class CompanionParty
     {
     public:
         enum class Status : uint8
@@ -61,15 +61,15 @@ namespace Animus
             uint32 DecisionMs = 100;
         };
 
-        explicit ClassRoleParty(ObjectGuid owner);
-        ~ClassRoleParty();
+        explicit CompanionParty(ObjectGuid owner);
+        ~CompanionParty();
 
-        ClassRoleParty(ClassRoleParty const&) = delete;
-        ClassRoleParty& operator=(ClassRoleParty const&) = delete;
+        CompanionParty(CompanionParty const&) = delete;
+        CompanionParty& operator=(CompanionParty const&) = delete;
 
         /// Create a companion of `layout` beside the owner and add it to the owner's group (creating the group when
         /// the owner has none). False with `message` set when refused.
-        bool Add(Player* owner, ClassRole::Layout const& layout, std::string& message);
+        bool Add(Player* owner, Curriculum::Layout const& layout, std::string& message);
 
         Status Update(uint32 diff, Settings const& settings, ModelLibrary& models);
 
@@ -92,11 +92,11 @@ namespace Animus
         {
             ObjectGuid Bot;
             std::string Name;
-            ClassRole::Layout const* L = nullptr;
+            Curriculum::Layout const* L = nullptr;
             uint8 Race = 0;
             uint8 Level = 1;
             uint8 Spec = 0;
-            ClassRole::TalentBuilder::Build Build;
+            Curriculum::TalentBuilder::Build Build;
             uint32 FoodItem = 0;
             uint32 DrinkItem = 0;
             std::vector<uint32> Stable;
@@ -125,7 +125,7 @@ namespace Animus
         void Decide(Member& member, Player* bot, Player* owner, MlpPolicy& policy);
         /// Forge's CurrentTarget: the selected enemy, else the nearest living one (which becomes the selection).
         [[nodiscard]] Unit* CurrentTarget(Member& member, Player* bot) const;
-        [[nodiscard]] ClassRole::SeatView View(Member const& member, Player* bot, Player* owner, Unit* target) const;
+        [[nodiscard]] Curriculum::SeatView View(Member const& member, Player* bot, Player* owner, Unit* target) const;
         void StartEpisode();
         static void Destroy(Player* bot);
 
@@ -133,7 +133,7 @@ namespace Animus
         std::vector<std::unique_ptr<Member>> _members;
 
         // The current pull, and the episode it belongs to.
-        std::array<Unit*, ClassRole::LayoutConstants::PACK_SLOTS> _enemyUnits{};   // resolved this update
+        std::array<Unit*, Curriculum::LayoutConstants::PACK_SLOTS> _enemyUnits{};   // resolved this update
         std::vector<ObjectGuid> _enemies;                   // slot order
         uint64 _nowMs = 0;
         uint64 _pullStartMs = 0;

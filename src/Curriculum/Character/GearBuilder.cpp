@@ -33,7 +33,7 @@
 
 namespace
 {
-    using Animus::ClassRole::StatProfile;
+    using Animus::Curriculum::StatProfile;
 
     constexpr std::array<uint32, 4> LEVEL_WINDOWS = { 4, 9, 19, 99 };
     constexpr uint32 EQUIP_ATTEMPTS = 6;
@@ -235,7 +235,7 @@ namespace
     }
 }
 
-Animus::ClassRole::GearBuilder::GearBuilder(ClassRoleProfile const& profile, ClassKit const& kit)
+Animus::Curriculum::GearBuilder::GearBuilder(ClassRoleProfile const& profile, ClassKit const& kit)
     : _kit(kit), _class(profile.Class)
 {
     for (SpecProfile const& spec : profile.Specs)
@@ -262,7 +262,7 @@ Animus::ClassRole::GearBuilder::GearBuilder(ClassRoleProfile const& profile, Cla
     }
 }
 
-void Animus::ClassRole::GearBuilder::BuildPools(StatProfile stats)
+void Animus::Curriculum::GearBuilder::BuildPools(StatProfile stats)
 {
     Pools& pools = _pools[stats];
 
@@ -388,8 +388,8 @@ void Animus::ClassRole::GearBuilder::BuildPools(StatProfile stats)
         pools[POOL_CHEST].size(), pools[POOL_TRINKET].size());
 }
 
-std::vector<Animus::ClassRole::GearBuilder::Candidate const*> Animus::ClassRole::GearBuilder::Window(Pool pool, uint8 level,
-    StatProfile stats, int32 subclass, bool needStats) const
+std::vector<Animus::Curriculum::GearBuilder::Candidate const*> Animus::Curriculum::GearBuilder::Window(Pool pool,
+    uint8 level, StatProfile stats, int32 subclass, bool needStats) const
 {
     std::vector<Candidate const*> found;
     auto const pools = _pools.find(stats);
@@ -416,7 +416,7 @@ std::vector<Animus::ClassRole::GearBuilder::Candidate const*> Animus::ClassRole:
     return found;
 }
 
-bool Animus::ClassRole::GearBuilder::EquipFromPool(Player* bot, uint8 slot, Pool pool, StatProfile stats,
+bool Animus::Curriculum::GearBuilder::EquipFromPool(Player* bot, uint8 slot, Pool pool, StatProfile stats,
     int32 subclass) const
 {
     uint8 const level = bot->GetLevel();
@@ -462,7 +462,7 @@ bool Animus::ClassRole::GearBuilder::EquipFromPool(Player* bot, uint8 slot, Pool
     return false;
 }
 
-void Animus::ClassRole::GearBuilder::LearnProficiencies(Player* bot)
+void Animus::Curriculum::GearBuilder::LearnProficiencies(Player* bot)
 {
     for (uint32 i = 0; i < sSkillLineStore.GetNumRows(); ++i)
     {
@@ -477,7 +477,7 @@ void Animus::ClassRole::GearBuilder::LearnProficiencies(Player* bot)
     bot->UpdateSkillsToMaxSkillsForLevel();
 }
 
-bool Animus::ClassRole::GearBuilder::EquipWeapons(Player* bot, SpecProfile const& spec, WeaponLayout layout) const
+bool Animus::Curriculum::GearBuilder::EquipWeapons(Player* bot, SpecProfile const& spec, WeaponLayout layout) const
 {
     StatProfile const stats = spec.Stats;
 
@@ -513,7 +513,7 @@ bool Animus::ClassRole::GearBuilder::EquipWeapons(Player* bot, SpecProfile const
     return false;
 }
 
-void Animus::ClassRole::GearBuilder::Equip(Player* bot, SpecProfile const& spec) const
+void Animus::Curriculum::GearBuilder::Equip(Player* bot, SpecProfile const& spec) const
 {
     // Starting outfit, the previous episode's set, bags and backpack contents.
     for (uint8 slot = EQUIPMENT_SLOT_START; slot < INVENTORY_SLOT_ITEM_END; ++slot)
@@ -555,7 +555,7 @@ void Animus::ClassRole::GearBuilder::Equip(Player* bot, SpecProfile const& spec)
     _kit.StoreReagents(bot);
 }
 
-void Animus::ClassRole::GearBuilder::StoreAmmo(Player* bot) const
+void Animus::Curriculum::GearBuilder::StoreAmmo(Player* bot) const
 {
     Item const* ranged = bot->GetItemByPos(INVENTORY_SLOT_BAG_0, EQUIPMENT_SLOT_RANGED);
     if (!ranged)

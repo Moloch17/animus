@@ -38,16 +38,16 @@
 
 namespace
 {
-    using Animus::ClassRole::ActionCatalog;
-    using Animus::ClassRole::Layout;
-    using Animus::ClassRole::LayoutConstants;
-    using Animus::ClassRole::RangeBand;
-    using Animus::ClassRole::Role;
-    using Animus::ClassRole::SeatActionResult;
-    using Animus::ClassRole::SeatEncoder;
-    using Animus::ClassRole::SeatView;
-    using Animus::ClassRole::Stage;
-    using Animus::ClassRole::TalentBuilder;
+    using Animus::Curriculum::ActionCatalog;
+    using Animus::Curriculum::Layout;
+    using Animus::Curriculum::LayoutConstants;
+    using Animus::Curriculum::RangeBand;
+    using Animus::Curriculum::Role;
+    using Animus::Curriculum::SeatActionResult;
+    using Animus::Curriculum::SeatEncoder;
+    using Animus::Curriculum::SeatView;
+    using Animus::Curriculum::Stage;
+    using Animus::Curriculum::TalentBuilder;
 
     constexpr std::array<uint8, 10> PLAYABLE_RACES =
     {
@@ -1004,7 +1004,7 @@ namespace
     }
 }
 
-SpellInfo const* Animus::ClassRole::SeatEncoder::TrinketSpell(Item const* item)
+SpellInfo const* Animus::Curriculum::SeatEncoder::TrinketSpell(Item const* item)
 {
     if (!item)
         return nullptr;
@@ -1016,7 +1016,7 @@ SpellInfo const* Animus::ClassRole::SeatEncoder::TrinketSpell(Item const* item)
     return nullptr;
 }
 
-void Animus::ClassRole::SeatEncoder::Observe(SeatView const& view, float* obs, uint8* mask)
+void Animus::Curriculum::SeatEncoder::Observe(SeatView const& view, float* obs, uint8* mask)
 {
     Layout const& layout = *view.L;
     std::fill(obs, obs + layout.ObsDim, 0.0f);
@@ -1175,7 +1175,7 @@ void Animus::ClassRole::SeatEncoder::Observe(SeatView const& view, float* obs, u
     }
 }
 
-void Animus::ClassRole::SeatEncoder::Apply(SeatView& view, int32 action, SeatActionResult& result)
+void Animus::Curriculum::SeatEncoder::Apply(SeatView& view, int32 action, SeatActionResult& result)
 {
     Player* bot = view.Bot;
     if (!bot || !view.L)
@@ -1262,13 +1262,13 @@ void Animus::ClassRole::SeatEncoder::Apply(SeatView& view, int32 action, SeatAct
     ApplySpellAction(view, target, def, result);
 }
 
-void Animus::ClassRole::SeatEncoder::StartCallBeastCooldown(Player* bot)
+void Animus::Curriculum::SeatEncoder::StartCallBeastCooldown(Player* bot)
 {
     if (SpellInfo const* callPet = sSpellMgr->GetSpellInfo(SPELL_CALL_PET))
         bot->GetGlobalCooldownMgr().AddGlobalCooldown(callPet, CALL_BEAST_GCD_MS);
 }
 
-bool Animus::ClassRole::SeatEncoder::PetAttack(Player* bot, Unit* target)
+bool Animus::Curriculum::SeatEncoder::PetAttack(Player* bot, Unit* target)
 {
     bool ordered = false;
     for (Unit* controlled : bot->m_Controlled)
