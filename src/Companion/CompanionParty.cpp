@@ -20,6 +20,7 @@
 #include "BotFactory.h"
 #include "ClassRoleAssets.h"
 #include "Creature.h"
+#include "EncoderSupport.h"
 #include "Group.h"
 #include "GroupMgr.h"
 #include "Log.h"
@@ -31,8 +32,9 @@
 #include "ObjectAccessor.h"
 #include "Player.h"
 #include "Random.h"
+#include "SeatCharacter.h"
+#include "SeatEncoder.h"
 #include "StringFormat.h"
-#include "Supplies.h"
 #include <algorithm>
 #include <cmath>
 
@@ -40,14 +42,11 @@ namespace
 {
     using namespace Animus::Curriculum;
 
-    enum PartySpells : uint32
-    {
-        SPELL_BATTLE_STANCE     = 2457,
-        SPELL_DEFENSIVE_STANCE  = 71,
-    };
+    /// Companion accounts: below the library's scenario bots (BotAccounts::BASE) and far above any real realm's.
+    constexpr uint32 COMPANION_ACCOUNT_BASE = 0x7E000000;
 
     /// A party holds the owner and up to four companions, like the party stage's four seats.
-    constexpr std::size_t MAX_COMPANIONS = LayoutConstants::PARTY_MEMBERS + 1;
+    constexpr std::size_t MAX_COMPANIONS = PARTY_MEMBERS + 1;
 
     /// Quiet this long between pulls and the next pull starts a new episode (the gauntlet's longest break).
     constexpr uint64 NEW_EPISODE_QUIET_MS = 20000;
@@ -65,6 +64,10 @@ namespace
 
     /// A dead companion stands up again this long after the party is out of combat.
     constexpr uint32 RESURRECT_DELAY_MS = 10000;
+
+    /// Companions created this run. Names carry the number: real character names cannot contain digits, so a
+    /// companion never collides with a player in ObjectAccessor's name map.
+    uint32 CompanionCounter = 0;
 
     void MoveBehind(Player* bot, Player* owner)
     {
@@ -90,7 +93,7 @@ Animus::CompanionParty::CompanionParty(ObjectGuid owner) : _owner(owner)
 
 Animus::CompanionParty::~CompanionParty() = default;
 
-bool Animus::CompanionParty::Add(Player* owner, Curriculum::Layout const& layout, std::string& message)
+bool Animus::CompanionParty::Add(Player* owner, Layout const& layout, std::string& message)
 {
     if (_members.size() >= MAX_COMPANIONS)
     {
@@ -103,13 +106,13 @@ bool Animus::CompanionParty::Add(Player* owner, Curriculum::Layout const& layout
     uint8 const level = owner->GetLevel();
     if (level < assets.Kit->MinLevel())
     {
-        message = Acore::StringFormat("A {} companion needs level {}.", profile.ScenarioName, assets.Kit->MinLevel());
+        message = Acore::StringFormat("A {} companion needs level {}.", profile.Name, assets.Kit->MinLevel());
         return false;
     }
 
     if (assets.Races.empty() || profile.Specs.empty())
     {
-        message = Acore::StringFormat("No {} companion can be built.", profile.ScenarioName);
+        message = Acore::StringFormat("No {} companion can be built.", profile.Name);
         return false;
     }
 
@@ -134,11 +137,15 @@ bool Animus::CompanionParty::Add(Player* owner, Curriculum::Layout const& layout
     if (races.empty())
         races = assets.Races;
 
+    uint32 const number = ++CompanionCounter;
+
     BotFactory::BotSpec spec;
+    spec.Name = Acore::StringFormat("Animus{}", number);
     spec.Race = races[urand(0, uint32(races.size()) - 1)];
     spec.Class = profile.Class;
     spec.Gender = uint8(urand(GENDER_MALE, GENDER_FEMALE));
     spec.Level = level;
+    spec.AccountId = COMPANION_ACCOUNT_BASE + number;
 
     Player* bot = BotFactory::Create(spec);
     if (!bot || !BotFactory::PlaceNear(bot, owner))
@@ -155,45 +162,14 @@ bool Animus::CompanionParty::Add(Player* owner, Curriculum::Layout const& layout
     member->Level = level;
     member->Spec = uint8(urand(0, uint32(profile.Specs.size()) - 1));
 
-    // As the forge builds a seat (StageScenario::BuildSeat, Configure, StartDuel, StartSeatPack). Talent points
+    // As the forge builds a seat (StageScenario::BuildSeat, Configure, PrepareFighter, StockSeats). Talent points
     // depend on the map for death knights; the bot is on the owner's map now.
-    SpecProfile const& specProfile = profile.Specs[member->Spec];
     bot->InitTalentForLevel();
-    GearBuilder::LearnProficiencies(bot);
-    member->Build = assets.Talents->Random(specProfile.TabPage, bot->GetFreeTalentPoints());
-    assets.Talents->Apply(bot, member->Build);
-    assets.Kit->Learn(bot);
-    assets.Gear->Equip(bot, specProfile);
-
-    bot->UpdateAllStats();
-    bot->SetFullHealth();
-    bot->SetPower(POWER_MANA, bot->GetMaxPower(POWER_MANA));
-    bot->SetPower(POWER_ENERGY, bot->GetMaxPower(POWER_ENERGY));
-    bot->SetPower(POWER_RAGE, 0);
-    bot->SetPower(POWER_RUNIC_POWER, 0);
-
-    // Levelling up would change the character under the model.
-    bot->SetPlayerFlag(PLAYER_FLAGS_NO_XP_GAIN);
-
-    if (profile.Class == CLASS_HUNTER)
-        member->Stable = StablePool::Instance().Random(LayoutConstants::STABLE_SLOTS);
-
-    // A warrior has no stance until one is cast (a first login casts it), and nothing works without one.
-    if (profile.Class == CLASS_WARRIOR)
-        bot->CastSpell(bot, profile.PlayRole == Role::Tank && bot->HasSpell(SPELL_DEFENSIVE_STANCE)
-            ? SPELL_DEFENSIVE_STANCE : SPELL_BATTLE_STANCE, true);
-
-    if (layout.Has(Stage::Gauntlet))
-    {
-        ConsumablePool const& consumables = ConsumablePool::Instance();
-        member->FoodItem = consumables.Food(level);
-        member->DrinkItem = bot->GetMaxPower(POWER_MANA) ? consumables.Drink(level) : 0;
-        StockConsumables(bot, member->FoodItem, member->DrinkItem);
-    }
+    member->Build = SeatCharacter::Configure(bot, layout, member->Spec, false).Build;
+    member->Stable = SeatCharacter::PrepareFighter(bot, layout);
 
     member->Obs.resize(layout.ObsDim);
     member->Mask.resize(layout.NumActions);
-    member->LastPower = bot->GetPower(bot->getPowerType());
 
     bool const newGroup = !group;
     if (newGroup)
@@ -219,12 +195,37 @@ bool Animus::CompanionParty::Add(Player* owner, Curriculum::Layout const& layout
         return false;
     }
 
-    LOG_INFO("module.animus", "{} summoned {} companion {} ({}), level {}, spec {}", owner->GetName(),
-        profile.ScenarioName, bot->GetName(), bot->GetGUID().ToString(), level, member->Spec);
+    // Supplies after joining: a warlock in the group hands out healthstones.
+    Restock(*member, bot, owner);
+    member->LastPower = bot->GetPower(bot->getPowerType());
 
-    message = Acore::StringFormat("{}, a level {} {}, joins your party.", bot->GetName(), level, profile.ScenarioName);
+    LOG_INFO("module.animus", "{} summoned {} companion {} ({}), level {}, spec {}", owner->GetName(), profile.Name,
+        bot->GetName(), bot->GetGUID().ToString(), level, profile.Specs[member->Spec].Name);
+
+    message = Acore::StringFormat("{}, a level {} {}, joins your party.", bot->GetName(), level, profile.Name);
     _members.push_back(std::move(member));
     return true;
+}
+
+void Animus::CompanionParty::Restock(Member& member, Player* bot, Player* owner) const
+{
+    bool warlockInParty = owner && owner->getClass() == CLASS_WARLOCK;
+    for (std::unique_ptr<Member> const& other : _members)
+        if (other->L->Profile->Class == CLASS_WARLOCK)
+            warlockInParty = true;
+
+    ClassRoleProfile const& profile = *member.L->Profile;
+    ConsumablePool const& pool = ConsumablePool::Instance();
+    member.Supplies = pool.Supplies(member.Level, bot->GetMaxPower(POWER_MANA) > 0, profile.Class == CLASS_WARLOCK,
+        warlockInParty || profile.Class == CLASS_WARLOCK);
+    StockBattleSupplies(bot, member.Supplies, profile.Specs[member.Spec].Stats);
+
+    if (member.L->Has(BlockId::Gauntlet))
+    {
+        member.FoodItem = pool.Food(member.Level);
+        member.DrinkItem = bot->GetMaxPower(POWER_MANA) ? pool.Drink(member.Level) : 0;
+        StockConsumables(bot, member.FoodItem, member.DrinkItem);
+    }
 }
 
 Animus::CompanionParty::Status Animus::CompanionParty::Update(uint32 diff, Settings const& settings,
@@ -297,12 +298,12 @@ void Animus::CompanionParty::UpdatePull(Player* owner, std::vector<Player*> cons
             continue;
 
         uint32 slot = uint32(_enemies.size());
-        if (slot >= LayoutConstants::PACK_SLOTS)
+        if (slot >= PACK_SLOTS)
         {
             slot = 0;
-            while (slot < LayoutConstants::PACK_SLOTS && _enemyUnits[slot] && _enemyUnits[slot]->IsAlive())
+            while (slot < PACK_SLOTS && _enemyUnits[slot] && _enemyUnits[slot]->IsAlive())
                 ++slot;
-            if (slot == LayoutConstants::PACK_SLOTS)
+            if (slot == PACK_SLOTS)
                 continue;
         }
         else
@@ -310,7 +311,7 @@ void Animus::CompanionParty::UpdatePull(Player* owner, std::vector<Player*> cons
             if (_enemies.empty())
             {
                 if (!_episodeStarted || _nowMs - _quietSinceMs >= NEW_EPISODE_QUIET_MS)
-                    StartEpisode();
+                    StartEpisode(owner);
                 _pullStartMs = _nowMs;
             }
 
@@ -343,15 +344,15 @@ void Animus::CompanionParty::UpdatePull(Player* owner, std::vector<Player*> cons
         member->TargetSlot = 0;
 }
 
-void Animus::CompanionParty::StartEpisode()
+void Animus::CompanionParty::StartEpisode(Player* owner)
 {
     _episodeStarted = true;
     _pullsCleared = 0;
 
     // Training starts every episode with full bags.
     for (std::unique_ptr<Member> const& member : _members)
-        if (Player* bot = FindBot(member->Bot); bot && bot->IsInWorld())
-            StockConsumables(bot, member->FoodItem, member->DrinkItem);
+        if (Player* bot = FindBot(member->Bot); bot && bot->IsInWorld() && bot->IsAlive())
+            Restock(*member, bot, owner);
 }
 
 void Animus::CompanionParty::UpdateMember(Member& member, Player* bot, Player* owner, uint32 diff,
@@ -372,6 +373,14 @@ void Animus::CompanionParty::UpdateMember(Member& member, Player* bot, Player* o
 
     if (!bot->IsAlive())
     {
+        // A resurrection another companion cast is accepted, as a client does.
+        if (bot->isResurrectRequested())
+        {
+            bot->ResurectUsingRequestData();
+            member.DeadMs = 0;
+            return;
+        }
+
         member.DeadMs += diff;
         if (quiet && owner->IsAlive() && !owner->IsInCombat() && member.DeadMs >= RESURRECT_DELAY_MS)
         {
@@ -442,6 +451,10 @@ void Animus::CompanionParty::Decide(Member& member, Player* bot, Player* owner, 
     SeatView view = View(member, bot, owner, target);
     SeatEncoder::Observe(view, member.Obs.data(), member.Mask.data());
 
+    // As a forge seat: nothing to act on between pulls unless the layout acts without a target (food, drink).
+    if (!target && !SeatEncoder::ActsWithoutTarget(*member.L))
+        return;
+
     int32 const action = policy.Decide(member.Obs.data(), member.Mask.data());
 
     SeatActionResult result;
@@ -449,7 +462,7 @@ void Animus::CompanionParty::Decide(Member& member, Player* bot, Player* owner, 
     member.TargetSlot = view.TargetSlot;
 
     if (result.CallBeast && CallHunterBeast(bot, result.CallBeast))
-        SeatEncoder::StartCallBeastCooldown(bot);
+        Encoding::StartCallBeastCooldown(bot);
 }
 
 Unit* Animus::CompanionParty::CurrentTarget(Member& member, Player* bot) const
@@ -494,64 +507,64 @@ Animus::Curriculum::SeatView Animus::CompanionParty::View(Member const& member, 
     view.LastStepDamageTaken = member.LastStepDamageTaken;
     view.CombatTime = member.InCombat
         ? std::min(1.0f, float(_nowMs - member.CombatStartMs) / COMBAT_TIME_SCALE_MS) : 0.0f;
+    view.Supplies = member.Supplies;
+    view.SelfResurrectAllowed = !bot->GetMap()->IsBattlegroundOrArena();
 
-    view.StableCount = uint32(std::min<std::size_t>(member.Stable.size(), LayoutConstants::STABLE_SLOTS));
+    view.StableCount = uint32(std::min<std::size_t>(member.Stable.size(), STABLE_SLOTS));
     std::copy_n(member.Stable.begin(), view.StableCount, view.Stable.begin());
 
     view.EnemyCount = uint32(_enemies.size());
     view.Enemies = _enemyUnits;
     view.TargetSlot = member.TargetSlot;
 
-    if (layout.Has(Stage::Gauntlet))
+    if (layout.Has(BlockId::Gauntlet))
     {
-        bool elite = false;
-        for (Unit* enemy : _enemyUnits)
-            if (enemy && ((enemy->ToCreature() && enemy->ToCreature()->isElite()) || enemy->GetLevel() > bot->GetLevel()))
-                elite = true;
+        bool const elite = std::any_of(_enemyUnits.begin(), _enemyUnits.end(), [bot](Unit* enemy)
+        {
+            return enemy && ((enemy->ToCreature() && enemy->ToCreature()->isElite())
+                || enemy->GetLevel() > bot->GetLevel());
+        });
 
         view.PullsCleared = _pullsCleared;
         view.QuietTime = _foughtBefore ? std::min(1.0f, float(_nowMs - _quietSinceMs) / QUIET_TIME_SCALE_MS) : 1.0f;
         view.PullTime = _enemies.empty() ? 0.0f : std::min(1.0f, float(_nowMs - _pullStartMs) / PULL_TIME_SCALE_MS);
         view.ElitePull = elite;
+        view.FoodItem = member.FoodItem;
+        view.DrinkItem = member.DrinkItem;
     }
 
-    view.FoodItem = member.FoodItem;
-    view.DrinkItem = member.DrinkItem;
+    // The owner is the player the companions fight for (the forge's scripted owner).
+    view.Owner = owner;
 
-    if (layout.Has(Stage::Companion))
-        view.Owner = owner;
-
-    if (layout.Has(Stage::Party))
+    // The other companions are the party's other seats.
+    uint32 slot = 0;
+    for (std::unique_ptr<Member> const& other : _members)
     {
-        uint32 slot = 0;
-        for (std::unique_ptr<Member> const& other : _members)
+        if (other.get() == &member || slot >= PARTY_MEMBERS)
+            continue;
+
+        Player* teammate = FindBot(other->Bot);
+        if (teammate && (!teammate->IsInWorld() || teammate->GetMap() != bot->GetMap()))
+            teammate = nullptr;
+
+        view.Teammates[slot++] = { teammate, other->L->PlayRole(), other->L->Profile->Class };
+    }
+
+    // As the forge's PartyTank: the first living tank of the party, the bot itself included.
+    for (std::unique_ptr<Member> const& other : _members)
+    {
+        if (other->L->PlayRole() != Role::Tank)
+            continue;
+
+        Player* tank = other.get() == &member ? bot : FindBot(other->Bot);
+        if (tank && tank->IsInWorld() && tank->GetMap() == bot->GetMap() && tank->IsAlive())
         {
-            if (other.get() == &member || slot >= LayoutConstants::PARTY_MEMBERS)
-                continue;
-
-            Player* teammate = FindBot(other->Bot);
-            if (teammate && (!teammate->IsInWorld() || teammate->GetMap() != bot->GetMap()))
-                teammate = nullptr;
-
-            view.Teammates[slot++] = { teammate, other->L->PlayRole(), other->L->Profile->Class };
-        }
-
-        // As the forge's PartyTank: the first living tank of the party, the bot itself included.
-        for (std::unique_ptr<Member> const& other : _members)
-        {
-            if (other->L->PlayRole() != Role::Tank)
-                continue;
-
-            Player* tank = other.get() == &member ? bot : FindBot(other->Bot);
-            if (tank && tank->IsInWorld() && tank->GetMap() == bot->GetMap() && tank->IsAlive())
-            {
-                view.Tank = tank;
-                break;
-            }
+            view.Tank = tank;
+            break;
         }
     }
 
-    if (layout.Has(Stage::Pvp) && target && target->IsPlayer())
+    if (target && target->IsPlayer())
     {
         view.Opponent = target->ToPlayer();
         view.OpponentClass = view.Opponent->getClass();
@@ -587,8 +600,9 @@ std::vector<std::string> Animus::CompanionParty::Describe(ModelLibrary& models) 
     {
         std::string error;
         bool const loaded = models.Find(*member->L, error) != nullptr;
-        lines.push_back(Acore::StringFormat("{}: level {} {} (spec {}), model {}: {}", member->Name, member->Level,
-            member->L->Profile->ScenarioName, member->Spec, member->L->ModelName(), loaded ? "loaded" : error));
+        lines.push_back(Acore::StringFormat("{}: level {} {} ({}), model {}: {}", member->Name, member->Level,
+            member->L->Profile->Name, member->L->Profile->Specs[member->Spec].Name, member->L->ModelName(),
+            loaded ? "loaded" : error));
     }
     return lines;
 }

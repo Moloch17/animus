@@ -16,10 +16,13 @@
  * with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
+void Addmod_animus_libScripts();
 void AddSC_animus();
 
 // Called by the generated modules loader; the name is Add<module dir with - as _>Scripts.
 void Addmod_animusScripts()
 {
+    // animus-lib's hooks, which feed the stage viewers' env pools (registered once, whichever module asks first).
+    Addmod_animus_libScripts();
     AddSC_animus();
 }

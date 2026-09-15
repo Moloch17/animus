@@ -20,8 +20,10 @@
 #define ANIMUS_CONFIG_H
 
 #include "Define.h"
-#include "Layout.h"
+#include "Position.h"
+#include "StageSettings.h"
 #include <string>
+#include <vector>
 
 namespace Animus
 {
@@ -29,10 +31,27 @@ namespace Animus
     struct AnimusConfig
     {
         bool Enable = true;
+
+        /// Animus.ModelDir, resolved against DataDir when relative.
         std::string ModelDir;
-        uint32 DecisionMs = 50;
-        Curriculum::Stage CurriculumStage = Curriculum::Stage::Party;
+
+        /// Animus.Curriculum.Stage and DecisionMs: the stage whose models `.animus summon` companions play, and their
+        /// decision interval.
+        std::string CurriculumStage = "stage5_party";
         uint32 CurriculumDecisionMs = 100;
+
+        /// Animus.Stage.*: the stage viewer (`.animus stage start`).
+        uint32 StageDecisionMs = 100;
+        uint32 StageEpisodeSeconds = 60;
+        std::string StagePolicy = "model";
+        std::vector<std::string> StageClassRoles;
+        uint32 StageLevel = 0;
+        uint32 StageMaxViewers = 4;
+        uint32 StageSpawnMapId = 560;
+        Position StageSpawnPosition{ 2741.9f, 1315.2f, 14.0f, 2.96f };
+
+        /// A viewer's scenario settings: one env, placed by the viewer, with env id `envId` (bot accounts and names).
+        [[nodiscard]] StageSettings ViewerSettings(uint32 envId) const;
 
         void Load();
     };

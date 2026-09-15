@@ -18,33 +18,82 @@
 
 #include "AnimusConfig.h"
 #include "Config.h"
+#include "DBCEnums.h"
 #include "Log.h"
-#include <array>
-#include <string_view>
+#include "StageDefinition.h"
+#include "Tokenize.h"
+#include "World.h"
 #include <algorithm>
+#include <cctype>
+#include <filesystem>
+
+namespace
+{
+    /// A comma-separated config list, whitespace removed, empty entries dropped.
+    std::vector<std::string> GetList(std::string const& key)
+    {
+        std::vector<std::string> entries;
+        std::string const value = sConfigMgr->GetOption<std::string>(key, "");
+        for (std::string_view name : Acore::Tokenize(value, ',', false))
+        {
+            std::string entry(name);
+            entry.erase(std::remove_if(entry.begin(), entry.end(), [](unsigned char c) { return std::isspace(c); }),
+                entry.end());
+
+            if (!entry.empty())
+                entries.push_back(std::move(entry));
+        }
+
+        return entries;
+    }
+}
 
 void Animus::AnimusConfig::Load()
 {
     Enable = sConfigMgr->GetOption<bool>("Animus.Enable", true);
-    ModelDir = sConfigMgr->GetOption<std::string>("Animus.ModelDir", "animus");
-    DecisionMs = std::max<uint32>(1, sConfigMgr->GetOption<uint32>("Animus.DecisionMs", 50));
+
+    // A relative ModelDir lives in the data directory, where the build installs the models.
+    std::filesystem::path dir(sConfigMgr->GetOption<std::string>("Animus.ModelDir", "animus"));
+    if (dir.is_relative())
+        dir = std::filesystem::path(sWorld->GetDataPath()) / dir;
+    ModelDir = dir.lexically_normal().string();
+
+    CurriculumStage = sConfigMgr->GetOption<std::string>("Animus.Curriculum.Stage", "stage5_party");
+    if (!Curriculum::FindStage(CurriculumStage))
+    {
+        LOG_ERROR("module.animus", "Animus.Curriculum.Stage \"{}\" is not a curriculum stage; using \"stage5_party\"",
+            CurriculumStage);
+        CurriculumStage = "stage5_party";
+    }
     CurriculumDecisionMs = std::max<uint32>(1, sConfigMgr->GetOption<uint32>("Animus.Curriculum.DecisionMs", 100));
 
-    // Stage names as in the forge's scenario names (class_role_<stage>).
-    static constexpr std::array<std::pair<std::string_view, Curriculum::Stage>, 8> STAGES =
-    { {
-        { "dummy", Curriculum::Stage::Dummy }, { "duel", Curriculum::Stage::Duel }, { "pack", Curriculum::Stage::Pack },
-        { "gauntlet", Curriculum::Stage::Gauntlet }, { "companion", Curriculum::Stage::Companion },
-        { "party", Curriculum::Stage::Party }, { "pvp", Curriculum::Stage::Pvp }, { "arena", Curriculum::Stage::Arena },
-    } };
+    StageDecisionMs = std::max<uint32>(1, sConfigMgr->GetOption<uint32>("Animus.Stage.DecisionMs", 100));
+    StageEpisodeSeconds = std::max<uint32>(1, sConfigMgr->GetOption<uint32>("Animus.Stage.EpisodeSeconds", 60));
+    StagePolicy = sConfigMgr->GetOption<std::string>("Animus.Stage.Policy", "model");
+    StageClassRoles = GetList("Animus.Stage.ClassRoles");
+    StageLevel = std::min<uint32>(DEFAULT_MAX_LEVEL, sConfigMgr->GetOption<uint32>("Animus.Stage.Level", 0));
+    StageMaxViewers = sConfigMgr->GetOption<uint32>("Animus.Stage.MaxViewers", 4);
 
-    std::string const stage = sConfigMgr->GetOption<std::string>("Animus.Curriculum.Stage", "party");
-    auto const itr = std::find_if(STAGES.begin(), STAGES.end(), [&](auto const& entry) { return entry.first == stage; });
-    if (itr != STAGES.end())
-        CurriculumStage = itr->second;
-    else
-    {
-        CurriculumStage = Curriculum::Stage::Party;
-        LOG_ERROR("module.animus", "Animus.Curriculum.Stage \"{}\" is not a stage; using \"party\"", stage);
-    }
+    StageSpawnMapId = sConfigMgr->GetOption<uint32>("Animus.Stage.SpawnPoint.MapId", 560);
+    StageSpawnPosition.Relocate(
+        sConfigMgr->GetOption<float>("Animus.Stage.SpawnPoint.X", 2741.9f),
+        sConfigMgr->GetOption<float>("Animus.Stage.SpawnPoint.Y", 1315.2f),
+        sConfigMgr->GetOption<float>("Animus.Stage.SpawnPoint.Z", 14.0f),
+        sConfigMgr->GetOption<float>("Animus.Stage.SpawnPoint.O", 2.96f));
+}
+
+Animus::StageSettings Animus::AnimusConfig::ViewerSettings(uint32 envId) const
+{
+    StageSettings settings;
+    settings.Envs = 1;
+    settings.FirstEnvId = envId;
+    settings.DecisionMs = StageDecisionMs;
+    settings.EpisodeSeconds = StageEpisodeSeconds;
+    settings.ReportEpisodes = 1;
+    settings.ClassRoles = StageClassRoles;
+    settings.SpawnMapId = StageSpawnMapId;
+    settings.SpawnPosition = StageSpawnPosition;
+    settings.Level = StageLevel;
+    settings.TuningPrefix = "Animus.Curriculum.";
+    return settings;
 }

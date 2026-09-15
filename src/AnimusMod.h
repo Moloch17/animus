@@ -21,12 +21,11 @@
 
 #include "AnimusConfig.h"
 #include "CompanionParty.h"
-#include "MlpPolicy.h"
+#include "Layout.h"
 #include "ModelLibrary.h"
-#include "MovementTree.h"
 #include "ObjectGuid.h"
+#include "StageViewer.h"
 #include "Unit.h"
-#include "WarriorCompanion.h"
 #include <memory>
 #include <string>
 #include <string_view>
@@ -38,11 +37,11 @@ class Unit;
 
 namespace Animus
 {
-    /// Module root: settings, the models, every player's warrior_dummy companion and class/role party.
+    /// Module root: settings, the models, every player's class/role party and every game master's stage viewer.
     ///
-    /// Everything except RecordDamage runs on the world thread (config load, commands, world
-    /// update, shutdown), and none of it while maps are updating. RecordDamage runs on map threads
-    /// and only reads the bot index, which is only changed on the world thread.
+    /// Everything except RecordDamage runs on the world thread (config load, commands, world update, shutdown), and
+    /// none of it while maps are updating. RecordDamage runs on map threads and only reads the bot index, which is
+    /// only changed on the world thread.
     class AnimusMod
     {
     public:
@@ -53,8 +52,6 @@ namespace Animus
         void OnShutdown();
 
         /// Command handlers. Return false with `message` set when the request is refused.
-        bool Spawn(Player* owner, std::string& message);
-        bool Attack(Player* owner, Unit* target, std::string& message);
         bool Dismiss(Player* owner, std::string& message);
 
         /// `classRole` is a class/role profile name (priest_heal). The companion plays that class/role's model for
@@ -64,7 +61,16 @@ namespace Animus
         /// One line per class/role companion of `owner`.
         [[nodiscard]] std::vector<std::string> List(Player* owner);
 
-        /// A player logged out: remove the companion they own, if any.
+        /// Stage viewer commands: every stage and its arenas; start one where the stage happens (see StageViewer);
+        /// stop it, start a new episode, or describe it.
+        [[nodiscard]] std::vector<std::string> StageList() const;
+        bool StageStart(Player* viewer, std::string_view stage, std::string_view policy, std::string_view arena,
+            std::string& message);
+        bool StageStop(Player* viewer, std::string& message);
+        bool StageReset(Player* viewer, std::string& message);
+        [[nodiscard]] std::vector<std::string> StageStatus(Player* viewer);
+
+        /// A player logged out: remove the companions they own and the stage they watch.
         void OnPlayerLogout(Player* player);
 
         void RecordDamage(Unit const* attacker, Unit const* victim, uint32 damage, DamageEffectType type);
@@ -74,26 +80,21 @@ namespace Animus
     private:
         AnimusMod() = default;
 
-        void LoadModel();
-        void Remove(ObjectGuid owner);
         void RemoveParty(ObjectGuid owner);
+        void RemoveViewer(ObjectGuid viewer);
         void RemoveAll();
 
         /// The layout of a profile at the configured stage, built on first use and kept (companions point at it).
         Curriculum::Layout const& LayoutFor(Curriculum::ClassRoleProfile const& profile);
 
         AnimusConfig _config;
-        MlpPolicy _policy;
-        std::string _modelError;
-        MovementTree _tree;
         ModelLibrary _models;
-        std::unordered_map<std::string, Curriculum::Layout> _layouts;        // by model name
-
-        std::unordered_map<ObjectGuid, std::unique_ptr<WarriorCompanion>> _companions;  // by owner
-        std::unordered_map<ObjectGuid, WarriorCompanion*> _byBot;
+        std::unordered_map<std::string, Curriculum::Layout> _layouts;       // by model name
 
         std::unordered_map<ObjectGuid, std::unique_ptr<CompanionParty>> _parties;   // by owner
         std::unordered_map<ObjectGuid, CompanionParty*> _partyByBot;
+
+        std::unordered_map<ObjectGuid, std::unique_ptr<StageViewer>> _viewers;      // by viewer
     };
 }
 

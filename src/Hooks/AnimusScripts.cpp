@@ -19,6 +19,7 @@
 #include "AnimusMod.h"
 #include "Chat.h"
 #include "CommandScript.h"
+#include "Optional.h"
 #include "Player.h"
 #include "PlayerScript.h"
 #include "UnitScript.h"
@@ -38,6 +39,16 @@ namespace
         return ok;
     }
 
+    bool ReplyLines(ChatHandler* handler, std::vector<std::string> const& lines, std::string const& none)
+    {
+        if (lines.empty())
+            return Reply(handler, false, none);
+
+        for (std::string const& line : lines)
+            handler->SendSysMessage(line);
+        return true;
+    }
+
     class AnimusCommandScript : public CommandScript
     {
     public:
@@ -45,13 +56,21 @@ namespace
 
         ChatCommandTable GetCommands() const override
         {
+            static ChatCommandTable stageCommandTable =
+            {
+                { "list",       HandleStageListCommand,     SEC_GAMEMASTER, Console::No },
+                { "start",      HandleStageStartCommand,    SEC_GAMEMASTER, Console::No },
+                { "stop",       HandleStageStopCommand,     SEC_GAMEMASTER, Console::No },
+                { "reset",      HandleStageResetCommand,    SEC_GAMEMASTER, Console::No },
+                { "status",     HandleStageStatusCommand,   SEC_GAMEMASTER, Console::No },
+            };
+
             static ChatCommandTable animusCommandTable =
             {
-                { "spawn",      HandleSpawnCommand,     SEC_GAMEMASTER, Console::No },
-                { "attack",     HandleAttackCommand,    SEC_GAMEMASTER, Console::No },
-                { "dismiss",    HandleDismissCommand,   SEC_GAMEMASTER, Console::No },
                 { "summon",     HandleSummonCommand,    SEC_GAMEMASTER, Console::No },
                 { "list",       HandleListCommand,      SEC_GAMEMASTER, Console::No },
+                { "dismiss",    HandleDismissCommand,   SEC_GAMEMASTER, Console::No },
+                { "stage",      stageCommandTable },
             };
 
             static ChatCommandTable commandTable =
@@ -60,28 +79,6 @@ namespace
             };
 
             return commandTable;
-        }
-
-        /// .animus spawn: a level 1 human warrior companion appears beside you.
-        static bool HandleSpawnCommand(ChatHandler* handler)
-        {
-            std::string message;
-            return Reply(handler, sAnimusMod->Spawn(handler->GetPlayer(), message), message);
-        }
-
-        /// .animus attack: your companion attacks the training dummy you have targeted.
-        static bool HandleAttackCommand(ChatHandler* handler)
-        {
-            std::string message;
-            return Reply(handler, sAnimusMod->Attack(handler->GetPlayer(), handler->getSelectedUnit(), message),
-                message);
-        }
-
-        /// .animus dismiss: remove all your companions.
-        static bool HandleDismissCommand(ChatHandler* handler)
-        {
-            std::string message;
-            return Reply(handler, sAnimusMod->Dismiss(handler->GetPlayer(), message), message);
         }
 
         /// .animus summon <class_role>: a companion of that class and role (priest_heal, warrior_tank, ...) at your
@@ -95,13 +92,51 @@ namespace
         /// .animus list: your class/role companions and their models.
         static bool HandleListCommand(ChatHandler* handler)
         {
-            std::vector<std::string> const lines = sAnimusMod->List(handler->GetPlayer());
-            if (lines.empty())
-                return Reply(handler, false, "You have no class/role companions.");
+            return ReplyLines(handler, sAnimusMod->List(handler->GetPlayer()), "You have no class/role companions.");
+        }
 
-            for (std::string const& line : lines)
-                handler->SendSysMessage(line);
-            return true;
+        /// .animus dismiss: remove all your companions.
+        static bool HandleDismissCommand(ChatHandler* handler)
+        {
+            std::string message;
+            return Reply(handler, sAnimusMod->Dismiss(handler->GetPlayer(), message), message);
+        }
+
+        /// .animus stage list: every curriculum stage, its arenas and how to start one.
+        static bool HandleStageListCommand(ChatHandler* handler)
+        {
+            return ReplyLines(handler, sAnimusMod->StageList(), "There are no stages.");
+        }
+
+        /// .animus stage start <stage> [policy] [arena]: teleport to where the stage happens and run it there without
+        /// the learner. policy: model (the seats' exported models, Animus.Stage.Policy by default), random, greedy or
+        /// fight; arena: only that arena of a stage that mixes several.
+        static bool HandleStageStartCommand(ChatHandler* handler, std::string_view stage,
+            Optional<std::string_view> policy, Optional<std::string_view> arena)
+        {
+            std::string message;
+            return Reply(handler, sAnimusMod->StageStart(handler->GetPlayer(), stage, policy.value_or(""),
+                arena.value_or(""), message), message);
+        }
+
+        /// .animus stage stop: remove the stage you are watching.
+        static bool HandleStageStopCommand(ChatHandler* handler)
+        {
+            std::string message;
+            return Reply(handler, sAnimusMod->StageStop(handler->GetPlayer(), message), message);
+        }
+
+        /// .animus stage reset: end the current episode and start a new one.
+        static bool HandleStageResetCommand(ChatHandler* handler)
+        {
+            std::string message;
+            return Reply(handler, sAnimusMod->StageReset(handler->GetPlayer(), message), message);
+        }
+
+        /// .animus stage status: the stage you are watching, its episode and its seats.
+        static bool HandleStageStatusCommand(ChatHandler* handler)
+        {
+            return ReplyLines(handler, sAnimusMod->StageStatus(handler->GetPlayer()), "You are not watching a stage.");
         }
     };
 
@@ -129,8 +164,8 @@ namespace
     public:
         AnimusUnitScript() : UnitScript("AnimusUnitScript") { }
 
-        /// Called for every damage event, on map threads, before the victim's AI can change the
-        /// amount -- npc_training_dummy zeroes it in DamageTaken, so OnDamage would only see 0.
+        /// Called for every damage event, on map threads, before the victim's AI can change the amount, so companions
+        /// see what was dealt. (Stage seats are counted by animus-lib's own hooks.)
         uint32 DealDamage(Unit* attacker, Unit* victim, uint32 damage, DamageEffectType type) override
         {
             sAnimusMod->RecordDamage(attacker, victim, damage, type);

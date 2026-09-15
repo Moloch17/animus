@@ -21,7 +21,8 @@
 
 #include "Layout.h"
 #include "ObjectGuid.h"
-#include "SeatEncoder.h"
+#include "SeatView.h"
+#include "Supplies.h"
 #include "TalentBuilder.h"
 #include <array>
 #include <atomic>
@@ -37,8 +38,8 @@ namespace Animus
     class MlpPolicy;
     class ModelLibrary;
 
-    /// A player's class/role companions: characters of a class and role at the player's level, with the kit,
-    /// talents, gear and supplies they were trained with, in the player's group. Each plays its class/role model for
+    /// A player's class/role companions: characters of a class and role at the player's level, built as the forge
+    /// builds a stage's seats (Curriculum::SeatCharacter), in the player's group. Each plays its class/role model for
     /// the configured stage (ModelLibrary) through the SeatEncoder.
     ///
     /// The party stands in for a training env: the owner is the scripted owner, the companions are the seats, and
@@ -97,6 +98,7 @@ namespace Animus
             uint8 Level = 1;
             uint8 Spec = 0;
             Curriculum::TalentBuilder::Build Build;
+            Curriculum::BattleSupplies Supplies;
             uint32 FoodItem = 0;
             uint32 DrinkItem = 0;
             std::vector<uint32> Stable;
@@ -123,17 +125,19 @@ namespace Animus
         void UpdateMember(Member& member, Player* bot, Player* owner, uint32 diff, Settings const& settings,
             ModelLibrary& models);
         void Decide(Member& member, Player* bot, Player* owner, MlpPolicy& policy);
-        /// Forge's CurrentTarget: the selected enemy, else the nearest living one (which becomes the selection).
+        /// The forge's pull target: the selected enemy, else the nearest living one (which becomes the selection).
         [[nodiscard]] Unit* CurrentTarget(Member& member, Player* bot) const;
         [[nodiscard]] Curriculum::SeatView View(Member const& member, Player* bot, Player* owner, Unit* target) const;
-        void StartEpisode();
+        /// Potions, bandages, stones and food for the member, topped up (the forge stocks every episode).
+        void Restock(Member& member, Player* bot, Player* owner) const;
+        void StartEpisode(Player* owner);
         static void Destroy(Player* bot);
 
         ObjectGuid _owner;
         std::vector<std::unique_ptr<Member>> _members;
 
         // The current pull, and the episode it belongs to.
-        std::array<Unit*, Curriculum::LayoutConstants::PACK_SLOTS> _enemyUnits{};   // resolved this update
+        std::array<Unit*, Curriculum::PACK_SLOTS> _enemyUnits{};    // resolved this update
         std::vector<ObjectGuid> _enemies;                   // slot order
         uint64 _nowMs = 0;
         uint64 _pullStartMs = 0;

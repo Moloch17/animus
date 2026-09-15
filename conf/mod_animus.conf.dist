@@ -1,5 +1,6 @@
 #
-# mod-animus -- companions whose combat decisions come from a model trained in mod-animus-forge.
+# mod-animus -- companions and a stage viewer whose combat decisions come from models trained in
+# mod-animus-forge. Needs animus-lib (modules/mod-animus-lib).
 #
 [worldserver]
 
@@ -7,58 +8,355 @@
 # GENERAL
 #
 #    Animus.Enable
-#        Description: Enable the module. When disabled no companions can be summoned, existing ones
-#                     are removed on the next update and no model is loaded.
+#        Description: Enable the module. When disabled no companions can be summoned and no stage
+#                     started, existing ones are removed on the next update and no model is loaded.
 #        Default:     1 - (Enabled)
 #                     0 - (Disabled)
 
 Animus.Enable = 1
 
 ###################################################################################################
-# MODEL
+# MODELS
 #
 #    Animus.ModelDir
-#        Description: Directory holding the exported models (<scenario>.amdl, written by
-#                     "python -m animus.export" in mod-animus-forge). A relative path is resolved
-#                     against DataDir (worldserver.conf). The build installs the module's
-#                     models/*.amdl to <install prefix>/data/animus; if DataDir points elsewhere,
-#                     configure with -DANIMUS_MODELS_INSTALL_DIR=<DataDir>/animus or use an absolute
-#                     path here. The model is reloaded on ".reload config"; a model that fails to
-#                     load keeps the previous one in use.
+#        Description: Directory holding the exported class/role models (<class>_<role>_<stage>.amdl,
+#                     each with its layout manifest <class>_<role>_<stage>.json beside it), written
+#                     by `forge export` in mod-animus-forge. A relative path is resolved against
+#                     DataDir (worldserver.conf). The build installs the module's models/*.amdl to
+#                     <install prefix>/data/animus; if DataDir points elsewhere, configure with
+#                     -DANIMUS_MODELS_INSTALL_DIR=<DataDir>/animus or use an absolute path here.
+#                     Models load when first needed, and again after ".reload config". A model
+#                     whose manifest differs from the layout this server builds is refused.
 #        Default:     "animus"
 
 Animus.ModelDir = "animus"
-
-#
-#    Animus.DecisionMs
-#        Description: Game time between the warrior_dummy companion's model decisions, in
-#                     milliseconds: the decision interval its model was trained with.
-#        Default:     50
-
-Animus.DecisionMs = 50
 
 ###################################################################################################
 # CLASS/ROLE COMPANIONS
 #
 #    Animus.Curriculum.Stage
-#        Description: Which curriculum stage's models class/role companions (".animus summon") play:
-#                     <class>_<role>_<stage>.amdl in Animus.ModelDir, exported by mod-animus-forge with
-#                     its layout manifest (<class>_<role>_<stage>.json) beside it. A model whose manifest
-#                     differs from this server's layout is refused. Companions summoned before a
-#                     ".reload config" keep the stage they were summoned with.
-#        Default:     "party"  - four companions that play together (class_role_party)
-#                     "companion", "gauntlet", "pack", "duel", "dummy", "pvp", "arena"
-#                              - the models of that stage (class_role_<stage>)
+#        Description: Which curriculum stage's models class/role companions (".animus summon")
+#                     play. Companions summoned before a ".reload config" keep their stage.
+#        Default:     "stage5_party" - four companions that play together
+#                     Any stage of ".animus stage list" (stage1_duel ... stage8_crossroads)
 
-Animus.Curriculum.Stage = "party"
+Animus.Curriculum.Stage = "stage5_party"
 
 #
 #    Animus.Curriculum.DecisionMs
-#        Description: Game time between a class/role companion's model decisions, in milliseconds: the
-#                     decision interval its models were trained with (50 ms per world tick of
-#                     AnimusForge.DecisionTicks in training).
+#        Description: Game time between a class/role companion's model decisions, in milliseconds:
+#                     the decision interval its models were trained with (AnimusForge.DecisionMs).
 #        Default:     100
 
 Animus.Curriculum.DecisionMs = 100
+
+###################################################################################################
+# STAGE VIEWER
+#
+# ".animus stage start <stage> [policy] [arena]" runs a curriculum stage the way mod-animus-forge
+# trains it, without the learner, in the game master's own instance at the spawn point below, so
+# its episodes can be watched. One env (its seats, owner, pulls and enemy players), episode after
+# episode, until ".animus stage stop" or the game master leaves the instance.
+#
+#    Animus.Stage.Policy
+#        Description: What the seats play when ".animus stage start" names no policy.
+#        Default:     "model"  - each seat's exported class/role model from Animus.ModelDir; a
+#                                seat whose model is missing does nothing
+#                     "random" - random allowed actions
+#                     "greedy" - the first usable spell or trinket (scripted baseline)
+#                     "fight"  - greedy, plus attacking, moving, eating and healing (stages with
+#                                the duel block)
+
+Animus.Stage.Policy = "model"
+
+#
+#    Animus.Stage.DecisionMs
+#        Description: Game time per seat decision, in milliseconds: the interval the models were
+#                     trained with (AnimusForge.DecisionMs). World updates shorter than this wait
+#                     for it; a longer one still makes a single decision.
+#        Default:     100
+
+Animus.Stage.DecisionMs = 100
+
+#
+#    Animus.Stage.EpisodeSeconds
+#        Description: Episode length for arenas without their own, in seconds
+#                     (AnimusForge.EpisodeSeconds).
+#        Default:     60
+
+Animus.Stage.EpisodeSeconds = 60
+
+#
+#    Animus.Stage.ClassRoles
+#        Description: Comma-separated class/roles the seats are drawn from. Unlike the forge's
+#                     list it does not change the layouts, only which characters appear.
+#                     Available: warrior_dps, warrior_tank, paladin_heal, paladin_tank, paladin_dps,
+#                     hunter_dps, rogue_dps, priest_heal, priest_dps, deathknight_tank,
+#                     deathknight_dps, shaman_dps, shaman_heal, mage_dps, warlock_dps, druid_dps,
+#                     druid_tank, druid_heal
+#        Default:     "" - (all of them)
+
+Animus.Stage.ClassRoles = ""
+
+#
+#    Animus.Stage.Level
+#        Description: Every character's level, or 0 for the curriculum's random levels
+#                     (Animus.Curriculum.Characters.*).
+#        Default:     0
+
+Animus.Stage.Level = 0
+
+#
+#    Animus.Stage.MaxViewers
+#        Description: Most stages running at once (one per game master).
+#        Default:     4
+
+Animus.Stage.MaxViewers = 4
+
+#
+#    Animus.Stage.SpawnPoint.MapId
+#    Animus.Stage.SpawnPoint.X / Y / Z / O
+#        Description: Instanceable (dungeon) map and position where a stage happens: ".animus
+#                     stage start" teleports the game master here and builds the stage in their
+#                     instance. Use the forge's AnimusForge.SpawnPoint.* to watch what it trains.
+#                     The default is the Old Hillsbrad Foothills entrance.
+#        Default:     560, 2741.9, 1315.2, 14.0, 2.96
+
+Animus.Stage.SpawnPoint.MapId = 560
+Animus.Stage.SpawnPoint.X     = 2741.9
+Animus.Stage.SpawnPoint.Y     = 1315.2
+Animus.Stage.SpawnPoint.Z     = 14.0
+Animus.Stage.SpawnPoint.O     = 2.96
+
+###################################################################################################
+# CURRICULUM TUNING
+#
+# What the stage viewer's stages meet: the characters, parties, pulls and scripted players, and
+# the reward weights its episode reports show. The keys and defaults are mod-animus-forge's
+# AnimusForge.Curriculum.* under this prefix: to watch a stage as a model was trained, copy the
+# values of that run (its stage.json "tuning") here. Every key is optional; a missing one keeps the
+# default shown. Per-decision reward terms are tuned per 50 ms decision and scaled with
+# Animus.Stage.DecisionMs. Class/role companions do not use these.
+
+#
+#    Animus.Curriculum.Arena.<stage>.<arena>.Weight
+#        Description: A stage's share of episodes for one of its arenas (see stage.json "arenas"), e.g.
+#                     Animus.Curriculum.Arena.mix_duel_pvp.duel.Weight = 3 for three duels per
+#                     scripted enemy player. Only matters for stages with several arenas.
+#        Default:     the stage definition's weight (1 for every arena of the current stages)
+
+#
+#    Animus.Curriculum.Characters.*
+#        The seat characters.
+
+#   levels at or above this are "high"
+Animus.Curriculum.Characters.HighLevelFirst = 61
+#   percent of characters drawn from the high levels
+Animus.Curriculum.Characters.HighLevelChance = 50
+
+#
+#    Animus.Curriculum.Party.*
+#        Which party seats have a character, and their roles.
+
+#   relative chance of 1, 2, 3 or 4 seats with a character
+Animus.Curriculum.Party.SizeWeight1 = 20
+Animus.Curriculum.Party.SizeWeight2 = 20
+Animus.Curriculum.Party.SizeWeight3 = 20
+Animus.Curriculum.Party.SizeWeight4 = 40
+#   percent: tank, healer, damage dealers instead of drawn roles
+Animus.Curriculum.Party.ClassicChance = 50
+#   drawn roles: percent tanks, healers, the rest damage dealers
+Animus.Curriculum.Party.RoleTankChance = 25
+Animus.Curriculum.Party.RoleHealerChance = 25
+#   damage dealers: a non-tank teammate's damage taken
+Animus.Curriculum.Party.TeammateDamageTakenDps = 0.5
+#   tanks and healers
+Animus.Curriculum.Party.TeammateDamageTakenProtector = 1.0
+#   healers: effective healing, fraction of its health
+Animus.Curriculum.Party.TeammateHealing = 2.0
+#   tanks: per enemy on a non-tank teammate, per decision
+Animus.Curriculum.Party.TankLoseTeammate = 0.02
+Animus.Curriculum.Party.TeammateDeath = 3.0
+
+#
+#    Animus.Curriculum.Duel.*
+#        One-on-one fights against a creature (the duel) or a player (PvP).
+
+#   fraction of the opponent's health: a kill is worth this in damage
+Animus.Curriculum.Duel.DamageDealt = 2.0
+#   fraction of the bot's health
+Animus.Curriculum.Duel.DamageTaken = 1.0
+#   shaping toward the spec's range, per 40 yd closed
+Animus.Curriculum.Duel.Approach = 0.5
+Animus.Curriculum.Duel.StealthOpener = 0.5
+#   per decision
+Animus.Curriculum.Duel.StepCost = 0.0002
+Animus.Curriculum.Duel.Kill = 2.0
+#   times the fraction of the episode still left
+Animus.Curriculum.Duel.FastKill = 3.0
+#   times the fraction of the bot's health not lost
+Animus.Curriculum.Duel.HealthKept = 2.0
+Animus.Curriculum.Duel.Death = 3.0
+#   the range the approach shaping aims for, melee specs
+Animus.Curriculum.Duel.MeleeRange = 3.5
+#   ... ranged specs
+Animus.Curriculum.Duel.RangedRange = 25.0
+
+#
+#    Animus.Curriculum.Casting.*
+#        Cast-time spells, from the duel stage on.
+
+#   per second spent on a cast that did not finish
+Animus.Curriculum.Casting.TimeWasted = 0.03
+#   per second of cast time of a cast that finished, in combat
+Animus.Curriculum.Casting.TimeCompleted = 0.03
+
+#
+#    Animus.Curriculum.Pulls.*
+#        Packs and the gauntlet's pull after pull.
+
+#   percent of pulls whose members aggro together
+Animus.Curriculum.Pulls.LinkedChance = 70
+#   gauntlet: a single elite instead of a pack
+Animus.Curriculum.Pulls.EliteChance = 15
+#   gauntlet: a pack 1-3 levels above the bot
+Animus.Curriculum.Pulls.HigherLevelChance = 25
+#   party: per pack member
+Animus.Curriculum.Pulls.PartyEliteChance = 50
+#   gauntlet: the break between pulls
+Animus.Curriculum.Pulls.NextPullMinMs = 8000
+Animus.Curriculum.Pulls.NextPullMaxMs = 20000
+#   with an owner: when it walks over to a new pull
+Animus.Curriculum.Pulls.OwnerEngageMinMs = 1500
+Animus.Curriculum.Pulls.OwnerEngageMaxMs = 5000
+#   ... in a party, after the tank has had time to pull
+Animus.Curriculum.Pulls.PartyOwnerEngageMinMs = 4000
+Animus.Curriculum.Pulls.PartyOwnerEngageMaxMs = 7000
+#   ... when the owner starts the pull itself
+Animus.Curriculum.Pulls.OwnerPullsMinMs = 500
+Animus.Curriculum.Pulls.OwnerPullsMaxMs = 1500
+#   percent of pulls a damage dealer or healer owner starts (tanks: all)
+Animus.Curriculum.Pulls.OwnerPullsChance = 30
+#   owner stages: health and mana the dead stand up with after a pull
+Animus.Curriculum.Pulls.RecoverFraction = 0.5
+#   fraction of the pull's total health
+Animus.Curriculum.Pulls.DamageDealt = 2.0
+#   pack: fraction of the bot's health
+Animus.Curriculum.Pulls.DamageTaken = 1.0
+#   gauntlet on: surviving many pulls matters more than any one
+Animus.Curriculum.Pulls.GauntletDamageTaken = 1.5
+Animus.Curriculum.Pulls.Approach = 0.5
+Animus.Curriculum.Pulls.StealthOpener = 0.5
+Animus.Curriculum.Pulls.Interrupt = 0.3
+Animus.Curriculum.Pulls.Kill = 0.5
+#   per decision
+Animus.Curriculum.Pulls.StepCost = 0.0002
+Animus.Curriculum.Pulls.Clear = 2.0
+#   pack: times the fraction of the episode still left
+Animus.Curriculum.Pulls.FastClear = 3.0
+#   gauntlet: times 1 - pull time / 60 s
+Animus.Curriculum.Pulls.FastPull = 2.0
+#   times the fraction of the bot's health not lost this pull
+Animus.Curriculum.Pulls.HealthKept = 2.0
+Animus.Curriculum.Pulls.PackDeath = 3.0
+Animus.Curriculum.Pulls.GauntletDeath = 5.0
+#   owner stages: kills and clears count this many times
+Animus.Curriculum.Pulls.OwnerClearScale = 2.0
+
+#
+#    Animus.Curriculum.Owner.*
+#        The scripted owner of the companion and party stages.
+
+#   its level: the bot's plus or minus this
+Animus.Curriculum.Owner.LevelSpread = 2
+#   percent tanks, healers, the rest damage dealers
+Animus.Curriculum.Owner.TankChance = 25
+Animus.Curriculum.Owner.HealerChance = 25
+#   damage dealers: the owner's damage taken, fraction of its health
+Animus.Curriculum.Owner.DamageTakenDps = 1.0
+#   tanks and healers exist to prevent it
+Animus.Curriculum.Owner.DamageTakenProtector = 2.0
+#   a tank owner is hit by design: its damage taken counts this much
+Animus.Curriculum.Owner.TankOwnerDamageShare = 0.25
+#   healers: effective healing, fraction of the owner's health
+Animus.Curriculum.Owner.Healing = 2.0
+#   tanks: soften the pulls' damage taken
+Animus.Curriculum.Owner.TankDamageRefund = 0.5
+#   tanks: per enemy on the tank, per decision
+Animus.Curriculum.Owner.TankHold = 0.002
+#   tanks: per enemy on the owner, per decision
+Animus.Curriculum.Owner.TankLose = 0.02
+#   damage dealers and healers: per enemy on the bot, per decision
+Animus.Curriculum.Owner.PulledThreat = 0.004
+#   per decision in combat while the owner is not
+Animus.Curriculum.Owner.SoloFight = 0.01
+#   per decision out of combat beyond FollowFarDistance
+Animus.Curriculum.Owner.FollowFar = 0.002
+#   per decision out of combat within FollowNearDistance
+Animus.Curriculum.Owner.FollowNear = 0.0005
+Animus.Curriculum.Owner.FollowFarDistance = 25.0
+Animus.Curriculum.Owner.FollowNearDistance = 12.0
+Animus.Curriculum.Owner.Death = 6.0
+
+#
+#    Animus.Curriculum.Resurrection.*
+#        Resurrecting: a seat's own Soulstone or Reincarnation, and revives on allies (companion
+#        and party stages). Nobody is revived automatically while a resurrection is possible.
+
+#   the dead wait this long (ms) for a resurrection they can get before solo stages end and
+#   owner stages stand them up (the next pull waits too)
+Animus.Curriculum.Resurrection.GraceMs = 20000
+#   a dead ally the seat resurrected stood up
+Animus.Curriculum.Resurrection.ReviveAlly = 1.5
+
+#
+#    Animus.Curriculum.Opponent.*
+#        The scripted enemy player of the PvP stage.
+
+Animus.Curriculum.Opponent.LevelSpread = 1
+#   it starts fighting up to this long into the episode
+Animus.Curriculum.Opponent.EngageMaxMs = 3000
+Animus.Curriculum.Opponent.HealerChance = 20
+Animus.Curriculum.Opponent.TankChance = 20
+
+#
+#    Animus.Curriculum.Ambush.*
+#        Scripted enemy players who ambush the owner (stage8_crossroads' ambush and escort_duel arenas).
+#        Their class, role and level follow the Opponent.* chances and spread.
+
+#   beside pulls: they arrive at a random time between these, in ms (at most 3/4 into the episode)
+Animus.Curriculum.Ambush.MinMs = 20000
+Animus.Curriculum.Ambush.MaxMs = 120000
+#   they start fighting up to this long after arriving, in ms
+Animus.Curriculum.Ambush.EngageMaxMs = 3000
+#   beside pulls: every seat is paid this per ambusher killed (alone, the duel's rewards apply)
+Animus.Curriculum.Ambush.Kill = 3.0
+
+#
+#    Animus.Curriculum.ScriptedPlayers.*
+#        How the scripted players (owner, PvP opponent, ambushers) play.
+
+#   time between damage spells
+Animus.Curriculum.ScriptedPlayers.SpellMinMs = 2000
+Animus.Curriculum.ScriptedPlayers.SpellMaxMs = 4000
+#   time between heals
+Animus.Curriculum.ScriptedPlayers.HealMinMs = 1500
+Animus.Curriculum.ScriptedPlayers.HealMaxMs = 2500
+#   between pulls: time between wander steps
+Animus.Curriculum.ScriptedPlayers.WanderMinMs = 6000
+Animus.Curriculum.ScriptedPlayers.WanderMaxMs = 12000
+#   of max health and mana per second, out of combat
+Animus.Curriculum.ScriptedPlayers.RegenFraction = 0.04
+#   healers heal party members under this health fraction
+Animus.Curriculum.ScriptedPlayers.HealBelow = 0.85
+#   PvP healers heal themselves under this
+Animus.Curriculum.ScriptedPlayers.SelfHealBelow = 0.6
+#   healers stay this close to the tank
+Animus.Curriculum.ScriptedPlayers.HealerRange = 30.0
+Animus.Curriculum.ScriptedPlayers.TauntRange = 25.0
+#   PvP: a ranged spec backs off inside half this ...
+Animus.Curriculum.ScriptedPlayers.RangedMin = 20.0
+#   ... and closes in beyond this
+Animus.Curriculum.ScriptedPlayers.RangedMax = 30.0
 
 ###################################################################################################
