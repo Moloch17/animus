@@ -14,6 +14,17 @@
 #     cmake ... -DANIMUS_MODELS_INSTALL_DIR=/path/to/data/animus
 #
 
+set(ANIMUS_LIB_GIT_URL "https://github.com/Moloch17/animus-lib.git" CACHE STRING
+  "Where mod-animus and mod-animus-forge clone animus-lib from when modules/mod-animus-lib is missing")
+set(ANIMUS_LIB_GIT_REF "master" CACHE STRING "The animus-lib branch or tag to clone")
+
+ModuleNameToVariable(mod-animus ANIMUS_LINKAGE_VARIABLE)
+if(NOT "${${ANIMUS_LINKAGE_VARIABLE}}" MATCHES "static|dynamic")
+  return()
+endif()
+
+# Only when the module is built: a core that disables it (the forge) must not install into its data directory, which
+# the Docker layout mounts read-only.
 set(ANIMUS_MODELS_INSTALL_DIR "${CMAKE_INSTALL_PREFIX}/data/animus" CACHE PATH
   "Where mod-animus installs its .amdl models; should be <DataDir>/<Animus.ModelDir>")
 
@@ -23,15 +34,6 @@ install(
   FILES_MATCHING PATTERN "*.amdl")
 
 message(STATUS "  mod-animus models install to ${ANIMUS_MODELS_INSTALL_DIR}")
-
-set(ANIMUS_LIB_GIT_URL "https://github.com/Moloch17/animus-lib.git" CACHE STRING
-  "Where mod-animus and mod-animus-forge clone animus-lib from when modules/mod-animus-lib is missing")
-set(ANIMUS_LIB_GIT_REF "master" CACHE STRING "The animus-lib branch or tag to clone")
-
-ModuleNameToVariable(mod-animus ANIMUS_LINKAGE_VARIABLE)
-if(NOT "${${ANIMUS_LINKAGE_VARIABLE}}" MATCHES "static|dynamic")
-  return()
-endif()
 
 set(ANIMUS_LIB_CHECKOUT "${CMAKE_SOURCE_DIR}/modules/mod-animus-lib")
 if(NOT EXISTS "${ANIMUS_LIB_CHECKOUT}/cmake/AnimusLibDependency.cmake")
