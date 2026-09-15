@@ -53,8 +53,9 @@ without it every episode draws its arena by weight, as in training.
 
 Things to know:
 
-- **Use `.gm on`.** The stage's creatures and enemy players pick their targets among the seats and the owner, but a
-  visible player in the middle of a pull can still be attacked. Your presence changes nothing the seats observe.
+- **GM mode goes on for you.** `.animus stage start` turns it on as `.gm on` would (and says so), so the stage's
+  creatures and enemy players leave you alone; it stays on when the stage stops. Your presence changes nothing the
+  seats observe.
 - **What makes it match training:** the stage definitions, blocks and encounters are the forge's own code. The
   settings are this module's: set `Animus.Stage.DecisionMs`, `EpisodeSeconds`, `ClassRoles`, `Level` and
   `SpawnPoint.*` like the forge's `AnimusForge.*` keys, and the `Animus.Curriculum.*` tuning like the run's
@@ -89,13 +90,12 @@ damage. The summon is refused only when the arguments cannot make a character of
 
 A death knight you summon below level 55 is made at level 55, the level death knights start at.
 
-Beyond the arguments, only what no character could do stops a companion: you already have four, you are in a group
-you do not lead or that is full, you are in a battleground or arena (they only take queued players), or you are in
-the middle of a loading screen.
+Beyond the arguments, only where you are or what no character could do stops a companion: you are on a flight path or
+a vehicle, you already have four, you are in a group you do not lead or that is full, you are in a battleground or
+arena (they only take queued players), or you are in the middle of a loading screen.
 
-**Where companions go with you.** You can summon anywhere else: in the open world, in dungeon and raid instances, on a
-boat, zeppelin or elevator (the companion boards it with you), and on a flight path (it waits on the ground below and
-catches up when you land). Companions then follow you through every loading screen:
+**Where companions go with you.** You can summon in the open world, in dungeon and raid instances, and on a boat,
+zeppelin or elevator (the companion boards it with you). Companions then follow you through every loading screen:
 
 - **Another map or an instance:** as soon as you arrive, each companion is brought to you, into the same instance
   (it joins with your group's instance and difficulty). Entry requirements (level, attunement, keys) do not apply to
@@ -103,6 +103,10 @@ catches up when you land). Companions then follow you through every loading scre
   comes as soon as the instance takes it.
 - **Transports:** when you board a transport your companions board it too, and when you step off they step off beside
   you. A transport that crosses to another map carries them through its loading screen with you.
+- **Flight paths and vehicles:** when you take a flight path (a taxi, or a scripted quest flight) or get on a vehicle
+  (a bombing run, a siege engine, a seat on someone else's mount), your companions disappear. When you are off it they
+  come back beside you, wherever you landed -- another zone, another map or an instance. `.animus list` shows them as
+  waiting for you to land.
 - **Anything else that teleports a companion** (a summoning spell, a script) completes as a client would acknowledge it.
 - **Battlegrounds and arenas:** companions wait where you left them and rejoin you when you come back.
 
@@ -121,7 +125,7 @@ Companions are removed when their owner logs out.
 - **Enemies:** everything attacking you, a companion or their pets, and what any of you attack, fills up to four
   enemy slots for the current fight; the fight is over when none of them is still alive and fighting.
 - **Upkeep:** out of combat, companions more than 30 yards away run back to you and more than 100 yards away are
-  teleported to you (not while you fly a flight path). On another map, in another instance, or on or off a different
+  teleported to you. On another map, in another instance, or on or off a different
   transport, they are brought to you at once, in or out of combat. A dead companion accepts a resurrection, or stands up
   10 seconds after the fight.
 - **Nothing is saved:** companions and their pets have no character rows. Their group membership is written like

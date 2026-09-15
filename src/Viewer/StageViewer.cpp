@@ -111,6 +111,14 @@ bool Animus::StageViewer::Begin(Player* viewer, std::string const& stage, std::s
         return false;
     }
 
+    // GM mode, as `.gm on`: the stage's creatures and enemy players ignore the viewer, and the teleport is a GM's.
+    bool const gmModeTurnedOn = !viewer->IsGameMaster();
+    if (gmModeTurnedOn)
+    {
+        viewer->SetGameMaster(true);
+        viewer->UpdateTriggerVisibility();
+    }
+
     Position const& spawn = _settings.SpawnPosition;
     if (!viewer->TeleportTo(_settings.SpawnMapId, spawn.GetPositionX(), spawn.GetPositionY(), spawn.GetPositionZ(),
         spawn.GetOrientation(), TELE_TO_GM_MODE))
@@ -120,8 +128,8 @@ bool Animus::StageViewer::Begin(Player* viewer, std::string const& stage, std::s
         return false;
     }
 
-    message = Acore::StringFormat("Teleporting you to {}'s spawn point (map {}); the stage starts when you arrive.",
-        _stage->Name, _settings.SpawnMapId);
+    message = Acore::StringFormat("{}Teleporting you to {}'s spawn point (map {}); the stage starts when you arrive.",
+        gmModeTurnedOn ? "GM mode is on. " : "", _stage->Name, _settings.SpawnMapId);
     return true;
 }
 

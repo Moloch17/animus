@@ -224,12 +224,39 @@ Animus::CompanionParty::Status Animus::CompanionParty::Update(uint32 diff, Setti
     std::erase_if(_members, [](std::unique_ptr<Member> const& member) { return !FindBot(member->Bot); });
 
     // A teleport a bot started itself (its transport changing maps, a summoning spell) completes as its client would
-    // acknowledge it, whatever the owner is doing.
+    // acknowledge it, whatever the owner is doing. A parked bot's stays pending until the owner is back.
     for (std::unique_ptr<Member> const& member : _members)
-        BotFactory::CompleteTeleport(FindBot(member->Bot));
+        if (!member->Parked)
+            BotFactory::CompleteTeleport(FindBot(member->Bot));
 
     if (!owner->IsInWorld() || owner->IsBeingTeleported())
         return Status::Active;
+
+    // A flight path, or a vehicle (a quest's bombing run): no companion can come along, so they leave the world and
+    // come back beside the owner once it is off -- wherever that is.
+    if (BotFactory::IsAway(owner))
+    {
+        for (std::unique_ptr<Member> const& member : _members)
+        {
+            if (member->Parked || !BotFactory::Park(FindBot(member->Bot)))
+                continue;
+
+            member->Parked = true;
+            member->SinceDecisionMs = 0;
+            member->InCombat = false;
+        }
+        return Status::Active;
+    }
+
+    for (std::unique_ptr<Member> const& member : _members)
+    {
+        if (!member->Parked || !BotFactory::CanJoin(owner) || !BotFactory::TeleportNear(FindBot(member->Bot), owner))
+            continue;
+
+        member->Parked = false;
+        member->StepDamage.store(0, std::memory_order_relaxed);
+        member->StepDamageTaken.store(0, std::memory_order_relaxed);
+    }
 
     std::vector<Player*> present;
     for (std::unique_ptr<Member> const& member : _members)
@@ -385,9 +412,8 @@ void Animus::CompanionParty::UpdateMember(Member& member, Player* bot, Player* o
 
     member.DeadMs = 0;
 
-    // On a flight path the owner is out of reach until it lands; the companions catch up then.
     float const distance = bot->GetDistance(owner);
-    if (quiet && distance > TELEPORT_DISTANCE && !owner->IsInFlight())
+    if (quiet && distance > TELEPORT_DISTANCE)
     {
         BotFactory::TeleportNear(bot, owner);
         return;
@@ -591,9 +617,9 @@ std::vector<std::string> Animus::CompanionParty::Describe(ModelLibrary& models) 
     {
         std::string error;
         bool const loaded = models.Find(*member->L, error) != nullptr;
-        lines.push_back(Acore::StringFormat("{}: level {} {} ({}), model {}: {}", member->Name, member->Level,
+        lines.push_back(Acore::StringFormat("{}: level {} {} ({}), model {}: {}{}", member->Name, member->Level,
             member->L->Profile->Name, member->L->Profile->Specs[member->Spec].Name, member->L->ModelName(),
-            loaded ? "loaded" : error));
+            loaded ? "loaded" : error, member->Parked ? " (waiting for you to land)" : ""));
     }
     return lines;
 }

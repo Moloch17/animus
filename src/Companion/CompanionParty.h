@@ -68,8 +68,8 @@ namespace Animus
         CompanionParty(CompanionParty const&) = delete;
         CompanionParty& operator=(CompanionParty const&) = delete;
 
-        /// Create a companion of `race` and `layout` beside the owner -- in the open world, an instance, on a transport
-        /// or below a flight path -- and add it to the owner's group (creating the group when the owner has none). It is
+        /// Create a companion of `race` and `layout` beside the owner -- in the open world, an instance or on a
+        /// transport -- and add it to the owner's group (creating the group when the owner has none). It is
         /// the owner's level, or its class's first level when that is higher (death knights: 55). The race must be
         /// one the class allows. False with `message` set when refused.
         bool Add(Player* owner, Curriculum::Layout const& layout, uint8 race, std::string& message);
@@ -120,6 +120,7 @@ namespace Animus
             std::vector<float> Obs;
             std::vector<uint8> Mask;
             bool ModelErrorLogged = false;
+            bool Parked = false;                // out of the world while the owner flies or rides a vehicle
         };
 
         /// Refresh the pull: new enemies into free (or dead) slots, and the end of the pull.

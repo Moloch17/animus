@@ -234,6 +234,13 @@ bool Animus::AnimusMod::Summon(Player* owner, std::string_view race, std::string
         return false;
     }
 
+    // No companion can ride a flight path or a vehicle with you; companions you already have wait for you to land.
+    if (BotFactory::IsAway(owner))
+    {
+        message = "Companions cannot be summoned on a flight path or a vehicle; summon them once you are off it.";
+        return false;
+    }
+
     // Not a choice of the summon: no bot can be placed while you are between maps, and a battleground takes only
     // queued players.
     if (!BotFactory::CanJoin(owner))
