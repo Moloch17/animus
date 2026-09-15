@@ -81,12 +81,13 @@ namespace
             return commandTable;
         }
 
-        /// .animus summon <class_role>: a companion of that class and role (priest_heal, warrior_tank, ...) at your
-        /// level joins your party and plays its trained model.
-        static bool HandleSummonCommand(ChatHandler* handler, std::string_view classRole)
+        /// .animus summon <race> <class> <role>: a companion of that race, class and role (human priest heal, orc
+        /// warrior tank, ...) at your level joins your party and plays its trained model.
+        static bool HandleSummonCommand(ChatHandler* handler, std::string_view race, std::string_view playerClass,
+            std::string_view role)
         {
             std::string message;
-            return Reply(handler, sAnimusMod->Summon(handler->GetPlayer(), classRole, message), message);
+            return Reply(handler, sAnimusMod->Summon(handler->GetPlayer(), race, playerClass, role, message), message);
         }
 
         /// .animus list: your class/role companions and their models.

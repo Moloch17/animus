@@ -54,9 +54,12 @@ namespace Animus
         /// Command handlers. Return false with `message` set when the request is refused.
         bool Dismiss(Player* owner, std::string& message);
 
-        /// `classRole` is a class/role profile name (priest_heal). The companion plays that class/role's model for
-        /// Animus.Curriculum.Stage and joins the owner's group.
-        bool Summon(Player* owner, std::string_view classRole, std::string& message);
+        /// A companion of `race` (human, nightelf, ...), `playerClass` (priest, deathknight, ...) and `role` (dps, tank,
+        /// heal) joins the owner's group and plays its class/role's model for Animus.Curriculum.Stage. Refused for a
+        /// name that is not one, a class that has no such role, a race the class does not allow, or a race of the
+        /// other faction.
+        bool Summon(Player* owner, std::string_view race, std::string_view playerClass, std::string_view role,
+            std::string& message);
 
         /// One line per class/role companion of `owner`.
         [[nodiscard]] std::vector<std::string> List(Player* owner);

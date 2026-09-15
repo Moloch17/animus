@@ -7,8 +7,8 @@ forge.
 
 - **Stage viewer:** a game master runs any curriculum stage exactly as the forge trains it, without the learner, in
   their own instance, and watches the seats play their models.
-- **Class/role companions:** up to four characters of any class and role at your level join your party and play
-  their class/role models.
+- **Class/role companions:** up to four characters of the race, class and role you choose, at your level, join your
+  party, follow you through loading screens and play their class/role models.
 
 ## Commands (GM)
 
@@ -19,7 +19,7 @@ forge.
 | `.animus stage status` | The stage you watch: its episode, arena and seats, and their models |
 | `.animus stage reset` | Ends the current episode and starts a new one |
 | `.animus stage stop` | Removes the stage you watch |
-| `.animus summon <class_role>` | A class/role companion (`priest_heal`, `warrior_tank`, `mage_dps`, ...) at your level joins your party |
+| `.animus summon <race> <class> <role>` | A companion of that race, class and role (`human priest heal`, `orc warrior tank`, ...) at your level joins your party |
 | `.animus list` | Your class/role companions and whether their models are loaded |
 | `.animus dismiss` | Removes all your companions |
 
@@ -67,15 +67,46 @@ Things to know:
 
 ## Class/role companions
 
-`.animus summon <class_role>` builds a character of that class and role (the 18 class/roles: `warrior_dps`,
-`warrior_tank`, `paladin_heal`, ... `druid_heal`) at your level, as the forge builds a stage's seats
-(animus-lib's `SeatCharacter`): a race of your faction, one of the role's specs with its standard talent build and
+`.animus summon <race> <class> <role>` builds a character of that race, class and role at your level, as the forge
+builds a stage's seats (animus-lib's `SeatCharacter`): one of the role's specs with its standard talent build and
 glyphs, the class trainers' spells, level-appropriate gear, potions, bandages and stones, food and drink for layouts
-that use them, and for hunters a stable of beasts to call. It joins your group (one is created if you have none; only
-the leader can add companions, and the group must have room). Up to four companions per player.
+that use them, and for hunters a stable of beasts to call. It joins your group (one is created if you have none).
 
-Companions can only be summoned in the open world, not in instances, on transports or in flight, and are removed
-when their owner logs out.
+| Argument | Accepted |
+|---|---|
+| `race` | `human`, `dwarf`, `nightelf`, `gnome`, `draenei`, `orc`, `undead` (or `forsaken`), `tauren`, `troll`, `bloodelf` |
+| `class` | `warrior`, `paladin`, `hunter`, `rogue`, `priest`, `deathknight` (or `dk`), `shaman`, `mage`, `warlock`, `druid` |
+| `role` | `dps` (or `damage`), `tank`, `heal` (or `healer`) |
+
+Names ignore case, underscores and hyphens (`night_elf`, `NightElf`). The class/roles are the forge's 18:
+warriors, paladins, death knights and druids tank; paladins, priests, shamans and druids heal; every class deals
+damage. The summon is refused only when the arguments cannot make a character of your side:
+
+- a name that is not a race, class or role;
+- a role the class does not have (`mage tank`);
+- a race the class does not allow (`orc paladin`, `human shaman`);
+- a race of the other faction.
+
+A death knight you summon below level 55 is made at level 55, the level death knights start at.
+
+Beyond the arguments, only what no character could do stops a companion: you already have four, you are in a group
+you do not lead or that is full, you are in a battleground or arena (they only take queued players), or you are in
+the middle of a loading screen.
+
+**Where companions go with you.** You can summon anywhere else: in the open world, in dungeon and raid instances, on a
+boat, zeppelin or elevator (the companion boards it with you), and on a flight path (it waits on the ground below and
+catches up when you land). Companions then follow you through every loading screen:
+
+- **Another map or an instance:** as soon as you arrive, each companion is brought to you, into the same instance
+  (it joins with your group's instance and difficulty). Entry requirements (level, attunement, keys) do not apply to
+  it. Only an instance that refuses anyone at that moment -- full, or a raid encounter in progress -- keeps it out; it
+  comes as soon as the instance takes it.
+- **Transports:** when you board a transport your companions board it too, and when you step off they step off beside
+  you. A transport that crosses to another map carries them through its loading screen with you.
+- **Anything else that teleports a companion** (a summoning spell, a script) completes as a client would acknowledge it.
+- **Battlegrounds and arenas:** companions wait where you left them and rejoin you when you come back.
+
+Companions are removed when their owner logs out.
 
 - **Models:** each companion plays `<class>_<role><stage suffix>.amdl` from `Animus.ModelDir` for
   `Animus.Curriculum.Stage` (`warrior_tank_party.amdl` for the default `stage5_party`). Every model must have its
@@ -89,12 +120,14 @@ when their owner logs out.
   party members.
 - **Enemies:** everything attacking you, a companion or their pets, and what any of you attack, fills up to four
   enemy slots for the current fight; the fight is over when none of them is still alive and fighting.
-- **Upkeep:** out of combat, companions more than 30 yards away run back to you and more than 100 yards away (or
-  on another open-world map) are teleported to you. While you are in an instance they wait where they are. A dead
-  companion accepts a resurrection, or stands up 10 seconds after the fight.
+- **Upkeep:** out of combat, companions more than 30 yards away run back to you and more than 100 yards away are
+  teleported to you (not while you fly a flight path). On another map, in another instance, or on or off a different
+  transport, they are brought to you at once, in or out of combat. A dead companion accepts a resurrection, or stands up
+  10 seconds after the fight.
 - **Nothing is saved:** companions and their pets have no character rows. Their group membership is written like
   any group member's and removed when they are dismissed; rows left behind by a crash are cleaned up by the core
-  at startup (group members without a character).
+  at startup (group members without a character). A companion never answers an instance's lock warning, so it is only
+  ever bound to an instance temporarily, and the bind goes with it.
 
 ## Installing
 

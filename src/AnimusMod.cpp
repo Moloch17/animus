@@ -17,15 +17,98 @@
  */
 
 #include "AnimusMod.h"
+#include "BotFactory.h"
+#include "ClassRoleAssets.h"
 #include "ClassRoleProfile.h"
 #include "Log.h"
 #include "Map.h"
+#include "ObjectMgr.h"
 #include "ObjectAccessor.h"
 #include "Player.h"
 #include "StageDefinition.h"
 #include "StringFormat.h"
 #include <algorithm>
+#include <array>
+#include <cctype>
+#include <optional>
 #include <vector>
+
+namespace
+{
+    struct NamedId
+    {
+        std::string_view Name;
+        uint8 Id;
+    };
+
+    /// What `.animus summon` accepts, first name of each id shown in messages. Matched case-insensitively, ignoring
+    /// spaces, underscores, hyphens and apostrophes (night_elf, Night-Elf and nightelf are the same).
+    constexpr std::array<NamedId, 12> RACE_NAMES =
+    { {
+        { "human", RACE_HUMAN }, { "dwarf", RACE_DWARF }, { "nightelf", RACE_NIGHTELF }, { "gnome", RACE_GNOME },
+        { "draenei", RACE_DRAENEI }, { "orc", RACE_ORC }, { "undead", RACE_UNDEAD_PLAYER },
+        { "forsaken", RACE_UNDEAD_PLAYER }, { "tauren", RACE_TAUREN }, { "troll", RACE_TROLL },
+        { "bloodelf", RACE_BLOODELF }, { "scourge", RACE_UNDEAD_PLAYER },
+    } };
+
+    constexpr std::array<NamedId, 11> CLASS_NAMES =
+    { {
+        { "warrior", CLASS_WARRIOR }, { "paladin", CLASS_PALADIN }, { "hunter", CLASS_HUNTER }, { "rogue", CLASS_ROGUE },
+        { "priest", CLASS_PRIEST }, { "deathknight", CLASS_DEATH_KNIGHT }, { "shaman", CLASS_SHAMAN },
+        { "mage", CLASS_MAGE }, { "warlock", CLASS_WARLOCK }, { "druid", CLASS_DRUID }, { "dk", CLASS_DEATH_KNIGHT },
+    } };
+
+    constexpr std::array<NamedId, 6> ROLE_NAMES =
+    { {
+        { "dps", uint8(Animus::Curriculum::Role::Dps) }, { "tank", uint8(Animus::Curriculum::Role::Tank) },
+        { "heal", uint8(Animus::Curriculum::Role::Heal) }, { "damage", uint8(Animus::Curriculum::Role::Dps) },
+        { "healer", uint8(Animus::Curriculum::Role::Heal) }, { "dd", uint8(Animus::Curriculum::Role::Dps) },
+    } };
+
+    std::string Normalize(std::string_view text)
+    {
+        std::string normal;
+        for (char c : text)
+            if (c != ' ' && c != '_' && c != '-' && c != '\'')
+                normal.push_back(char(std::tolower(static_cast<unsigned char>(c))));
+        return normal;
+    }
+
+    template <std::size_t N>
+    std::optional<uint8> FindNamed(std::array<NamedId, N> const& names, std::string_view text)
+    {
+        std::string const wanted = Normalize(text);
+        for (NamedId const& entry : names)
+            if (entry.Name == wanted)
+                return entry.Id;
+        return std::nullopt;
+    }
+
+    template <std::size_t N>
+    std::string NameOf(std::array<NamedId, N> const& names, uint8 id)
+    {
+        for (NamedId const& entry : names)
+            if (entry.Id == id)
+                return std::string(entry.Name);
+        return "?";
+    }
+
+    /// Every id's first name, for messages.
+    template <std::size_t N>
+    std::string Names(std::array<NamedId, N> const& names)
+    {
+        std::string list;
+        std::vector<uint8> seen;
+        for (NamedId const& entry : names)
+        {
+            if (std::find(seen.begin(), seen.end(), entry.Id) != seen.end())
+                continue;
+            seen.push_back(entry.Id);
+            list += (list.empty() ? "" : ", ") + std::string(entry.Name);
+        }
+        return list;
+    }
+}
 
 Animus::AnimusMod* Animus::AnimusMod::Instance()
 {
@@ -93,7 +176,8 @@ bool Animus::AnimusMod::Dismiss(Player* owner, std::string& message)
     return true;
 }
 
-bool Animus::AnimusMod::Summon(Player* owner, std::string_view classRole, std::string& message)
+bool Animus::AnimusMod::Summon(Player* owner, std::string_view race, std::string_view playerClass,
+    std::string_view role, std::string& message)
 {
     if (!_config.Enable)
     {
@@ -101,26 +185,60 @@ bool Animus::AnimusMod::Summon(Player* owner, std::string_view classRole, std::s
         return false;
     }
 
-    if (owner->GetMap()->Instanceable())
+    std::optional<uint8> const raceId = FindNamed(RACE_NAMES, race);
+    if (!raceId)
     {
-        message = "Companions can only be summoned in the open world.";
+        message = Acore::StringFormat("Unknown race {}. Races: {}.", race, Names(RACE_NAMES));
         return false;
     }
 
-    if (owner->GetTransport() || owner->IsInFlight())
+    std::optional<uint8> const classId = FindNamed(CLASS_NAMES, playerClass);
+    if (!classId)
     {
-        message = "Companions cannot be summoned while on a transport or in flight.";
+        message = Acore::StringFormat("Unknown class {}. Classes: {}.", playerClass, Names(CLASS_NAMES));
         return false;
     }
 
-    std::vector<Curriculum::ClassRoleProfile> const& profiles = Curriculum::ClassRoleProfiles();
-    auto const profile = std::find_if(profiles.begin(), profiles.end(),
-        [&](Curriculum::ClassRoleProfile const& candidate) { return candidate.Name == classRole; });
-    if (profile == profiles.end())
+    std::optional<uint8> const roleId = FindNamed(ROLE_NAMES, role);
+    if (!roleId)
     {
-        message = "Unknown class/role. Choose one of:";
-        for (Curriculum::ClassRoleProfile const& candidate : profiles)
-            message += " " + candidate.Name;
+        message = Acore::StringFormat("Unknown role {}. Roles: {}.", role, Names(ROLE_NAMES));
+        return false;
+    }
+
+    std::string const raceName = NameOf(RACE_NAMES, *raceId);
+    std::string const className = NameOf(CLASS_NAMES, *classId);
+    Curriculum::Role const playRole = Curriculum::Role(*roleId);
+
+    Curriculum::ClassRoleProfile const* profile = Curriculum::ClassRoleAssets::FindProfile(*classId, playRole);
+    if (!profile)
+    {
+        std::string roles;
+        for (Curriculum::ClassRoleProfile const& candidate : Curriculum::ClassRoleProfiles())
+            if (candidate.Class == *classId)
+                roles += (roles.empty() ? "" : ", ") + std::string(Curriculum::RoleName(candidate.PlayRole));
+        message = Acore::StringFormat("A {} cannot be a {}. A {} can be: {}.", className,
+            Curriculum::RoleName(playRole), className, roles);
+        return false;
+    }
+
+    if (!sObjectMgr->GetPlayerInfo(*raceId, *classId))
+    {
+        message = Acore::StringFormat("A {} cannot be a {}.", raceName, className);
+        return false;
+    }
+
+    if (Player::TeamIdForRace(*raceId) != owner->GetTeamId())
+    {
+        message = Acore::StringFormat("A {} is not of your faction.", raceName);
+        return false;
+    }
+
+    // Not a choice of the summon: no bot can be placed while you are between maps, and a battleground takes only
+    // queued players.
+    if (!BotFactory::CanJoin(owner))
+    {
+        message = "Companions cannot join you in a battleground or arena, or while you are changing maps.";
         return false;
     }
 
@@ -130,7 +248,7 @@ bool Animus::AnimusMod::Summon(Player* owner, std::string_view classRole, std::s
     if (!party)
         party = std::make_unique<CompanionParty>(owner->GetGUID());
 
-    if (!party->Add(owner, layout, message))
+    if (!party->Add(owner, layout, *raceId, message))
     {
         if (!party->Size())
             _parties.erase(owner->GetGUID());

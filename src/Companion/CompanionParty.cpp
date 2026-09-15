@@ -93,7 +93,7 @@ Animus::CompanionParty::CompanionParty(ObjectGuid owner) : _owner(owner)
 
 Animus::CompanionParty::~CompanionParty() = default;
 
-bool Animus::CompanionParty::Add(Player* owner, Layout const& layout, std::string& message)
+bool Animus::CompanionParty::Add(Player* owner, Layout const& layout, uint8 race, std::string& message)
 {
     if (_members.size() >= MAX_COMPANIONS)
     {
@@ -103,18 +103,9 @@ bool Animus::CompanionParty::Add(Player* owner, Layout const& layout, std::strin
 
     ClassRoleProfile const& profile = *layout.Profile;
     ClassRoleAssets const& assets = *layout.Assets;
-    uint8 const level = owner->GetLevel();
-    if (level < assets.Kit->MinLevel())
-    {
-        message = Acore::StringFormat("A {} companion needs level {}.", profile.Name, assets.Kit->MinLevel());
-        return false;
-    }
 
-    if (assets.Races.empty() || profile.Specs.empty())
-    {
-        message = Acore::StringFormat("No {} companion can be built.", profile.Name);
-        return false;
-    }
+    // A class that starts above level 1 (death knights) starts there, whatever the owner's level.
+    uint8 const level = std::max<uint8>(owner->GetLevel(), assets.Kit->MinLevel());
 
     Group* group = owner->GetGroup();
     if (group && !group->IsLeader(owner->GetGUID()))
@@ -129,19 +120,11 @@ bool Animus::CompanionParty::Add(Player* owner, Layout const& layout, std::strin
         return false;
     }
 
-    // A race of the owner's faction, so the companion is a friend to the owner and everyone the owner groups with.
-    std::vector<uint8> races;
-    for (uint8 race : assets.Races)
-        if (Player::TeamIdForRace(race) == owner->GetTeamId())
-            races.push_back(race);
-    if (races.empty())
-        races = assets.Races;
-
     uint32 const number = ++CompanionCounter;
 
     BotFactory::BotSpec spec;
     spec.Name = Acore::StringFormat("Animus{}", number);
-    spec.Race = races[urand(0, uint32(races.size()) - 1)];
+    spec.Race = race;
     spec.Class = profile.Class;
     spec.Gender = uint8(urand(GENDER_MALE, GENDER_FEMALE));
     spec.Level = level;
@@ -158,7 +141,7 @@ bool Animus::CompanionParty::Add(Player* owner, Layout const& layout, std::strin
     member->Bot = bot->GetGUID();
     member->Name = bot->GetName();
     member->L = &layout;
-    member->Race = spec.Race;
+    member->Race = race;
     member->Level = level;
     member->Spec = uint8(urand(0, uint32(profile.Specs.size()) - 1));
 
@@ -239,6 +222,11 @@ Animus::CompanionParty::Status Animus::CompanionParty::Update(uint32 diff, Setti
 
     // Bots only leave through DestroyAll; anything else took one away.
     std::erase_if(_members, [](std::unique_ptr<Member> const& member) { return !FindBot(member->Bot); });
+
+    // A teleport a bot started itself (its transport changing maps, a summoning spell) completes as its client would
+    // acknowledge it, whatever the owner is doing.
+    for (std::unique_ptr<Member> const& member : _members)
+        BotFactory::CompleteTeleport(FindBot(member->Bot));
 
     if (!owner->IsInWorld() || owner->IsBeingTeleported())
         return Status::Active;
@@ -361,10 +349,12 @@ void Animus::CompanionParty::UpdateMember(Member& member, Player* bot, Player* o
     if (!bot || !bot->IsInWorld() || bot->IsBeingTeleported())
         return;
 
-    // Waiting outside while the owner is in an instance; back to the owner when they return to the open world.
-    if (bot->GetMap() != owner->GetMap())
+    // Through the owner's loading screens: onto the owner's map or into its instance, whatever the fight. A
+    // battleground or arena only takes queued players, so there the companions wait where they are. The same for
+    // the owner's transport: on when the owner boards, off when the owner steps off, so no ship leaves one behind.
+    if (bot->GetMap() != owner->GetMap() || bot->GetTransport() != owner->GetTransport())
     {
-        if (!owner->GetMap()->Instanceable())
+        if (BotFactory::CanJoin(owner))
             BotFactory::TeleportNear(bot, owner);
         return;
     }
@@ -395,8 +385,9 @@ void Animus::CompanionParty::UpdateMember(Member& member, Player* bot, Player* o
 
     member.DeadMs = 0;
 
+    // On a flight path the owner is out of reach until it lands; the companions catch up then.
     float const distance = bot->GetDistance(owner);
-    if (quiet && distance > TELEPORT_DISTANCE)
+    if (quiet && distance > TELEPORT_DISTANCE && !owner->IsInFlight())
     {
         BotFactory::TeleportNear(bot, owner);
         return;
