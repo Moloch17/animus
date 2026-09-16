@@ -203,16 +203,18 @@ Animus.Curriculum.Duel.StealthOpener = 0.5
 Animus.Curriculum.Duel.StealthUtility = 0.05
 #   per decision
 Animus.Curriculum.Duel.StepCost = 0.0002
-Animus.Curriculum.Duel.Kill = 3.0
+#   winning outweighs winning fast: at Kill 10, FastKill 1 and a loss (Death, Timeout) at 10, a risky fast opener
+#   only pays more than a sure slow win above ~97% odds
+Animus.Curriculum.Duel.Kill = 10.0
 #   times the fraction of the episode length left, from the engagement
-Animus.Curriculum.Duel.FastKill = 3.0
+Animus.Curriculum.Duel.FastKill = 1.0
 #   times the fraction of the bot's health not lost; damage taken is already charged as it happens, so a large
 #   value pays twice for the same thing and reads as "survive" rather than "win"
 Animus.Curriculum.Duel.HealthKept = 0.5
-Animus.Curriculum.Duel.Death = 3.0
+Animus.Curriculum.Duel.Death = 10.0
 #   a creature duel that runs out of time with neither side dead: a lost fight, ended as one (as Death, so neither
 #   way of losing is the cheaper one)
-Animus.Curriculum.Duel.Timeout = 3.0
+Animus.Curriculum.Duel.Timeout = 10.0
 #   the range the approach shaping aims for, melee specs
 Animus.Curriculum.Duel.MeleeRange = 3.5
 #   ... ranged specs
