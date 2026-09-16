@@ -153,6 +153,12 @@ Animus.Stage.SpawnPoint.O     = 2.96
 Animus.Curriculum.Characters.HighLevelFirst = 61
 #   percent of characters drawn from the high levels
 Animus.Curriculum.Characters.HighLevelChance = 50
+#   percent of characters: the standard build with its last points moved (0 = never)
+Animus.Curriculum.Characters.NoisyTalentChance = 30
+#   percent of characters: every talent point spent at random (the rest get the spec's standard build)
+Animus.Curriculum.Characters.RandomTalentChance = 10
+#   a noisy build moves 1 to this many of its last points
+Animus.Curriculum.Characters.TalentNoisePoints = 5
 
 #
 #    Animus.Curriculum.Party.*
