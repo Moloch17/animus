@@ -107,6 +107,7 @@ namespace Animus
             uint32 FoodItem = 0;
             uint32 DrinkItem = 0;
             std::vector<uint32> Stable;
+            ObjectGuid LastPetGuid;             // the pet given its default stance (PetBlock::DefaultStance)
 
             uint32 TargetSlot = 0;
             uint32 SinceDecisionMs = 0;

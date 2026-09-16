@@ -30,6 +30,7 @@
 #include "MotionMaster.h"
 #include "MoveSpline.h"
 #include "ObjectAccessor.h"
+#include "PetBlock.h"
 #include "Player.h"
 #include "Random.h"
 #include "SeatCharacter.h"
@@ -455,6 +456,9 @@ void Animus::CompanionParty::Decide(Member& member, Player* bot, Player* owner, 
     if (inCombat && !member.InCombat)
         member.CombatStartMs = _nowMs;
     member.InCombat = inCombat;
+
+    // A pet it summoned starts defensive, as a forge seat's does.
+    Curriculum::PetBlock::DefaultStance(Curriculum::PetBlock::FindPet(bot), member.LastPetGuid);
 
     // What the forge's reward step records for the next observation.
     member.LastStepDamage = float(member.StepDamage.exchange(0, std::memory_order_relaxed)) / DamageScale(member.Level);
