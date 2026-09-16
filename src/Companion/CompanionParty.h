@@ -144,6 +144,7 @@ namespace Animus
         std::vector<ObjectGuid> _enemies;                   // slot order
         uint64 _nowMs = 0;
         uint64 _pullStartMs = 0;
+        uint64 _episodeStartMs = 0;
         uint64 _quietSinceMs = 0;
         bool _foughtBefore = false;                         // quiet time counts from the first fight's end
         bool _episodeStarted = false;

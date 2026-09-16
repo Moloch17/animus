@@ -362,6 +362,7 @@ void Animus::CompanionParty::UpdatePull(Player* owner, std::vector<Player*> cons
 void Animus::CompanionParty::StartEpisode(Player* owner)
 {
     _episodeStarted = true;
+    _episodeStartMs = _nowMs;
     _pullsCleared = 0;
 
     // Training starts every episode with full bags.
@@ -522,6 +523,9 @@ Animus::Curriculum::SeatView Animus::CompanionParty::View(Member const& member, 
     view.LastStepDamage = member.LastStepDamage;
     view.LastStepPowerDelta = member.LastStepPowerDelta;
     view.LastStepDamageTaken = member.LastStepDamageTaken;
+    // The forge's episode clock, from the episode this party's fighting belongs to (StartEpisode).
+    view.EpisodeTime = _episodeStarted
+        ? std::min(1.0f, float(_nowMs - _episodeStartMs) / EPISODE_TIME_SCALE_MS) : 0.0f;
     view.CombatTime = member.InCombat
         ? std::min(1.0f, float(_nowMs - member.CombatStartMs) / COMBAT_TIME_SCALE_MS) : 0.0f;
     view.Supplies = member.Supplies;
