@@ -21,6 +21,7 @@
 
 #include "Define.h"
 #include "Position.h"
+#include "CurriculumTuning.h"
 #include "StageSettings.h"
 #include <string>
 #include <vector>
@@ -39,6 +40,8 @@ namespace Animus
         /// decision interval.
         std::string CurriculumStage = "stage5_party";
         uint32 CurriculumDecisionMs = 100;
+        /// Action pacing for companions (Animus.Curriculum.Actions.*), as the forge paces its seats.
+        Curriculum::CurriculumTuning::ActionTuning CurriculumActions;
 
         /// Animus.Stage.*: the stage viewer (`.animus stage start`).
         uint32 StageDecisionMs = 100;

@@ -46,9 +46,9 @@ Animus.Curriculum.Stage = "stage5_party"
 #    Animus.Curriculum.DecisionMs
 #        Description: Game time between a class/role companion's model decisions, in milliseconds:
 #                     the decision interval its models were trained with (AnimusForge.DecisionMs).
-#        Default:     100
+#        Default:     250
 
-Animus.Curriculum.DecisionMs = 100
+Animus.Curriculum.DecisionMs = 250
 
 ###################################################################################################
 # STAGE VIEWER
@@ -74,9 +74,9 @@ Animus.Stage.Policy = "model"
 #        Description: Game time per seat decision, in milliseconds: the interval the models were
 #                     trained with (AnimusForge.DecisionMs). World updates shorter than this wait
 #                     for it; a longer one still makes a single decision.
-#        Default:     100
+#        Default:     250
 
-Animus.Stage.DecisionMs = 100
+Animus.Stage.DecisionMs = 250
 
 #
 #    Animus.Stage.EpisodeSeconds
@@ -136,7 +136,8 @@ Animus.Stage.SpawnPoint.O     = 2.96
 # AnimusForge.Curriculum.* under this prefix: to watch a stage as a model was trained, copy the
 # values of that run (its stage.json "tuning") here. Every key is optional; a missing one keeps the
 # default shown. Per-decision reward terms are tuned per 50 ms decision and scaled with
-# Animus.Stage.DecisionMs. Class/role companions do not use these.
+# Animus.Stage.DecisionMs. Class/role companions use only the Actions.* keys (pacing, and the
+# movement and stance locks), so they play with the masks their models trained with.
 
 #
 #    Animus.Curriculum.Arena.<stage>.<arena>.Weight
@@ -232,6 +233,25 @@ Animus.Curriculum.Duel.MeleeRange = 3.5
 Animus.Curriculum.Duel.RangedRange = 25.0
 
 #
+#    Animus.Curriculum.Difficulty.*
+#        How hard the creature duel's opponents are, per class/role. Tier t below EliteTier is a normal
+#        creature t x LevelsPerTier levels above the seat; from EliteTier on an elite, (t - EliteTier) x
+#        LevelsPerTier levels above. Evaluations spread their seeds over every tier.
+
+#   the hardest tier
+Animus.Curriculum.Difficulty.MaxTier = 6
+#   the first elite tier (above MaxTier: no elites)
+Animus.Curriculum.Difficulty.EliteTier = 4
+Animus.Curriculum.Difficulty.LevelsPerTier = 1
+#   a class/role moves up a tier when it wins (kills without dying) this share of Window fights at its tier ...
+Animus.Curriculum.Difficulty.RaiseAbove = 0.9
+#   ... and down below this share
+Animus.Curriculum.Difficulty.LowerBelow = 0.6
+Animus.Curriculum.Difficulty.Window = 200
+#   percent of training fights drawn from a lower tier, so none is forgotten
+Animus.Curriculum.Difficulty.ReviewChance = 25
+
+#
 #    Animus.Curriculum.Casting.*
 #        Cast-time spells, from the duel stage on.
 
@@ -265,6 +285,12 @@ Animus.Curriculum.Actions.Repeat = 0.02
 Animus.Curriculum.Actions.RepeatWindowMs = 10000
 #   presses of one action within the window that cost nothing
 Animus.Curriculum.Actions.RepeatFree = 3
+#   a movement order back the way the last one went (in toward the target, then away, or the reverse) waits this
+#   long (ms); movement is still free, only the reversal waits
+Animus.Curriculum.Actions.ReverseMoveMs = 1000
+#   a stance, form, presence, aspect, aura, seal, armor or pet stance holds this long before another change of its
+#   kind (ms)
+Animus.Curriculum.Actions.ModeLockMs = 5000
 
 #
 #    Animus.Curriculum.Pulls.*

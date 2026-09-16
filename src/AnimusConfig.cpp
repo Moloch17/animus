@@ -65,9 +65,10 @@ void Animus::AnimusConfig::Load()
             CurriculumStage);
         CurriculumStage = "stage5_party";
     }
-    CurriculumDecisionMs = std::max<uint32>(1, sConfigMgr->GetOption<uint32>("Animus.Curriculum.DecisionMs", 100));
+    CurriculumDecisionMs = std::max<uint32>(1, sConfigMgr->GetOption<uint32>("Animus.Curriculum.DecisionMs", 250));
+    CurriculumActions = Curriculum::CurriculumTuning::Load("Animus.Curriculum.").Actions;
 
-    StageDecisionMs = std::max<uint32>(1, sConfigMgr->GetOption<uint32>("Animus.Stage.DecisionMs", 100));
+    StageDecisionMs = std::max<uint32>(1, sConfigMgr->GetOption<uint32>("Animus.Stage.DecisionMs", 250));
     StageEpisodeSeconds = std::max<uint32>(1, sConfigMgr->GetOption<uint32>("Animus.Stage.EpisodeSeconds", 60));
     StagePolicy = sConfigMgr->GetOption<std::string>("Animus.Stage.Policy", "model");
     StageClassRoles = GetList("Animus.Stage.ClassRoles");

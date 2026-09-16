@@ -21,6 +21,8 @@
 
 #include "Layout.h"
 #include "ObjectGuid.h"
+#include "CurriculumTuning.h"
+#include "SeatMemory.h"
 #include "SeatView.h"
 #include "Supplies.h"
 #include "TalentBuilder.h"
@@ -59,7 +61,8 @@ namespace Animus
 
         struct Settings
         {
-            uint32 DecisionMs = 100;
+            uint32 DecisionMs = 250;
+            Curriculum::CurriculumTuning::ActionTuning Actions;     // pacing and locks, as the forge's seats have
         };
 
         explicit CompanionParty(ObjectGuid owner);
@@ -119,6 +122,7 @@ namespace Animus
 
             std::vector<float> Obs;
             std::vector<uint8> Mask;
+            Curriculum::SeatMemory Memory;      // pacing, and what it has been doing (as a forge seat's)
             bool ModelErrorLogged = false;
             bool Parked = false;                // out of the world while the owner flies or rides a vehicle
         };
@@ -127,7 +131,7 @@ namespace Animus
         void UpdatePull(Player* owner, std::vector<Player*> const& bots);
         void UpdateMember(Member& member, Player* bot, Player* owner, uint32 diff, Settings const& settings,
             ModelLibrary& models);
-        void Decide(Member& member, Player* bot, Player* owner, MlpPolicy& policy);
+        void Decide(Member& member, Player* bot, Player* owner, MlpPolicy& policy, Settings const& settings);
         /// The forge's pull target: the selected enemy, else the nearest living one (which becomes the selection).
         [[nodiscard]] Unit* CurrentTarget(Member& member, Player* bot) const;
         [[nodiscard]] Curriculum::SeatView View(Member const& member, Player* bot, Player* owner, Unit* target) const;

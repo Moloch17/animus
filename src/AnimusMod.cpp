@@ -138,7 +138,7 @@ void Animus::AnimusMod::OnUpdate(uint32 diff)
         return;
     }
 
-    CompanionParty::Settings const settings{ _config.CurriculumDecisionMs };
+    CompanionParty::Settings const settings{ _config.CurriculumDecisionMs, _config.CurriculumActions };
     std::vector<ObjectGuid> gone;
     for (auto const& [owner, party] : _parties)
         if (party->Update(diff, settings, _models) == CompanionParty::Status::Dismiss)

@@ -153,6 +153,7 @@ bool Animus::CompanionParty::Add(Player* owner, Layout const& layout, uint8 race
 
     member->Obs.resize(layout.ObsDim);
     member->Mask.resize(layout.NumActions);
+    member->Memory.Reset(layout.NumActions);
 
     bool const newGroup = !group;
     if (newGroup)
@@ -444,10 +445,11 @@ void Animus::CompanionParty::UpdateMember(Member& member, Player* bot, Player* o
         return;
 
     member.SinceDecisionMs %= settings.DecisionMs;
-    Decide(member, bot, owner, *policy);
+    Decide(member, bot, owner, *policy, settings);
 }
 
-void Animus::CompanionParty::Decide(Member& member, Player* bot, Player* owner, MlpPolicy& policy)
+void Animus::CompanionParty::Decide(Member& member, Player* bot, Player* owner, MlpPolicy& policy,
+    Settings const& settings)
 {
     bool const inCombat = bot->IsInCombat();
     if (inCombat && !member.InCombat)
@@ -466,8 +468,15 @@ void Animus::CompanionParty::Decide(Member& member, Player* bot, Player* owner, 
     member.LastPower = current;
 
     Unit* target = CurrentTarget(member, bot);
+    member.Memory.Observe(bot, target, _nowMs);
     SeatView view = View(member, bot, owner, target);
     SeatEncoder::Observe(view, member.Obs.data(), member.Mask.data());
+
+    // Paced and locked actions, as a forge seat's mask has them.
+    Layout const& layout = *member.L;
+    for (uint32 action = 1; action < layout.NumActions; ++action)
+        if (member.Mask[action] && member.Memory.Paced(layout, action, _nowMs, settings.Actions))
+            member.Mask[action] = 0;
 
     // As a forge seat: nothing to act on between pulls unless the layout acts without a target (food, drink).
     if (!target && !SeatEncoder::ActsWithoutTarget(*member.L))
@@ -477,6 +486,8 @@ void Animus::CompanionParty::Decide(Member& member, Player* bot, Player* owner, 
 
     SeatActionResult result;
     SeatEncoder::Apply(view, action, result);
+    if (action > 0)
+        member.Memory.Press(layout, uint32(action), _nowMs, settings.Actions, bot, nullptr);
     member.TargetSlot = view.TargetSlot;
 
     if (result.CallBeast && CallHunterBeast(bot, result.CallBeast))
@@ -520,6 +531,8 @@ Animus::Curriculum::SeatView Animus::CompanionParty::View(Member const& member, 
     view.Race = member.Race;
     view.Spec = member.Spec;
     view.Build = &member.Build;
+    view.Memory = &member.Memory;
+    view.NowMs = _nowMs;
     view.LastStepDamage = member.LastStepDamage;
     view.LastStepPowerDelta = member.LastStepPowerDelta;
     view.LastStepDamageTaken = member.LastStepDamageTaken;
