@@ -333,15 +333,24 @@ Animus.Curriculum.Pulls.Interrupt = 0.3
 Animus.Curriculum.Pulls.Kill = 0.5
 #   per decision
 Animus.Curriculum.Pulls.StepCost = 0.0002
+#   gauntlet and owner stages: each pull cleared
 Animus.Curriculum.Pulls.Clear = 2.0
-#   pack: times the episode fraction left after engaging
-Animus.Curriculum.Pulls.FastClear = 3.0
 #   gauntlet: times 1 - time since the pull engaged / 60 s
 Animus.Curriculum.Pulls.FastPull = 2.0
-#   times the fraction of the bot's health not lost this pull
+#   gauntlet and owner stages: times the fraction of the bot's health not lost this pull
 Animus.Curriculum.Pulls.HealthKept = 2.0
-Animus.Curriculum.Pulls.PackDeath = 3.0
 Animus.Curriculum.Pulls.GauntletDeath = 5.0
+#   A single pack (stage2_pack): the clear, the fast clear bonus (times the episode fraction left after engaging),
+#   health kept, death, running out of time (a lost fight), standing off once StallGraceMs are gone (per second),
+#   and a ranged spec hit in melee reach (per second). As mod_animus_forge.conf.dist.
+Animus.Curriculum.Pulls.PackClear = 10.0
+Animus.Curriculum.Pulls.FastClear = 1.0
+Animus.Curriculum.Pulls.PackHealthKept = 0.5
+Animus.Curriculum.Pulls.PackDeath = 10.0
+Animus.Curriculum.Pulls.Timeout = 10.0
+Animus.Curriculum.Pulls.Stall = 0.05
+Animus.Curriculum.Pulls.StallGraceMs = 15000
+Animus.Curriculum.Pulls.Spacing = 0.03
 #   owner stages: kills and clears count this many times
 Animus.Curriculum.Pulls.OwnerClearScale = 2.0
 
