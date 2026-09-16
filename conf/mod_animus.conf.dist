@@ -153,6 +153,10 @@ Animus.Stage.SpawnPoint.O     = 2.96
 Animus.Curriculum.Characters.HighLevelFirst = 61
 #   percent of characters drawn from the high levels
 Animus.Curriculum.Characters.HighLevelChance = 50
+#   levels at or below this are "low"
+Animus.Curriculum.Characters.LowLevelLast = 20
+#   percent of characters drawn from the low levels (when the class can be that low); the rest are any level
+Animus.Curriculum.Characters.LowLevelChance = 15
 #   percent of characters: the standard build with its last points moved (0 = never)
 Animus.Curriculum.Characters.NoisyTalentChance = 30
 #   percent of characters: every talent point spent at random (the rest get the spec's standard build)
@@ -215,6 +219,13 @@ Animus.Curriculum.Duel.Death = 10.0
 #   a creature duel that runs out of time with neither side dead: a lost fight, ended as one (as Death, so neither
 #   way of losing is the cheaper one)
 Animus.Curriculum.Duel.Timeout = 10.0
+#   creature duel: per second the fight has not started once StallGraceMs are gone; Timeout alone charges standing
+#   where it spawned only when the clock runs out, too far off for the policy to see
+Animus.Curriculum.Duel.Stall = 0.05
+#   ... the time a seat has to summon, buff and sneak up before it (ms)
+Animus.Curriculum.Duel.StallGraceMs = 15000
+#   creature duel, ranged specs: per second the opponent stands in melee range hitting the bot
+Animus.Curriculum.Duel.Spacing = 0.03
 #   the range the approach shaping aims for, melee specs
 Animus.Curriculum.Duel.MeleeRange = 3.5
 #   ... ranged specs
@@ -246,6 +257,14 @@ Animus.Curriculum.Actions.MoveRepeatMs = 300
 Animus.Curriculum.Actions.StopCastMinMs = 500
 #   a spell the bot stopped itself cannot be started again for this long (ms)
 Animus.Curriculum.Actions.RecastAfterStopMs = 2000
+#   per press of the same action past the free ones within RepeatWindowMs: pressing one button over and over,
+#   however far apart the presses are paced (how often the seat acts overall is not charged; movement orders are
+#   always free)
+Animus.Curriculum.Actions.Repeat = 0.02
+#   the window the presses of one action are counted in (ms)
+Animus.Curriculum.Actions.RepeatWindowMs = 10000
+#   presses of one action within the window that cost nothing
+Animus.Curriculum.Actions.RepeatFree = 3
 
 #
 #    Animus.Curriculum.Pulls.*
