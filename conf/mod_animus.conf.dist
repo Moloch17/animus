@@ -210,6 +210,9 @@ Animus.Curriculum.Duel.FastKill = 3.0
 #   value pays twice for the same thing and reads as "survive" rather than "win"
 Animus.Curriculum.Duel.HealthKept = 0.5
 Animus.Curriculum.Duel.Death = 3.0
+#   a creature duel that runs out of time with neither side dead: a lost fight, ended as one (as Death, so neither
+#   way of losing is the cheaper one)
+Animus.Curriculum.Duel.Timeout = 3.0
 #   the range the approach shaping aims for, melee specs
 Animus.Curriculum.Duel.MeleeRange = 3.5
 #   ... ranged specs
@@ -226,6 +229,21 @@ Animus.Curriculum.Casting.TimeCompleted = 0.03
 #   per cast the bot cut short itself, whatever it had spent on it; TimeWasted alone charges by the second, so
 #   stopping a cast the decision after starting it is nearly free and a deterministic policy can loop on it
 Animus.Curriculum.Casting.Cancel = 0.05
+
+#
+#    Animus.Curriculum.Actions.*
+#        How often a seat may press the same button, as a player would. A paced action is masked until it may be
+#        pressed again, so a policy cannot sit re-issuing an order every decision (a pet sent in 125 times an
+#        episode, a cast started and stopped over and over). Spells keep their own cooldowns as well. 0 = no pace.
+
+#   the same action again: spells, orders, consumables, targeting (ms)
+Animus.Curriculum.Actions.RepeatMs = 1000
+#   the same movement order again (ms)
+Animus.Curriculum.Actions.MoveRepeatMs = 300
+#   a cast the bot is in cannot be stopped before it has run this long (ms)
+Animus.Curriculum.Actions.StopCastMinMs = 500
+#   a spell the bot stopped itself cannot be started again for this long (ms)
+Animus.Curriculum.Actions.RecastAfterStopMs = 2000
 
 #
 #    Animus.Curriculum.Pulls.*
