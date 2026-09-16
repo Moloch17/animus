@@ -200,11 +200,12 @@ Animus.Curriculum.Duel.StealthOpener = 0.5
 Animus.Curriculum.Duel.StealthUtility = 0.05
 #   per decision
 Animus.Curriculum.Duel.StepCost = 0.0002
-Animus.Curriculum.Duel.Kill = 2.0
+Animus.Curriculum.Duel.Kill = 3.0
 #   times the fraction of the episode length left, from the engagement
 Animus.Curriculum.Duel.FastKill = 3.0
-#   times the fraction of the bot's health not lost
-Animus.Curriculum.Duel.HealthKept = 2.0
+#   times the fraction of the bot's health not lost; damage taken is already charged as it happens, so a large
+#   value pays twice for the same thing and reads as "survive" rather than "win"
+Animus.Curriculum.Duel.HealthKept = 0.5
 Animus.Curriculum.Duel.Death = 3.0
 #   the range the approach shaping aims for, melee specs
 Animus.Curriculum.Duel.MeleeRange = 3.5
@@ -219,6 +220,9 @@ Animus.Curriculum.Duel.RangedRange = 25.0
 Animus.Curriculum.Casting.TimeWasted = 0.03
 #   per second of cast time of a cast that finished, in combat
 Animus.Curriculum.Casting.TimeCompleted = 0.03
+#   per cast the bot cut short itself, whatever it had spent on it; TimeWasted alone charges by the second, so
+#   stopping a cast the decision after starting it is nearly free and a deterministic policy can loop on it
+Animus.Curriculum.Casting.Cancel = 0.05
 
 #
 #    Animus.Curriculum.Pulls.*
