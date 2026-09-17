@@ -350,6 +350,10 @@ Animus.Curriculum.Pulls.FastClear = 1.0
 Animus.Curriculum.Pulls.PackHealthKept = 0.5
 Animus.Curriculum.Pulls.PackDeath = 10.0
 Animus.Curriculum.Pulls.Timeout = 10.0
+#   pack: per second a fight goes on past OvertimeGraceMs after it was engaged, and a death in overtime is charged the
+#   overtime left; a timeout alone, 150 s away, is too discounted to stop kiting out the clock
+Animus.Curriculum.Pulls.Overtime = 0.1
+Animus.Curriculum.Pulls.OvertimeGraceMs = 60000
 Animus.Curriculum.Pulls.Stall = 0.05
 Animus.Curriculum.Pulls.StallGraceMs = 15000
 Animus.Curriculum.Pulls.Spacing = 0.03
