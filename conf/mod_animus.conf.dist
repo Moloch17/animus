@@ -227,6 +227,9 @@ Animus.Curriculum.Duel.Timeout = 10.0
 Animus.Curriculum.Duel.Stall = 0.05
 #   ... the time a seat has to summon, buff and sneak up before it (ms)
 Animus.Curriculum.Duel.StallGraceMs = 15000
+#   ... which grows by the time spent starting buffs, forms, stances, stealth and pet summons out of combat (each its cast
+#   time, at least a global cooldown), up to this much (ms)
+Animus.Curriculum.Duel.PreparationRefundMaxMs = 30000
 #   creature duel, ranged specs: per second the opponent stands in melee range hitting the bot
 Animus.Curriculum.Duel.Spacing = 0.03
 #   the range the approach shaping aims for, melee specs
@@ -359,6 +362,9 @@ Animus.Curriculum.Pulls.Overtime = 0.1
 Animus.Curriculum.Pulls.OvertimeGraceMs = 60000
 Animus.Curriculum.Pulls.Stall = 0.05
 Animus.Curriculum.Pulls.StallGraceMs = 15000
+#   pack: the grace grows by the time spent starting buffs, forms, stances, stealth and pet summons out of combat (each
+#   its cast time, at least a global cooldown), up to this much (ms)
+Animus.Curriculum.Pulls.PreparationRefundMaxMs = 30000
 Animus.Curriculum.Pulls.Spacing = 0.03
 #   owner stages: kills and clears count this many times
 Animus.Curriculum.Pulls.OwnerClearScale = 2.0
