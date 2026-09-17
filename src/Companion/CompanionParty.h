@@ -63,6 +63,7 @@ namespace Animus
         {
             uint32 DecisionMs = 250;
             Curriculum::CurriculumTuning::ActionTuning Actions;     // pacing and locks, as the forge's seats have
+            Curriculum::CurriculumTuning::OptionTuning Options;     // how long each durative action may run
         };
 
         explicit CompanionParty(ObjectGuid owner);
@@ -130,6 +131,7 @@ namespace Animus
             std::vector<float> Obs;
             std::vector<uint8> Mask;
             Curriculum::SeatMemory Memory;      // pacing, and what it has been doing (as a forge seat's)
+            Curriculum::SeatOption Option;      // the durative action it is running (rest, hold an interrupt, ...)
             bool ModelErrorLogged = false;
             bool Parked = false;                // out of the world while the owner flies or rides a vehicle
         };
@@ -141,7 +143,8 @@ namespace Animus
         void Decide(Member& member, Player* bot, Player* owner, MlpPolicy& policy, Settings const& settings);
         /// The forge's pull target: the selected enemy, else the nearest living one (which becomes the selection).
         [[nodiscard]] Unit* CurrentTarget(Member& member, Player* bot) const;
-        [[nodiscard]] Curriculum::SeatView View(Member const& member, Player* bot, Player* owner, Unit* target) const;
+        [[nodiscard]] Curriculum::SeatView View(Member const& member, Player* bot, Player* owner, Unit* target,
+        Settings const& settings) const;
         /// Potions, bandages, stones and food for the member, topped up (the forge stocks every episode).
         void Restock(Member& member, Player* bot, Player* owner) const;
         /// The owner's level (or its class's first) when it has passed the member's: the character is built again at

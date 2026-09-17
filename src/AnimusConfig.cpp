@@ -115,7 +115,9 @@ void Animus::AnimusConfig::Load()
         CurriculumStage = "stage1_duel";
     }
     CurriculumDecisionMs = std::max<uint32>(1, sConfigMgr->GetOption<uint32>("Animus.Curriculum.DecisionMs", 250));
-    CurriculumActions = Curriculum::CurriculumTuning::Load("Animus.Curriculum.").Actions;
+    Curriculum::CurriculumTuning const curriculum = Curriculum::CurriculumTuning::Load("Animus.Curriculum.");
+    CurriculumActions = curriculum.Actions;
+    CurriculumOptions = curriculum.Options;
 
     StageDecisionMs = std::max<uint32>(1, sConfigMgr->GetOption<uint32>("Animus.Stage.DecisionMs", 250));
     StageEpisodeSeconds = std::max<uint32>(1, sConfigMgr->GetOption<uint32>("Animus.Stage.EpisodeSeconds", 60));

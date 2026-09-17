@@ -488,7 +488,10 @@ void Animus::CompanionParty::Decide(Member& member, Player* bot, Player* owner, 
 
     Unit* target = CurrentTarget(member, bot);
     member.Memory.Observe(bot, target, _nowMs);
-    SeatView view = View(member, bot, owner, target);
+    SeatView view = View(member, bot, owner, target, settings);
+    // The durative action it is running: one press that stands for many decisions (rest, hold an interrupt, keep
+    // range). SeatEncoder starts, runs and stops it as it does for a forge seat.
+    view.Option = &member.Option;
     SeatEncoder::Observe(view, member.Obs.data(), member.Mask.data());
 
     // Paced and locked actions, as a forge seat's mask has them.
@@ -540,7 +543,7 @@ Unit* Animus::CompanionParty::CurrentTarget(Member& member, Player* bot) const
 }
 
 Animus::Curriculum::SeatView Animus::CompanionParty::View(Member const& member, Player* bot, Player* owner,
-    Unit* target) const
+    Unit* target, Settings const& settings) const
 {
     Layout const& layout = *member.L;
 
@@ -553,6 +556,7 @@ Animus::Curriculum::SeatView Animus::CompanionParty::View(Member const& member, 
     view.Spec = member.Spec;
     view.Build = &member.Build;
     view.Memory = &member.Memory;
+    view.Options = settings.Options;
     view.NowMs = _nowMs;
     view.LastStepDamage = member.LastStepDamage;
     view.LastStepPowerDelta = member.LastStepPowerDelta;

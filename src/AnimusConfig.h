@@ -42,6 +42,9 @@ namespace Animus
         uint32 CurriculumDecisionMs = 250;
         /// Action pacing for companions (Animus.Curriculum.Actions.*), as the forge paces its seats.
         Curriculum::CurriculumTuning::ActionTuning CurriculumActions;
+        /// Animus.Curriculum.Options.*: how long a companion's durative actions (rest, hold an interrupt, keep range)
+        /// may run, as the forge's seats have them.
+        Curriculum::CurriculumTuning::OptionTuning CurriculumOptions;
 
         /// Animus.Stage.*: the stage viewer (`.animus stage open`).
         uint32 StageDecisionMs = 250;

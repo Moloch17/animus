@@ -416,6 +416,18 @@ Animus.Curriculum.Pulls.OwnerControlMax = 1.5
 Animus.Curriculum.Pulls.OwnerWinPulls = 5
 
 #
+#    Animus.Curriculum.Options.*
+#        Description: How long a durative action may run before the seat has to choose again (ms). One press of
+#                     one stands for many decisions: resting until health and mana are back, holding an interrupt
+#                     for the target's next cast, or keeping a caster's distance. They also end on their own
+#                     conditions, and any other action the policy takes cancels them.
+#        Default:     30000 / 10000 / 10000
+#
+Animus.Curriculum.Options.RestMaxMs = 30000
+Animus.Curriculum.Options.HoldInterruptMs = 10000
+Animus.Curriculum.Options.KeepRangeMs = 10000
+
+#
 #    Animus.Curriculum.Owner.*
 #        The scripted owner of the companion and party stages.
 
