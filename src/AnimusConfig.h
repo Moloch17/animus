@@ -33,12 +33,12 @@ namespace Animus
     {
         bool Enable = true;
 
-        /// Animus.ModelDir, resolved against DataDir when relative.
+        /// Animus.ModelDir; a relative one is looked for where the build installs models (see Load).
         std::string ModelDir;
 
         /// Animus.Curriculum.Stage and DecisionMs: the stage whose models `.animus summon` companions play, and their
         /// decision interval.
-        std::string CurriculumStage = "stage5_party";
+        std::string CurriculumStage = "stage1_duel";
         uint32 CurriculumDecisionMs = 250;
         /// Action pacing for companions (Animus.Curriculum.Actions.*), as the forge paces its seats.
         Curriculum::CurriculumTuning::ActionTuning CurriculumActions;

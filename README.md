@@ -26,9 +26,11 @@ Both run the same scenario and encoding code as training, so a model sees and do
    none, and never overwrites one; under Docker the container copies it to your config volume on its first start.
    AzerothCore reads a module's settings from the `.conf` only: without it every `Animus.*` key logs "Missing
    property" at startup.
-4. Put the exported models, each `.amdl` with its `.json` manifest beside it, in `Animus.ModelDir` (`animus`, relative
-   to `DataDir`). Installing copies the ones in `models/` there: `stage1_duel`'s, one per class/role (confirmed at
-   60M steps, trained with animus-lib 99cbe94). Companions play them with `Animus.Curriculum.Stage = stage1_duel`.
+4. Models: installing copies the ones in `models/` (`stage1_duel`'s, one per class/role, each `.amdl` with its `.json`
+   manifest; confirmed at 60M steps, trained with animus-lib 99cbe94) to `<config dir>/modules/animus`, which reaches
+   a Docker runtime image (only `bin/` and `etc/` do). Companions play them by default
+   (`Animus.Curriculum.Stage = stage1_duel`). Models you place by hand go in `<DataDir>/animus`, which is searched
+   first; the startup log names the directory used.
 
 Don't build it into the forge core; a forge build disables it. Where the models come from, and how `DataDir` and the
 install step line up, is in
@@ -62,8 +64,8 @@ A stage duel at the top tier, frozen, then played: `.animus stage open stage1_du
 
 ## Models
 
-A companion plays `<class>_<role><stage suffix>.amdl` for `Animus.Curriculum.Stage` (`warrior_tank_party.amdl` for
-the default `stage5_party`). A model loads only if its manifest is exactly the one this server builds for that layout,
+A companion plays `<class>_<role><stage suffix>.amdl` for `Animus.Curriculum.Stage` (`hunter_dps_duel.amdl` for
+the default `stage1_duel`). A model loads only if its manifest is exactly the one this server builds for that layout,
 so the realm needs the animus-lib revision the forge trained with, and the same world database and DBC data. A refused
 model is logged once and shown by `.animus list`, and its companion only follows you. Models load on first use and
 again after `.reload config`.

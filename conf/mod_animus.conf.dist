@@ -21,10 +21,12 @@ Animus.Enable = 1
 #    Animus.ModelDir
 #        Description: Directory holding the exported class/role models (<class>_<role>_<stage>.amdl,
 #                     each with its layout manifest <class>_<role>_<stage>.json beside it), written
-#                     by `forge export` in mod-animus-forge. A relative path is resolved against
-#                     DataDir (worldserver.conf). The build installs the module's models/*.amdl to
-#                     <install prefix>/data/animus; if DataDir points elsewhere, configure with
-#                     -DANIMUS_MODELS_INSTALL_DIR=<DataDir>/animus or use an absolute path here.
+#                     by `forge export` in mod-animus-forge. A relative path is looked for under
+#                     DataDir (worldserver.conf) first, for models placed by hand, then where the
+#                     build installs the module's models/ with its configs:
+#                     <config dir>/modules/animus (Docker: the image's env/ref/etc/modules/animus,
+#                     then env/dist/etc/modules/animus). The startup log names the directory used.
+#                     An absolute path is used as is.
 #                     Models load when first needed, and again after ".reload config". A model
 #                     whose manifest differs from the layout this server builds is refused.
 #        Default:     "animus"
@@ -37,10 +39,11 @@ Animus.ModelDir = "animus"
 #    Animus.Curriculum.Stage
 #        Description: Which curriculum stage's models class/role companions (".animus summon")
 #                     play. Companions summoned before a ".reload config" keep their stage.
-#        Default:     "stage5_party" - four companions that play together
-#                     Any stage of ".animus stage list" (stage1_duel ... stage8_crossroads)
+#        Default:     "stage1_duel" - the models this module ships (models/, one per class/role)
+#                     Any stage of ".animus stage list" (stage1_duel ... stage8_crossroads), with that
+#                     stage's models in Animus.ModelDir
 
-Animus.Curriculum.Stage = "stage5_party"
+Animus.Curriculum.Stage = "stage1_duel"
 
 #
 #    Animus.Curriculum.DecisionMs

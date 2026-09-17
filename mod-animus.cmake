@@ -10,31 +10,16 @@
 # existing .conf is never overwritten.
 #
 # Installs the exported models (models/*.amdl, each with its .json layout manifest, which a model does not load
-# without) into the data directory, where the worldserver finds them through Animus.ModelDir (default "animus",
-# resolved against DataDir).
+# without) with the module's configs, in <config dir>/modules/animus: under Docker only the bin/ and etc/ directories
+# of the build reach the runtime image, so models installed into the data directory never arrived. The module looks
+# there for Animus.ModelDir's default "animus" (after DataDir/animus, for models placed by hand). To install elsewhere:
 #
-# The default destination matches the Docker layout (AC_DATA_DIR=/azerothcore/env/dist/data). If
-# your worldserver's DataDir is elsewhere -- the stock worldserver.conf uses ".", the working
-# directory -- point this at <DataDir>/animus instead:
-#
-#     cmake ... -DANIMUS_MODELS_INSTALL_DIR=/path/to/data/animus
+#     cmake ... -DANIMUS_MODELS_INSTALL_DIR=/path/to/models
 
 ModuleNameToVariable(mod-animus ANIMUS_LINKAGE_VARIABLE)
 if(NOT "${${ANIMUS_LINKAGE_VARIABLE}}" MATCHES "static|dynamic")
   return()
 endif()
-
-# Only when the module is built: a core that disables it (the forge) must not install into its data directory, which
-# the Docker layout mounts read-only.
-set(ANIMUS_MODELS_INSTALL_DIR "${CMAKE_INSTALL_PREFIX}/data/animus" CACHE PATH
-  "Where mod-animus installs its .amdl models; should be <DataDir>/<Animus.ModelDir>")
-
-install(
-  DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/models/"
-  DESTINATION "${ANIMUS_MODELS_INSTALL_DIR}"
-  FILES_MATCHING PATTERN "*.amdl" PATTERN "*.json")
-
-message(STATUS "  mod-animus models install to ${ANIMUS_MODELS_INSTALL_DIR}")
 
 # Where the core installs module configs (CopyModuleConfig, src/cmake/macros/ConfigInstall.cmake).
 if(WIN32)
@@ -48,6 +33,17 @@ install(CODE "
     message(STATUS \"Creating: \${animusConf}\")
     configure_file(\"${CMAKE_CURRENT_LIST_DIR}/conf/mod_animus.conf.dist\" \"\${animusConf}\" COPYONLY)
   endif()")
+
+# Only when the module is built: a core that disables it (the forge) installs no models.
+set(ANIMUS_MODELS_INSTALL_DIR "${ANIMUS_MODULE_CONF_DIR}/animus" CACHE PATH
+  "Where mod-animus installs its .amdl models and their .json manifests")
+
+install(
+  DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/models/"
+  DESTINATION "${ANIMUS_MODELS_INSTALL_DIR}"
+  FILES_MATCHING PATTERN "*.amdl" PATTERN "*.json")
+
+message(STATUS "  mod-animus models install to ${ANIMUS_MODELS_INSTALL_DIR}")
 
 set(ANIMUS_LIB_BUNDLE "${CMAKE_CURRENT_LIST_DIR}/animus-lib")
 if(EXISTS "${CMAKE_SOURCE_DIR}/modules/mod-animus-lib/cmake/AnimusLibDependency.cmake")
