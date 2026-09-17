@@ -23,6 +23,7 @@
 #include "MoveSpline.h"
 #include "Random.h"
 #include "Spell.h"
+#include "SpellAuraEffects.h"
 #include "SpellInfo.h"
 #include "StageSettings.h"
 #include "StringFormat.h"
@@ -289,11 +290,13 @@ void Animus::EnvPool::RecordDamage(Unit const* attacker, Unit const* victim, uin
         return;
 
     // Damage an agent takes. The victim is the agent itself (pets absorb their own damage).
-    if (auto const hit = _agents.find(victim->GetGUID()); hit != _agents.end())
+    auto const hit = _agents.find(victim->GetGUID());
+    if (hit != _agents.end())
         _envs[hit->second.Env].StepStats[hit->second.Agent].DamageTaken += damage;
 
     // Damage an ally takes counts against every agent of its env.
-    if (auto const ally = _allies.find(victim->GetGUID()); ally != _allies.end())
+    auto const ally = _allies.find(victim->GetGUID());
+    if (ally != _allies.end())
     {
         for (AgentStats& stats : _envs[ally->second.Env].StepStats)
         {
@@ -301,6 +304,9 @@ void Animus::EnvPool::RecordDamage(Unit const* attacker, Unit const* victim, uin
             stats.AllyDamageTakenBy[ally->second.Agent] += damage;
         }
     }
+
+    if (hit != _agents.end() || ally != _allies.end())
+        RecordPrevented(hit != _agents.end() ? hit->second : ally->second, hit != _agents.end(), victim, damage);
 
     // Pets, guardians and totems deal damage for their owner.
     auto const itr = _agents.find(attacker->GetCharmerOrOwnerOrOwnGUID());
@@ -337,6 +343,51 @@ void Animus::EnvPool::RecordDamage(Unit const* attacker, Unit const* victim, uin
     {
         stats.SpecialDamage += damage;
         ++stats.SpecialHits;
+    }
+}
+
+void Animus::EnvPool::RecordPrevented(AgentSlot const& victimSlot, bool victimIsAgent, Unit const* victim,
+    uint32 damage)
+{
+    // What each agent's own damage-taken reductions on the victim prevented: the hit would have been damage / the
+    // product of that agent's reductions. Other casters' reductions (the owner's, a creature's) are nobody's here.
+    Unit::AuraEffectList const& reductions = victim->GetAuraEffectsByType(SPELL_AURA_MOD_DAMAGE_PERCENT_TAKEN);
+    if (reductions.empty())
+        return;
+
+    Env& env = _envs[victimSlot.Env];
+    std::array<float, MAX_AGENTS> multiplier;
+    multiplier.fill(1.0f);
+    bool any = false;
+    for (AuraEffect const* effect : reductions)
+    {
+        if (effect->GetAmount() >= 0)
+            continue;
+
+        auto const caster = _agents.find(effect->GetCasterGUID());
+        if (caster == _agents.end() || caster->second.Env != victimSlot.Env || caster->second.Agent >= MAX_AGENTS)
+            continue;
+
+        multiplier[caster->second.Agent] *= std::max(0.01f, 1.0f + float(effect->GetAmount()) / 100.0f);
+        any = true;
+    }
+
+    if (!any)
+        return;
+
+    for (uint32 agent = 0; agent < MAX_AGENTS && agent < env.StepStats.size(); ++agent)
+    {
+        if (multiplier[agent] >= 1.0f)
+            continue;
+
+        uint64 const prevented = uint64(float(damage) * (1.0f / multiplier[agent] - 1.0f));
+        AgentStats& stats = env.StepStats[agent];
+        if (!victimIsAgent)
+            stats.AllyProtectionBy[victimSlot.Agent] += prevented;
+        else if (victimSlot.Agent == agent)
+            stats.SelfProtection += prevented;
+        else if (victimSlot.Agent < MAX_AGENTS)
+            stats.AgentProtectionBy[victimSlot.Agent] += prevented;
     }
 }
 
@@ -425,13 +476,18 @@ void Animus::EnvPool::RecordHeal(Unit const* healer, Unit const* receiver, uint3
     if (!healer || !receiver || !gain)
         return;
 
-    // Healing on another agent of the same env (a teammate).
+    // Healing on an agent of the same env: itself, or a teammate.
     if (auto const patient = _agents.find(receiver->GetGUID()); patient != _agents.end())
     {
         auto const agent = _agents.find(healer->GetCharmerOrOwnerOrOwnGUID());
-        if (agent != _agents.end() && agent->second.Env == patient->second.Env
-            && agent->second.Agent != patient->second.Agent && patient->second.Agent < MAX_AGENTS)
-            _envs[agent->second.Env].StepStats[agent->second.Agent].AgentHealingBy[patient->second.Agent] += gain;
+        if (agent == _agents.end() || agent->second.Env != patient->second.Env)
+            return;
+
+        AgentStats& stats = _envs[agent->second.Env].StepStats[agent->second.Agent];
+        if (agent->second.Agent == patient->second.Agent)
+            stats.SelfHealing += gain;
+        else if (patient->second.Agent < MAX_AGENTS)
+            stats.AgentHealingBy[patient->second.Agent] += gain;
         return;
     }
 
@@ -447,6 +503,23 @@ void Animus::EnvPool::RecordHeal(Unit const* healer, Unit const* receiver, uint3
     AgentStats& stats = _envs[agent->second.Env].StepStats[agent->second.Agent];
     stats.AllyHealing += gain;
     stats.AllyHealingBy[ally->second.Agent] += gain;
+}
+
+void Animus::EnvPool::RecordHealCast(Unit const* healer, Unit const* receiver, uint32 heal)
+{
+    if (!healer || !receiver || !heal)
+        return;
+
+    auto const agent = _agents.find(healer->GetCharmerOrOwnerOrOwnGUID());
+    if (agent == _agents.end())
+        return;
+
+    auto const patient = _agents.find(receiver->GetGUID());
+    auto const ally = _allies.find(receiver->GetGUID());
+    bool const friendly = (patient != _agents.end() && patient->second.Env == agent->second.Env)
+        || (ally != _allies.end() && ally->second.Env == agent->second.Env);
+    if (friendly)
+        _envs[agent->second.Env].StepStats[agent->second.Agent].HealingRaw += heal;
 }
 
 void Animus::EnvPool::RecordCastCompleted(Unit const* caster, Spell* spell)

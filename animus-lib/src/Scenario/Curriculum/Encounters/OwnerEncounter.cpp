@@ -176,6 +176,7 @@ void Animus::Curriculum::OwnerEncounter::Update(Env& env)
 void Animus::Curriculum::OwnerEncounter::View(Env const& env, uint32 /*seat*/, SeatView& view) const
 {
     view.Owner = Find(env);
+    view.OwnerRole = _envs[env.Index].PlayRole;
 }
 
 void Animus::Curriculum::OwnerEncounter::BeforeRewards(Env& env)
@@ -237,8 +238,10 @@ void Animus::Curriculum::OwnerEncounter::Reward(Env& env, uint32 seatIndex, Play
     ledger.Add(RewardTerm::OwnerDamageTaken, -(role == Role::Dps ? tuning.DamageTakenDps : tuning.DamageTakenProtector)
         * (ownerTanks ? tuning.TankOwnerDamageShare : 1.0f) * float(step.AllyDamageTakenBy[0]) / ownerHealth);
 
+    // Healing, and what the seat's absorbs soaked and its reductions prevented on the owner, count alike.
     if (role == Role::Heal)
-        ledger.Add(RewardTerm::OwnerHealing, tuning.Healing * float(step.AllyHealingBy[0]) / ownerHealth);
+        ledger.Add(RewardTerm::OwnerHealing,
+            tuning.Healing * float(step.AllyHealingBy[0] + step.AllyProtectionBy[0]) / ownerHealth);
 
     // Tanks take hits by design: soften the pulls' damage taken.
     if (role == Role::Tank)

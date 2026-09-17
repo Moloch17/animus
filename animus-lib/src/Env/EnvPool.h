@@ -99,8 +99,12 @@ namespace Animus
             SpellInfo const* spell);
 
         /// Heal hook, called from map threads with the health actually gained. Counts healing an agent
-        /// (or its pets) does on its env's allies.
+        /// (or its pets) does on itself, its env's allies and its other agents.
         void RecordHeal(Unit const* healer, Unit const* receiver, uint32 gain);
+
+        /// Heal hook, called from map threads with the healing before it is applied (overhealing included): what an
+        /// agent cast on itself, its env's allies and agents, for the overheal share.
+        void RecordHealCast(Unit const* healer, Unit const* receiver, uint32 heal);
 
         /// Spell hooks, called from map threads when an agent's cast-time spell finishes casting or is
         /// cancelled before it does. Triggered spells and channels are not counted.
@@ -162,6 +166,10 @@ namespace Animus
             uint32 Env;
             uint32 Agent;
         };
+
+        /// A hit on an agent or an ally (`victimSlot`): credit each agent whose own damage-taken reductions on the
+        /// victim made it smaller with what they prevented.
+        void RecordPrevented(AgentSlot const& victimSlot, bool victimIsAgent, Unit const* victim, uint32 damage);
 
         void ResetEnv(Env& env);
         /// Write the env's per-agent layout and presence rows (after its observation).

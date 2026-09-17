@@ -243,6 +243,9 @@ namespace Animus::Curriculum
         void Press(Env const& env, SeatState& seat, Player* bot, uint32 action) const;
         void ObserveSeat(Env& env, uint32 seat, float* obs, uint8* mask);
         [[nodiscard]] float SeatReward(Env& env, uint32 seat);
+        /// Before a seat's reward: what its absorbs on itself and its friends soaked since the last one (into the
+        /// step's protection stats), and whether any friend is low.
+        void TrackSupport(Env& env, uint32 seatIndex, Player* bot);
         void WriteState(Env const& env, float* state) const;
 
         StageDefinition const& _stage;

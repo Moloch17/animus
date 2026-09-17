@@ -27,6 +27,7 @@
 #include "Player.h"
 #include "Random.h"
 #include "SeatView.h"
+#include "SupportBlock.h"
 #include "SpellAuraEffects.h"
 #include "Supplies.h"
 #include "Containers.h"
@@ -222,6 +223,11 @@ void Animus::Curriculum::PullsEncounter::AddEpisodeInfo(EpisodeInfoTable& table)
         table.Add("meals_cut_short", [this](Env const& env, uint32 seat)
         {
             return float(_envs[env.Index].Seats[seat].MealsCutShort);
+        });
+        table.Add("buff_coverage", [this](Env const& env, uint32 seat)
+        {
+            SeatPull const& pull = _envs[env.Index].Seats[seat];
+            return pull.PullsEngaged ? pull.BuffCoverageSum / float(pull.PullsEngaged) : 0.0f;
         });
         table.Add("control_seconds", [this](Env const& env, uint32 seat)
         {
@@ -750,6 +756,13 @@ void Animus::Curriculum::PullsEncounter::Reward(Env& env, uint32 seatIndex, Play
                 ++pull.PullsStartedLow;
             ledger.Add(RewardTerm::Readiness,
                 (SoloGauntlet(env) ? tuning.SoloGauntletReadiness : tuning.OwnerReadiness) * ready);
+
+            // Buffs up when the pull starts: the layout's buff groups on the seat, and on the owner with one.
+            float coverage = SupportBlock::BuffCoverage(*seat.L, bot);
+            if (Player* owner = _scenario.Owner(env); owner && owner->IsAlive())
+                coverage = 0.5f * (coverage + SupportBlock::BuffCoverage(*seat.L, owner));
+            pull.BuffCoverageSum += coverage;
+            ledger.Add(RewardTerm::Readiness, _scenario.Tuning().Support.BuffCoverage * coverage);
         }
 
         if (!pulls.PullEngaged || pulls.PullEngageMs != env.EpisodeElapsedMs)

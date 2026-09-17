@@ -58,7 +58,7 @@ namespace Animus::Curriculum::Encoding
         return std::clamp((coordinate - origin) / POSITION_SCALE, -2.0f, 2.0f);
     }
 
-    SpellCastTargets TargetsFor(SpellInfo const* info, Player* bot, Unit* target)
+    SpellCastTargets TargetsFor(SpellInfo const* info, Player* bot, Unit* target, Unit* friendUnit)
     {
         SpellCastTargets targets;
 
@@ -68,10 +68,64 @@ namespace Animus::Curriculum::Encoding
 
         if (info->NeedsExplicitUnitTarget() && target && !info->IsPositive())
             targets.SetUnitTarget(target);
+        else if (info->NeedsExplicitUnitTarget() && info->IsPositive() && friendUnit)
+            targets.SetUnitTarget(friendUnit);
         else
             targets.SetUnitTarget(bot);
 
         return targets;
+    }
+
+    Unit* FriendUnit(SeatView const& view, uint32 slot)
+    {
+        Player* bot = view.Bot;
+        Player* other = nullptr;
+        if (slot == FRIEND_SELF)
+            return bot;
+        if (slot == FRIEND_OWNER)
+            other = view.Owner;
+        else if (slot >= FRIEND_TEAMMATE_FIRST && slot < FRIEND_SLOTS)
+            other = view.Teammates[slot - FRIEND_TEAMMATE_FIRST].Bot;
+
+        return other && other != bot && other->IsInMap(bot) ? other : nullptr;
+    }
+
+    Unit* SupportTarget(SeatView const& view)
+    {
+        if (!view.L || !view.L->Has(BlockId::Support))
+            return view.Bot;
+
+        Unit* selected = FriendUnit(view, view.FriendSlot);
+        return selected && selected->IsAlive() ? selected : nullptr;
+    }
+
+    bool AimsAtFriend(SpellInfo const* info)
+    {
+        return info->IsPositive() && info->NeedsExplicitUnitTarget();
+    }
+
+    Aura const* OwnAuraOfChain(Unit const* unit, SpellInfo const* info, ObjectGuid caster)
+    {
+        for (SpellInfo const* rank = info->GetFirstRankSpell(); rank; rank = rank->GetNextRankSpell())
+            if (Aura const* aura = unit->GetAura(rank->Id, caster))
+                return aura;
+        return nullptr;
+    }
+
+    bool OwnAuraHasPlentyLeft(Unit const* unit, SpellInfo const* info, ObjectGuid caster)
+    {
+        Aura const* aura = OwnAuraOfChain(unit, info, caster);
+        if (!aura)
+            return false;
+
+        // A shield with charges (Earth Shield, Water Shield, Lightning Shield) wears down by charges; a timed aura by
+        // its duration; a permanent one never.
+        if (uint8 const maxCharges = aura->CalcMaxCharges())
+            return float(aura->GetCharges()) > float(maxCharges) * REFRESH_BELOW_FRACTION;
+        if (aura->GetMaxDuration() <= 0)
+            return true;
+
+        return float(aura->GetDuration()) > float(aura->GetMaxDuration()) * REFRESH_BELOW_FRACTION;
     }
 
     void WriteKnownCooldowns(Player const* bot, std::vector<ActionCatalog::Action> const& actions, float* out)
@@ -91,9 +145,9 @@ namespace Animus::Curriculum::Encoding
         return bot->IsNonMeleeSpellCast(false, true, true);
     }
 
-    bool CanCast(Player* bot, SpellInfo const* info, Unit* target, Item* castItem)
+    bool CanCast(Player* bot, SpellInfo const* info, Unit* target, Item* castItem, Unit* friendUnit)
     {
-        return CheckCast(bot, info, TargetsFor(info, bot, target), castItem);
+        return CheckCast(bot, info, TargetsFor(info, bot, target, friendUnit), castItem);
     }
 
     bool CanHeal(Player* bot, ActionCatalog::Action const& heal, Unit* ally)
@@ -111,35 +165,39 @@ namespace Animus::Curriculum::Encoding
         return CheckCast(bot, info, targets, nullptr);
     }
 
-    void Heal(Player* bot, ActionCatalog::Action const& heal, Unit* ally, SeatActionResult& result)
-    {
-        SpellInfo const* info = ActionCatalog::KnownRank(bot, heal.FirstRank);
-        if (!info)
-            return;
-
-        SpellCastTargets targets;
-        targets.SetUnitTarget(ally);
-        Spell* spell = new Spell(bot, info, TRIGGERED_NONE);
-        if (spell->prepare(&targets) == SPELL_CAST_OK)
-        {
-            ++result.SpellCasts;
-            ++result.SustainCasts;
-        }
-    }
-
     SpellInfo const* KnownRank(SeatView const& view, ActionCatalog::Action const& def)
     {
-        if (view.KnownRanks && def.Index < view.KnownRanks->size())
-            return (*view.KnownRanks)[def.Index];
+        SpellInfo const* top = view.KnownRanks && def.Index < view.KnownRanks->size() ? (*view.KnownRanks)[def.Index]
+            : ActionCatalog::KnownRank(view.Bot, def.FirstRank);
+        if (!top || !def.Rankable || !view.RankTier || !view.L || !view.L->Has(BlockId::Support))
+            return top;
 
-        return ActionCatalog::KnownRank(view.Bot, def.FirstRank);
+        // The tier's share of the known ranks: tier 1 about two thirds of them up, tier 2 about a third. A lower rank
+        // the spellbook keeps inactive (Player::addSpell supersedes ranks of spells that are not stackable with
+        // ranks: rage, energy and runic power abilities, paladin auras, druid forms) is skipped; mana spells, heals,
+        // HoTs and shields included, keep every rank.
+        uint32 known = 0;
+        for (SpellInfo const* rank = top; rank; rank = rank->GetPrevRankSpell())
+            ++known;
+
+        uint32 const tier = std::min(view.RankTier, RANK_TIERS - 1);
+        uint32 const wanted = std::max<uint32>(1, (known * (RANK_TIERS - tier) + RANK_TIERS - 1) / RANK_TIERS);
+        SpellInfo const* chosen = top;
+        uint32 position = known;
+        for (SpellInfo const* rank = top->GetPrevRankSpell(); rank && position > wanted;
+            rank = rank->GetPrevRankSpell())
+        {
+            --position;
+            if (view.Bot->HasActiveSpell(rank->Id))
+                chosen = rank;
+        }
+
+        return chosen;
     }
 
     bool IsSpellActionAllowed(SeatView const& view, Unit* target, ActionCatalog::Action const& def)
     {
         Player* bot = view.Bot;
-        if (def.Disabled)
-            return false;
 
         // Cheap rejections before the full cast check.
         SpellInfo const* info = KnownRank(view, def);
@@ -158,7 +216,24 @@ namespace Animus::Curriculum::Encoding
             && (info->CalcCastTime(bot) || info->IsChanneled()))
             return false;
 
-        return CanCast(bot, info, target);
+        // Heals, shields and buffs go to the selected friend (the bot itself without the support block); a friend who
+        // is gone or dead takes none. Casts that can only be wasted are not offered: a heal with nothing else to it on
+        // a friend at full health, and an aura the bot already keeps up there with plenty left.
+        Unit* friendUnit = nullptr;
+        if (info->IsPositive())
+        {
+            friendUnit = AimsAtFriend(info) ? SupportTarget(view) : bot;
+            if (!friendUnit)
+                return false;
+
+            if (def.DirectHeal && friendUnit->IsFullHealth())
+                return false;
+
+            if (def.KeepsAura && OwnAuraHasPlentyLeft(friendUnit, info, bot->GetGUID()))
+                return false;
+        }
+
+        return CanCast(bot, info, target, nullptr, friendUnit);
     }
 
     bool ApplySpellAction(SeatView const& view, Unit* target, ActionCatalog::Action const& def,
@@ -174,7 +249,12 @@ namespace Animus::Curriculum::Encoding
 
         // Same path as CMSG_CAST_SPELL. prepare() runs the full cast validation again, so a masked action
         // from a misbehaving client simply fails. The spell owns and frees itself.
-        SpellCastTargets targets = TargetsFor(info, bot, target);
+        Unit* friendUnit = info->IsPositive() && AimsAtFriend(info) ? SupportTarget(view) : bot;
+        if (info->IsPositive() && !friendUnit)
+            return false;
+
+        bool const onFullHealth = def.DirectHeal && friendUnit && friendUnit->IsFullHealth();
+        SpellCastTargets targets = TargetsFor(info, bot, target, friendUnit);
         bool const stealthed = bot->HasStealthAura();
         bool const targetCasting = target && target->IsNonMeleeSpellCast(false);
         uint32 const castMs = info->CalcCastTime(bot);
@@ -183,6 +263,15 @@ namespace Animus::Curriculum::Encoding
             return false;
 
         ++result.SpellCasts;
+        result.HealsOnFull += onFullHealth ? 1 : 0;
+        result.DefensiveCasts += def.Defensive ? 1 : 0;
+        if (def.Healing)
+        {
+            ++result.HealingCasts;
+            SpellInfo const* top = view.KnownRanks && def.Index < view.KnownRanks->size()
+                ? (*view.KnownRanks)[def.Index] : nullptr;
+            result.DownrankedCasts += top && top != info ? 1 : 0;
+        }
 
         // Getting ready before a fight: a buff, a form or stance, stealth, a pet summoned, something conjured. What it
         // takes (its cast, or the global cooldown of an instant one) is refunded from the stall grace.

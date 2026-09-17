@@ -45,11 +45,11 @@ namespace Animus::Curriculum
         uint32 NumActions = 0;
         std::vector<BlockId> Blocks;                // the stage's blocks, in layout order
         std::array<BlockSlice, BLOCK_COUNT> Slices{};
-        /// Positive single-target spells that can be cast on an ally: its heals first (AllyHealCount of them), then
-        /// shields, Hands, Innervate, Misdirection, Fear Ward, buffs.
-        std::vector<ActionCatalog::Action> AllySpells;
-        uint32 AllyHealCount = 0;
         std::vector<ActionCatalog::Action> AllyRevives; // resurrections and the soulstone (Catalog().Revives())
+        /// The layout's long buffs (ActionCatalog::IsLongBuff) as buffs a unit can have at once: chains that share a
+        /// spell group (Blessings of Might and Kings, Fortitude and Prayer of Fortitude) are one group. Each group
+        /// lists every rank's spell id. Buff coverage (a friend's share of groups up) reads them.
+        std::vector<std::vector<uint32>> BuffGroups;
         /// Per action: Block::MoveDirection and Block::ModeGroupOf (as uint8), resolved once for SeatMemory.
         std::vector<int8> MoveDirections;
         std::vector<uint8> ModeGroups;

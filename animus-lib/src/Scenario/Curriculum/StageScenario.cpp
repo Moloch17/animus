@@ -40,6 +40,7 @@
 #include "SeatEncoder.h"
 #include "SpawnArea.h"
 #include "Spell.h"
+#include "SpellAuraEffects.h"
 #include "SpellChecks.h"
 #include "SpellInfo.h"
 #include "StageDefinition.h"
@@ -67,6 +68,8 @@ namespace
     constexpr float REWARD_TUNING_MS = 50.0f;       // per-decision reward terms are tuned for this decision interval
     constexpr float MAX_COMBAT_TIME_MS = 60000.0f;
     constexpr float MAX_UNSEEN_TIME_MS = 20000.0f;
+    constexpr float LOW_HEALTH_PCT = 35.0f;         // a friend below this is low (low_health_seconds)
+    constexpr int32 ABSORB_EXPIRY_SLACK_MS = 500;   // an absorb gone with more than a decision and this left soaked it
 
     /// Version of stage.json (2 adds the stage's arenas).
     constexpr uint32 STAGE_FILE_FORMAT = 2;
@@ -325,11 +328,12 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
         }
     }
 
-    // Repeats are charged in every stage, by the scenario rather than an encounter.
-    _info.Add("reward_" + std::string(RewardTermName(RewardTerm::Repeat)), [this](Env const& env, uint32 seat)
-    {
-        return Data(env).Seats[seat].Rewards.Episode(RewardTerm::Repeat);
-    });
+    // Repeats and self-healing are paid in every stage, by the scenario rather than an encounter.
+    for (RewardTerm term : { RewardTerm::Repeat, RewardTerm::SelfHealing })
+        _info.Add("reward_" + std::string(RewardTermName(term)), [this, term](Env const& env, uint32 seat)
+        {
+            return Data(env).Seats[seat].Rewards.Episode(term);
+        });
 
     _spec.EpisodeInfoDim = _info.Size();
 
@@ -699,6 +703,57 @@ void Animus::Curriculum::StageScenario::AddCoreEpisodeInfo()
     _info.Add("repeated_presses", [seat](Env const& env, uint32 index)
     {
         return float(seat(env, index).RepeatedPresses);
+    });
+
+    // Support: healing and protection done (on itself, the owner and teammates) as fractions of the bot's health, the
+    // share of healing cast that overhealed, casts that could only be wasted, defensives, how often heals were cast
+    // below their highest rank, and time any friend (the bot included) spent below LOW_HEALTH_PCT.
+    auto const health = [this](Env const& env, uint32 index)
+    {
+        Player* bot = SeatBot(env, index);
+        return float(std::max<uint32>(1, bot ? bot->GetMaxHealth() : 1));
+    };
+    _info.Add("healing_done", [health](Env const& env, uint32 index)
+    {
+        AgentStats const& stats = env.EpisodeStats[index];
+        uint64 healed = stats.SelfHealing + stats.AllyHealing;
+        for (uint64 agent : stats.AgentHealingBy)
+            healed += agent;
+        return float(healed) / health(env, index);
+    });
+    _info.Add("protection_done", [health](Env const& env, uint32 index)
+    {
+        AgentStats const& stats = env.EpisodeStats[index];
+        uint64 kept = stats.SelfProtection;
+        for (uint64 ally : stats.AllyProtectionBy)
+            kept += ally;
+        for (uint64 agent : stats.AgentProtectionBy)
+            kept += agent;
+        return float(kept) / health(env, index);
+    });
+    _info.Add("overheal_share", [](Env const& env, uint32 index)
+    {
+        AgentStats const& stats = env.EpisodeStats[index];
+        uint64 healed = stats.SelfHealing + stats.AllyHealing;
+        for (uint64 agent : stats.AgentHealingBy)
+            healed += agent;
+        return stats.HealingRaw
+            ? std::clamp(1.0f - float(healed) / float(stats.HealingRaw), 0.0f, 1.0f) : 0.0f;
+    });
+    _info.Add("heals_on_full", [seat](Env const& env, uint32 index) { return float(seat(env, index).HealsOnFull); });
+    _info.Add("defensive_casts", [seat](Env const& env, uint32 index)
+    {
+        return float(seat(env, index).DefensiveCasts);
+    });
+    _info.Add("healing_casts", [seat](Env const& env, uint32 index) { return float(seat(env, index).HealingCasts); });
+    _info.Add("downranked_share", [seat](Env const& env, uint32 index)
+    {
+        SeatState const& state = seat(env, index);
+        return state.HealingCasts ? float(state.DownrankedCasts) / float(state.HealingCasts) : 0.0f;
+    });
+    _info.Add("low_health_seconds", [seat](Env const& env, uint32 index)
+    {
+        return float(seat(env, index).LowHealthMs) / 1000.0f;
     });
 }
 
@@ -1368,6 +1423,8 @@ Animus::Curriculum::SeatView Animus::Curriculum::StageScenario::ViewSeat(Env con
     for (uint32 slot = 0; slot < view.EnemyCount; ++slot)
         view.Enemies[slot] = env.FindTargetUnit(slot);
     view.TargetSlot = seat.TargetSlot;
+    view.FriendSlot = seat.FriendSlot;
+    view.RankTier = seat.RankTier;
 
     for (Encounter* encounter : ActiveEncounters(env))
         encounter->View(env, seatIndex, view);
@@ -1437,6 +1494,12 @@ void Animus::Curriculum::StageScenario::ApplySeatAction(Env& env, uint32 seatInd
         Press(env, seat, bot, uint32(action));
 
     seat.TargetSlot = view.TargetSlot;
+    seat.FriendSlot = view.FriendSlot;
+    seat.RankTier = view.RankTier;
+    seat.HealsOnFull += result.HealsOnFull;
+    seat.DefensiveCasts += result.DefensiveCasts;
+    seat.HealingCasts += result.HealingCasts;
+    seat.DownrankedCasts += result.DownrankedCasts;
     seat.SpellCasts += result.SpellCasts;
     seat.TrinketUses += result.TrinketUses;
     seat.ItemUses += result.ItemUses;
@@ -1578,6 +1641,81 @@ void Animus::Curriculum::StageScenario::Reward(Env& env, float* reward)
         encounter->AfterRewards(env);
 }
 
+void Animus::Curriculum::StageScenario::TrackSupport(Env& env, uint32 seatIndex, Player* bot)
+{
+    SeatState& seat = Data(env).Seats[seatIndex];
+    if (!bot)
+    {
+        seat.Absorbs.clear();
+        return;
+    }
+
+    // Its friends: itself, the owner (ally 0) and the other seats.
+    struct Friend
+    {
+        Unit* U;
+        int32 Ally;
+        int32 Agent;
+    };
+
+    std::vector<Friend> friends = { { bot, -1, int32(seatIndex) } };
+    if (Player* owner = Owner(env))
+        friends.push_back({ owner, 0, -1 });
+    for (uint32 other = 0; other < _seatCount; ++other)
+        if (Player* teammate = other != seatIndex && Data(env).Seats[other].L ? env.FindBot(other) : nullptr)
+            friends.push_back({ teammate, -1, int32(other) });
+
+    AgentStats& step = env.StepStats[seatIndex];
+    auto const credit = [&step, seatIndex](Friend const& friendRef, uint64 amount)
+    {
+        if (friendRef.Ally >= 0)
+            step.AllyProtectionBy[friendRef.Ally] += amount;
+        else if (uint32(friendRef.Agent) == seatIndex)
+            step.SelfProtection += amount;
+        else if (uint32(friendRef.Agent) < MAX_AGENTS)
+            step.AgentProtectionBy[friendRef.Agent] += amount;
+    };
+
+    bool low = false;
+    std::vector<SeatState::AbsorbTrack> now;
+    for (Friend const& friendRef : friends)
+    {
+        low |= friendRef.U->IsAlive() && friendRef.U->GetHealthPct() < LOW_HEALTH_PCT;
+        for (AuraEffect const* effect : friendRef.U->GetAuraEffectsByType(SPELL_AURA_SCHOOL_ABSORB))
+            if (effect->GetCasterGUID() == bot->GetGUID())
+                now.push_back({ friendRef.U->GetGUID(), effect->GetId(), effect->GetAmount(),
+                    effect->GetBase()->GetDuration() });
+    }
+
+    // An absorb that lost amount soaked it; one gone early (not expired, its friend alive) soaked the rest. A re-cast
+    // (more time left than before) starts over.
+    int32 const expirySlack = int32(_decisionMs) + ABSORB_EXPIRY_SLACK_MS;
+    for (SeatState::AbsorbTrack const& before : seat.Absorbs)
+    {
+        auto const friendRef = std::find_if(friends.begin(), friends.end(),
+            [&before](Friend const& candidate) { return candidate.U->GetGUID() == before.Unit; });
+        if (friendRef == friends.end())
+            continue;
+
+        auto const after = std::find_if(now.begin(), now.end(), [&before](SeatState::AbsorbTrack const& candidate)
+        {
+            return candidate.Unit == before.Unit && candidate.SpellId == before.SpellId;
+        });
+
+        if (after != now.end())
+        {
+            if (after->Amount < before.Amount && after->DurationLeftMs <= before.DurationLeftMs)
+                credit(*friendRef, uint64(before.Amount - after->Amount));
+        }
+        else if (before.DurationLeftMs > expirySlack && friendRef->U->IsAlive() && before.Amount > 0)
+            credit(*friendRef, uint64(before.Amount));
+    }
+
+    seat.Absorbs = std::move(now);
+    if (low && bot->IsAlive())
+        seat.LowHealthMs += _decisionMs;
+}
+
 float Animus::Curriculum::StageScenario::SeatReward(Env& env, uint32 seatIndex)
 {
     SeatState& seat = Data(env).Seats[seatIndex];
@@ -1590,6 +1728,9 @@ float Animus::Curriculum::StageScenario::SeatReward(Env& env, uint32 seatIndex)
     // Before any encounter's reward: several read it (the pulls' and duel's damage taken, the owner's tank refund).
     seat.LastStepDamageTaken = bot
         ? float(env.StepStats[seatIndex].DamageTaken) / float(std::max<uint32>(1, bot->GetMaxHealth())) : 0.0f;
+
+    // Also before the encounters: the owner's and teammates' rewards read what the seat's absorbs soaked on them.
+    TrackSupport(env, seatIndex, bot);
 
     // A pet that died: a corpse still the seat's (a hunter's beast), or one gone while nearly dead (a demon's body
     // leaves at once). Replacing a healthy pet with another is not a death.
@@ -1620,6 +1761,14 @@ float Animus::Curriculum::StageScenario::SeatReward(Env& env, uint32 seatIndex)
 
     seat.Rewards.Add(RewardTerm::Repeat, -_tuning.Actions.Repeat * float(seat.StepRepeats));
     seat.StepRepeats = 0;
+
+    // Looking after itself, in every stage: effective healing, and what its own absorbs and reductions kept off.
+    if (bot)
+    {
+        AgentStats const& step = env.StepStats[seatIndex];
+        seat.Rewards.Add(RewardTerm::SelfHealing, _tuning.Support.SelfHealing
+            * float(step.SelfHealing + step.SelfProtection) / float(std::max<uint32>(1, bot->GetMaxHealth())));
+    }
 
     if (bot)
     {

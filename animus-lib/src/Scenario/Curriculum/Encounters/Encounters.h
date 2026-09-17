@@ -147,6 +147,7 @@ namespace Animus::Curriculum
             float ReadyMana = 1.0f;             // ... and mana fraction (1 without mana)
             float EngageHealthSum = 0.0f;       // over the pulls engaged
             float EngageManaSum = 0.0f;
+            float BuffCoverageSum = 0.0f;       // buff coverage when each pull was engaged (SupportBlock::BuffCoverage)
             uint32 PullsEngaged = 0;
             uint32 PullsStartedLow = 0;         // engaged below half health or 30% mana
             uint32 RestMs = 0;                  // eating or drinking

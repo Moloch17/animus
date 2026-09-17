@@ -26,6 +26,7 @@
 #include "Supplies.h"
 #include "TalentBuilder.h"
 #include <array>
+#include <optional>
 #include <vector>
 
 class Player;
@@ -81,6 +82,12 @@ namespace Animus::Curriculum
         uint32 EnemyCount = 0;                      // slots in use; 0 between pulls
         uint32 TargetSlot = 0;                      // the selected enemy; target selection updates it
 
+        // Support: the selected friend (FRIEND_SELF, FRIEND_OWNER, FRIEND_TEAMMATE_FIRST + teammate) that positive
+        // single-target spells are cast on, and the rank tier heals with ranks are cast at (0 = highest known). Only
+        // read with the support block; the actions update them.
+        uint32 FriendSlot = FRIEND_SELF;
+        uint32 RankTier = 0;
+
         // Gauntlet.
         uint32 PullsCleared = 0;
         float QuietTime = 0.0f;                     // time since the last fight ended / 20 s, clamped
@@ -94,6 +101,7 @@ namespace Animus::Curriculum
 
         // Companion: the player the bot fights for.
         Player* Owner = nullptr;
+        std::optional<Role> OwnerRole;              // what the owner plays, when the scenario knows it
 
         // Party: the other learned players, and the party's living tank (may be the bot).
         struct Teammate
@@ -155,6 +163,10 @@ namespace Animus::Curriculum
         uint32 SustainCasts = 0;
         uint32 FoodUsed = 0;
         uint32 DrinkUsed = 0;
+        uint32 HealsOnFull = 0;                     // direct heals started on a friend at full health (masked: 0)
+        uint32 DefensiveCasts = 0;                  // short damage reductions and immunities started
+        uint32 HealingCasts = 0;                    // heals, HoTs and absorbs started ...
+        uint32 DownrankedCasts = 0;                 // ... below the highest known rank
         uint32 FoodFailed = 0;                      // eat or drink pressed and allowed, but nothing was consumed
         uint32 DrinkFailed = 0;
         bool StealthOpener = false;                 // a harmful spell that breaks stealth started from stealth

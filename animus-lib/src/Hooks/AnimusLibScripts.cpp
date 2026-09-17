@@ -77,6 +77,22 @@ namespace
             return damage;
         }
 
+        /// Called for every heal about to land (direct and periodic), on map threads, before overhealing is taken
+        /// off. The core passes its units in two orders: a periodic tick as (target, caster), right after
+        /// ModifyPeriodicDamageAurasTick with the same units and spell, and a direct heal (Unit::HealBySpell) as
+        /// (healer, target).
+        void ModifyHealReceived(Unit* first, Unit* second, uint32& heal, SpellInfo const* spellInfo) override
+        {
+            bool const periodic = Pending.Attacker == second && Pending.Victim == first && Pending.Spell == spellInfo;
+            if (periodic)
+                Pending = {};
+
+            Unit* healer = periodic ? second : first;
+            Unit* receiver = periodic ? first : second;
+            for (Animus::EnvPool* pool : Animus::PoolRegistry::Pools())
+                pool->RecordHealCast(healer, receiver, heal);
+        }
+
         /// Called for every heal, on map threads, with the health actually gained (overhealing excluded).
         void OnHeal(Unit* healer, Unit* receiver, uint32& gain) override
         {

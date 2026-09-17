@@ -58,6 +58,13 @@ namespace Animus
         std::array<uint64, MAX_ALLIES> AllyDamageTakenBy{};    // the same, per Env::Allies index
         std::array<uint64, MAX_ALLIES> AllyHealingBy{};
         std::array<uint64, MAX_AGENTS> AgentHealingBy{};    // effective healing on the env's other agents, by agent
+        uint64 SelfHealing = 0;         // effective healing the agent (or its pets) did on itself
+        uint64 HealingRaw = 0;          // healing the agent cast on itself, its allies and agents, overhealing included
+        // Protection: damage the agent's own absorbs soaked (Scenario-polled) and its own damage-taken reductions
+        // prevented (Pain Suppression on a friend, Barkskin on itself), on itself, per ally and per other agent.
+        uint64 SelfProtection = 0;
+        std::array<uint64, MAX_ALLIES> AllyProtectionBy{};
+        std::array<uint64, MAX_AGENTS> AgentProtectionBy{};
         uint32 CastsCompleted = 0;      // the agent's own cast-time spells that finished casting
         uint32 CastsCancelled = 0;      // ... that were cut short (moved, stopped, interrupted, died)
         uint64 CastMsCompleted = 0;     // cast time of the completed casts
@@ -86,9 +93,16 @@ namespace Animus
             {
                 AllyDamageTakenBy[ally] += other.AllyDamageTakenBy[ally];
                 AllyHealingBy[ally] += other.AllyHealingBy[ally];
+                AllyProtectionBy[ally] += other.AllyProtectionBy[ally];
             }
             for (std::size_t agent = 0; agent < MAX_AGENTS; ++agent)
+            {
                 AgentHealingBy[agent] += other.AgentHealingBy[agent];
+                AgentProtectionBy[agent] += other.AgentProtectionBy[agent];
+            }
+            SelfHealing += other.SelfHealing;
+            HealingRaw += other.HealingRaw;
+            SelfProtection += other.SelfProtection;
             CastsCompleted += other.CastsCompleted;
             CastsCancelled += other.CastsCancelled;
             CastMsCompleted += other.CastMsCompleted;

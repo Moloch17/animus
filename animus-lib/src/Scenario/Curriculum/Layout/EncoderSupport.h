@@ -47,23 +47,47 @@ namespace Animus::Curriculum::Encoding
     /// Features for a known/cooldown pair list: 1 and the cooldown fraction for each spell the bot knows.
     void WriteKnownCooldowns(Player const* bot, std::vector<ActionCatalog::Action> const& actions, float* out);
 
-    /// The targets a client would send for `info` aimed at `target` (null: self-cast spells only).
-    [[nodiscard]] SpellCastTargets TargetsFor(SpellInfo const* info, Player* bot, Unit* target);
+    /// A share of an aura's duration or charges: an aura the bot keeps up on a friend with more left than this is not
+    /// cast again (IsSpellActionAllowed).
+    constexpr float REFRESH_BELOW_FRACTION = 0.25f;
+
+    /// The targets a client would send for `info` aimed at `target` (null: self-cast spells only). A positive spell
+    /// that takes a unit goes to `friendUnit` when given, else the bot itself.
+    [[nodiscard]] SpellCastTargets TargetsFor(SpellInfo const* info, Player* bot, Unit* target,
+        Unit* friendUnit = nullptr);
+
+    /// The unit in friend slot `slot` (FRIEND_SELF, FRIEND_OWNER, teammates) if it is in the bot's map, else null.
+    [[nodiscard]] Unit* FriendUnit(SeatView const& view, uint32 slot);
+
+    /// Where the seat's positive single-target spells go: the support block's selected friend while it is alive
+    /// (null otherwise), or the bot itself for a layout without the block.
+    [[nodiscard]] Unit* SupportTarget(SeatView const& view);
+
+    /// A positive spell that takes a unit target (a heal, shield, blessing or Hand), cast on a friend.
+    [[nodiscard]] bool AimsAtFriend(SpellInfo const* info);
+
+    /// The aura of any rank of `info`'s chain `caster` has on `unit`, or null.
+    [[nodiscard]] Aura const* OwnAuraOfChain(Unit const* unit, SpellInfo const* info, ObjectGuid caster);
+
+    /// Whether `caster`'s aura of `info`'s chain on `unit` has more than REFRESH_BELOW_FRACTION of its duration or
+    /// charges left (or is permanent).
+    [[nodiscard]] bool OwnAuraHasPlentyLeft(Unit const* unit, SpellInfo const* info, ObjectGuid caster);
 
     /// A cast in its cast time (channels excluded): the client refuses to start another spell or use an item
     /// meanwhile. The core only checks this for client casts, so actions check it here.
     [[nodiscard]] bool CastInProgress(Player const* bot);
 
     /// The core's own cast validation (Spell::CheckCast), without casting. `target` may be null (self-cast spells).
-    [[nodiscard]] bool CanCast(Player* bot, SpellInfo const* info, Unit* target, Item* castItem = nullptr);
+    [[nodiscard]] bool CanCast(Player* bot, SpellInfo const* info, Unit* target, Item* castItem = nullptr,
+        Unit* friendUnit = nullptr);
 
-    /// Whether an ally heal can be cast on `ally` now, and casting it.
+    /// Whether a spell (a revive) can be cast on `ally` now.
     [[nodiscard]] bool CanHeal(Player* bot, ActionCatalog::Action const& heal, Unit* ally);
-    void Heal(Player* bot, ActionCatalog::Action const& heal, Unit* ally, SeatActionResult& result);
 
     /// Whether a spell action of the catalog could be cast at `target` now.
-    /// The highest rank of `def` the seat's bot knows: from the view's per-episode table when it has one, else
-    /// resolved by walking the chain. Every seat of a curriculum scenario has the table.
+    /// The rank of `def` the seat casts: the highest the bot knows (from the view's per-episode table when it has one,
+    /// else resolved by walking the chain), or for a heal with ranks under the support block, the highest active rank
+    /// at its rank tier.
     [[nodiscard]] SpellInfo const* KnownRank(SeatView const& view, ActionCatalog::Action const& def);
 
     [[nodiscard]] bool IsSpellActionAllowed(SeatView const& view, Unit* target, ActionCatalog::Action const& def);

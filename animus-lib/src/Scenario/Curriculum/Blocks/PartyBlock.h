@@ -24,8 +24,8 @@
 namespace Animus::Curriculum
 {
     /// The other learned party members: PARTY_MEMBERS teammate slots (the owner has the companion block). Actions:
-    /// follow the tank, assist and guard each teammate, cast each ally heal on each teammate, then each revive on each
-    /// teammate.
+    /// follow the tank, assist and guard each teammate, then each revive on each teammate. Heals, shields and buffs on
+    /// them are core actions aimed by the support block's friend selection.
     class PartyBlock final : public Block
     {
     public:
@@ -64,8 +64,7 @@ namespace Animus::Curriculum
             ACTION_FOLLOW_TANK          = 0,
             ACTION_ASSIST_FIRST         = 1,                        // + member
             ACTION_GUARD_FIRST          = 1 + PARTY_MEMBERS,        // + member
-            ACTION_HEAL_FIRST           = 1 + 2 * PARTY_MEMBERS     // + member * ally heals + heal, then
-                                                                    // + member * revives + revive
+            ACTION_REVIVE_FIRST         = 1 + 2 * PARTY_MEMBERS     // + member * revives + revive
         };
 
         [[nodiscard]] BlockId Id() const override { return BlockId::Party; }

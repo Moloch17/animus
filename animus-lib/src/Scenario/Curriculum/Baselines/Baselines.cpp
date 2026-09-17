@@ -17,12 +17,11 @@
  */
 
 #include "Baselines.h"
-#include "CompanionBlock.h"
 #include "CoreBlock.h"
 #include "DuelBlock.h"
 #include "GauntletBlock.h"
-#include "PartyBlock.h"
 #include "PetBlock.h"
+#include "SupportBlock.h"
 #include "SharedDefines.h"
 #include "SpellInfo.h"
 #include "SpellMgr.h"
@@ -38,8 +37,8 @@ namespace
 
     constexpr float EAT_BELOW = 0.8f;
     constexpr float DRINK_BELOW = 0.8f;
-    constexpr float HEAL_OWNER_BELOW = 0.7f;
-    constexpr float HEAL_TEAMMATE_BELOW = 0.6f;
+    constexpr float HEAL_BELOW = 0.6f;          // the most hurt living friend below this is healed
+    constexpr float DEFENSIVE_BELOW = 0.3f;     // the bot below this uses a defensive
     constexpr float CLOSE_IN_BEYOND_YARDS = 4.0f;
     constexpr float HOLD_RANGE_BEYOND_YARDS = 28.0f;    // ranged specs close to DuelBlock::MOVE_TO_RANGE_DISTANCE
     constexpr float MOUNT_BEYOND_YARDS = 80.0f;
@@ -324,11 +323,102 @@ namespace
         return std::nullopt;
     }
 
+    /// The first allowed core spell action that `wanted` picks.
+    std::optional<int32> FirstSpell(Row const& row, Layout const& layout,
+        bool (*wanted)(ActionCatalog::Action const& action))
+    {
+        std::vector<ActionCatalog::Action> const& actions = layout.Catalog().Actions();
+        for (uint32 action = CoreBlock::FIRST_CAST_ACTION; action < actions.size(); ++action)
+            if (actions[action].Type == ActionCatalog::Kind::Spell && wanted(actions[action]))
+                if (std::optional<int32> cast = row.Allowed(BlockId::Core, action))
+                    return cast;
+
+        return std::nullopt;
+    }
+
+    /// `fight`'s support, as a simple healer plays: a defensive when the bot is low; the most hurt living friend below
+    /// HEAL_BELOW selected and healed (the bot itself without the support block); a healer keeps its own heal over
+    /// time or shield on the owner, or a tank teammate, once they are in the fight. The masks keep it from healing a
+    /// friend at full health or re-casting what is still up.
+    std::optional<int32> Support(Row const& row, Layout const& layout)
+    {
+        float const health = row.Obs(BlockId::Core, CoreBlock::OBS_HEALTH);
+        if (health > 0.0f && health < DEFENSIVE_BELOW)
+            if (std::optional<int32> defend = FirstSpell(row, layout,
+                [](ActionCatalog::Action const& action) { return action.Defensive; }))
+                return defend;
+
+        auto const heal = [](ActionCatalog::Action const& action) { return action.Healing; };
+        if (!row.Has(BlockId::Support))
+            return health > 0.0f && health < HEAL_BELOW ? FirstSpell(row, layout, heal) : std::nullopt;
+
+        auto const friendObs = [&row](uint32 slot, uint32 feature)
+        {
+            return row.Obs(BlockId::Support, SupportBlock::OBS_GLOBAL_COUNT + slot * SupportBlock::FRIEND_FEATURES
+                + feature);
+        };
+        auto const aim = [&row](uint32 slot) -> std::optional<int32>
+        {
+            if (row.Obs(BlockId::Support, SupportBlock::OBS_SELECTED_FIRST + slot) > 0.0f)
+                return std::nullopt;
+            return row.Allowed(BlockId::Support, SupportBlock::ACTION_SELECT_FRIEND_FIRST + slot);
+        };
+
+        uint32 lowest = FRIEND_SLOTS;
+        float lowestHealth = HEAL_BELOW;
+        for (uint32 slot = 0; slot < FRIEND_SLOTS; ++slot)
+        {
+            if (friendObs(slot, SupportBlock::FRIEND_ALIVE) == 0.0f)
+                continue;
+
+            float const friendHealth = friendObs(slot, SupportBlock::FRIEND_HEALTH);
+            if (friendHealth < lowestHealth)
+            {
+                lowest = slot;
+                lowestHealth = friendHealth;
+            }
+        }
+
+        if (lowest < FRIEND_SLOTS)
+        {
+            if (std::optional<int32> select = aim(lowest))
+                return select;
+            if (std::optional<int32> cast = FirstSpell(row, layout, heal))
+                return cast;
+
+            // Heals cannot be cast in most forms.
+            if (layout.PlayRole() == Role::Heal)
+                if (std::optional<int32> cancel = row.Allowed(BlockId::Duel, DuelBlock::ACTION_CANCEL_FORM))
+                    return cancel;
+        }
+
+        if (layout.PlayRole() != Role::Heal)
+            return std::nullopt;
+
+        for (uint32 slot = FRIEND_OWNER; slot < FRIEND_SLOTS; ++slot)
+        {
+            bool const tank = friendObs(slot, SupportBlock::FRIEND_ROLE_FIRST + uint32(Role::Tank)) > 0.0f;
+            if (friendObs(slot, SupportBlock::FRIEND_ALIVE) == 0.0f
+                || friendObs(slot, SupportBlock::FRIEND_ATTACKERS) == 0.0f || (slot != FRIEND_OWNER && !tank)
+                || friendObs(slot, SupportBlock::FRIEND_OWN_HEAL_OVER_TIME) > 0.0f
+                || friendObs(slot, SupportBlock::FRIEND_OWN_ABSORB) > 0.0f)
+                continue;
+
+            if (std::optional<int32> select = aim(slot))
+                return select;
+            return FirstSpell(row, layout, [](ActionCatalog::Action const& action)
+            {
+                return action.Healing && action.KeepsAura;
+            });
+        }
+
+        return std::nullopt;
+    }
+
     std::optional<int32> Fight(Row const& row, Layout const& layout)
     {
         // A living target's health; not the distance, which is 0 in melee range (it is measured between reaches).
         bool const hasTarget = row.Obs(BlockId::Core, CoreBlock::OBS_TARGET_HEALTH) > 0.0f;
-        uint32 const heals = layout.AllyHealCount;
 
         // Travel: a flying mount for a long trip where it flies, else a ground mount; fly at a safe height, land at
         // the objective and dismount there.
@@ -379,38 +469,8 @@ namespace
                     return drink;
         }
 
-        if (row.Has(BlockId::Companion) && heals
-            && row.Obs(BlockId::Companion, CompanionBlock::OBS_OWNER_ALIVE) > 0.0f
-            && row.Obs(BlockId::Companion, CompanionBlock::OBS_OWNER_HEALTH) < HEAL_OWNER_BELOW)
-        {
-            for (uint32 heal = 0; heal < heals; ++heal)
-                if (std::optional<int32> action =
-                    row.Allowed(BlockId::Companion, CompanionBlock::ACTION_HEAL_FIRST + heal))
-                    return action;
-
-            // Heals cannot be cast in most forms.
-            if (std::optional<int32> cancel = row.Allowed(BlockId::Duel, DuelBlock::ACTION_CANCEL_FORM))
-                return cancel;
-        }
-
-        // A hurt teammate: the first heal that can reach it.
-        if (row.Has(BlockId::Party) && heals)
-        {
-            for (uint32 member = 0; member < PARTY_MEMBERS; ++member)
-            {
-                uint32 const first = PartyBlock::OBS_GLOBAL_COUNT + member * PartyBlock::MEMBER_FEATURES;
-                if (row.Obs(BlockId::Party, first + PartyBlock::MEMBER_ALIVE) == 0.0f
-                    || row.Obs(BlockId::Party, first + PartyBlock::MEMBER_HEALTH) >= HEAL_TEAMMATE_BELOW)
-                    continue;
-
-                // Ally actions are laid out per teammate, every ally spell each; the heals come first.
-                uint32 const stride = uint32(layout.AllySpells.size());
-                for (uint32 heal = 0; heal < heals; ++heal)
-                    if (std::optional<int32> action = row.Allowed(BlockId::Party,
-                        PartyBlock::ACTION_HEAL_FIRST + member * stride + heal))
-                        return action;
-            }
-        }
+        if (std::optional<int32> support = Support(row, layout))
+            return support;
 
         // A pet class fights with its pet, as a player does: out before the fight, and sent at the target.
         if (std::optional<int32> pet = PetAction(row, layout))

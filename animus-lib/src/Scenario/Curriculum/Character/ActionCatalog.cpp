@@ -353,6 +353,9 @@ Animus::Curriculum::ActionCatalog::ActionCatalog(uint8 playerClass, ClassKit con
         return first ? first->Id : info->Id;
     };
 
+    // A spell that only stuns, fears or roots its caster (Grovel) is never worth a slot.
+    std::erase_if(candidates, [](uint32 spellId) { return IsSelfControlSpell(sSpellMgr->GetSpellInfo(spellId)); });
+
     for (uint32 spellId : candidates)
         if (SpellInfo const* info = sSpellMgr->GetSpellInfo(spellId); IsCombatSpell(info))
             chains.insert(chainOf(info));
@@ -378,7 +381,12 @@ Animus::Curriculum::ActionCatalog::ActionCatalog(uint8 playerClass, ClassKit con
         action.FirstRank = firstRank;
         action.NextSwing = info->HasAttribute(SPELL_ATTR0_ON_NEXT_SWING)
             || info->HasAttribute(SPELL_ATTR0_ON_NEXT_SWING_NO_DAMAGE);
-        action.Disabled = IsSelfControlSpell(info);
+        action.Healing = IsHealingSpell(info);
+        action.Rankable = action.Healing && info->GetNextRankSpell();
+        action.DirectHeal = IsDirectHealSpell(info);
+        action.Defensive = IsDefensiveSpell(info);
+        action.LongBuff = IsLongBuff(info);
+        action.KeepsAura = KeepsAuraSpell(info);
         return action;
     };
 
@@ -410,7 +418,10 @@ Animus::Curriculum::ActionCatalog::ActionCatalog(uint8 playerClass, ClassKit con
     for (uint32 spellId : candidates)
     {
         SpellInfo const* info = sSpellMgr->GetSpellInfo(spellId);
-        if (info && !info->IsPassive() && info->NeedsExplicitUnitTarget()
+        // Resurrections target a dead ally's corpse (TARGET_FLAG_CORPSE_ALLY), not a living unit.
+        bool const targeted = info
+            && (info->NeedsExplicitUnitTarget() || (info->GetExplicitTargetMask() & TARGET_FLAG_CORPSE_MASK));
+        if (targeted && !info->IsPassive()
             && (info->HasEffect(SPELL_EFFECT_RESURRECT) || info->HasEffect(SPELL_EFFECT_RESURRECT_NEW)))
             reviveChains.insert(chainOf(info));
     }
@@ -428,6 +439,150 @@ Animus::Curriculum::ActionCatalog::ActionCatalog(uint8 playerClass, ClassKit con
     for (std::vector<Action>* list : { &_actions, &_tactical, &_sustain, &_revives })
         for (uint32 index = 0; index < list->size(); ++index)
             (*list)[index].Index = index;
+}
+
+bool Animus::Curriculum::ActionCatalog::IsHealingSpell(SpellInfo const* info)
+{
+    if (!info || info->IsPassive())
+        return false;
+
+    for (SpellEffectInfo const& effect : info->GetEffects())
+    {
+        switch (effect.Effect)
+        {
+            case SPELL_EFFECT_HEAL:
+            case SPELL_EFFECT_HEAL_PCT:
+            case SPELL_EFFECT_HEAL_MAX_HEALTH:
+                return true;
+            default:
+                break;
+        }
+
+        if (effect.IsAura() && (effect.ApplyAuraName == SPELL_AURA_PERIODIC_HEAL
+            || effect.ApplyAuraName == SPELL_AURA_OBS_MOD_HEALTH || effect.ApplyAuraName == SPELL_AURA_SCHOOL_ABSORB))
+            return true;
+    }
+
+    return false;
+}
+
+bool Animus::Curriculum::ActionCatalog::IsDirectHealSpell(SpellInfo const* info)
+{
+    if (!info || info->IsPassive() || !info->IsPositive())
+        return false;
+
+    bool heal = false;
+    for (SpellEffectInfo const& effect : info->GetEffects())
+    {
+        if (!effect.Effect)
+            continue;
+
+        if (effect.IsAura() || effect.HasRadius() || effect.IsTargetingArea())
+            return false;
+
+        switch (effect.Effect)
+        {
+            case SPELL_EFFECT_HEAL:
+            case SPELL_EFFECT_HEAL_PCT:
+            case SPELL_EFFECT_HEAL_MAX_HEALTH:
+                heal = true;
+                break;
+            default:
+                return false;
+        }
+    }
+
+    return heal;
+}
+
+bool Animus::Curriculum::ActionCatalog::IsDefensiveSpell(SpellInfo const* info)
+{
+    if (!info || info->IsPassive() || !info->IsPositive())
+        return false;
+
+    int32 const duration = info->GetMaxDuration();
+    if (duration <= 0 || duration >= 5 * MINUTE * IN_MILLISECONDS)
+        return false;
+
+    for (SpellEffectInfo const& effect : info->GetEffects())
+    {
+        if (!effect.IsAura())
+            continue;
+
+        switch (effect.ApplyAuraName)
+        {
+            case SPELL_AURA_MOD_DAMAGE_PERCENT_TAKEN:
+                if (effect.BasePoints < 0)
+                    return true;
+                break;
+            case SPELL_AURA_SCHOOL_IMMUNITY:
+            case SPELL_AURA_DAMAGE_IMMUNITY:
+            case SPELL_AURA_SPLIT_DAMAGE_PCT:
+            case SPELL_AURA_MOD_DODGE_PERCENT:
+            case SPELL_AURA_MOD_PARRY_PERCENT:
+            case SPELL_AURA_MOD_BLOCK_PERCENT:
+                return true;
+            default:
+                break;
+        }
+    }
+
+    return false;
+}
+
+bool Animus::Curriculum::ActionCatalog::IsLongBuff(SpellInfo const* info)
+{
+    if (!info || info->IsPassive() || !info->IsPositive() || info->GetMaxDuration() < 10 * MINUTE * IN_MILLISECONDS)
+        return false;
+
+    bool aura = false;
+    for (SpellEffectInfo const& effect : info->GetEffects())
+    {
+        if (!effect.Effect)
+            continue;
+
+        if (!effect.IsAura())
+            return false;
+
+        switch (effect.ApplyAuraName)
+        {
+            case SPELL_AURA_PERIODIC_HEAL:
+            case SPELL_AURA_OBS_MOD_HEALTH:
+            case SPELL_AURA_PERIODIC_DAMAGE:
+            case SPELL_AURA_MOD_SHAPESHIFT:
+            case SPELL_AURA_MOD_STEALTH:
+            case SPELL_AURA_MOUNTED:
+            case SPELL_AURA_MOD_REGEN:
+            case SPELL_AURA_MOD_POWER_REGEN:
+                return false;
+            default:
+                aura = true;
+                break;
+        }
+    }
+
+    return aura;
+}
+
+bool Animus::Curriculum::ActionCatalog::KeepsAuraSpell(SpellInfo const* info)
+{
+    if (!info || info->IsPassive() || !info->IsPositive() || info->StackAmount > 1 || info->GetMaxDuration() <= 0)
+        return false;
+
+    bool kept = IsLongBuff(info) || IsDefensiveSpell(info);
+    for (SpellEffectInfo const& effect : info->GetEffects())
+    {
+        if (!effect.Effect)
+            continue;
+
+        if (effect.IsAreaAuraEffect() || effect.HasRadius())
+            return false;
+
+        kept |= effect.IsAura() && (effect.ApplyAuraName == SPELL_AURA_PERIODIC_HEAL
+            || effect.ApplyAuraName == SPELL_AURA_SCHOOL_ABSORB);
+    }
+
+    return kept;
 }
 
 bool Animus::Curriculum::ActionCatalog::IsSelfControlSpell(SpellInfo const* info)
