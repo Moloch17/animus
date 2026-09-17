@@ -53,13 +53,15 @@ Animus.Curriculum.DecisionMs = 250
 ###################################################################################################
 # STAGE VIEWER
 #
-# ".animus stage start <stage> [policy] [arena]" runs a curriculum stage the way mod-animus-forge
-# trains it, without the learner, in the game master's own instance at the spawn point below, so
-# its episodes can be watched. One env (its seats, owner, pulls and enemy players), episode after
-# episode, until ".animus stage stop" or the game master leaves the instance.
+# ".animus stage open <stage> [policy] [arena]" builds a curriculum stage the way mod-animus-forge
+# trains it, without the learner, in the game master's own instance at the spawn point below: one
+# env (its seats, owner, pulls and enemy players), its first episode spawned frozen for inspection.
+# ".animus stage spawn [tier] [class_role] [level]" spawns another, ".animus stage start" plays
+# episode after episode until ".animus stage stop" freezes it, and ".animus stage close" (or
+# leaving the instance) removes it.
 #
 #    Animus.Stage.Policy
-#        Description: What the seats play when ".animus stage start" names no policy.
+#        Description: What the seats play when ".animus stage open" names no policy.
 #        Default:     "model"  - each seat's exported class/role model from Animus.ModelDir; a
 #                                seat whose model is missing does nothing
 #                     "random" - random allowed actions
@@ -117,7 +119,7 @@ Animus.Stage.MaxViewers = 4
 #    Animus.Stage.SpawnPoint.MapId
 #    Animus.Stage.SpawnPoint.X / Y / Z / O
 #        Description: Instanceable (dungeon) map and position where a stage happens: ".animus
-#                     stage start" teleports the game master here and builds the stage in their
+#                     stage open" teleports the game master here and builds the stage in their
 #                     instance. Use the forge's AnimusForge.SpawnPoint.* to watch what it trains.
 #                     The default is the Old Hillsbrad Foothills entrance.
 #        Default:     560, 2741.9, 1315.2, 14.0, 2.96

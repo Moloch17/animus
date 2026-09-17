@@ -43,7 +43,7 @@ namespace Animus
         /// Action pacing for companions (Animus.Curriculum.Actions.*), as the forge paces its seats.
         Curriculum::CurriculumTuning::ActionTuning CurriculumActions;
 
-        /// Animus.Stage.*: the stage viewer (`.animus stage start`).
+        /// Animus.Stage.*: the stage viewer (`.animus stage open`).
         uint32 StageDecisionMs = 100;
         uint32 StageEpisodeSeconds = 60;
         std::string StagePolicy = "model";

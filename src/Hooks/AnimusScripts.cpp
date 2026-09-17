@@ -59,10 +59,12 @@ namespace
             static ChatCommandTable stageCommandTable =
             {
                 { "list",       HandleStageListCommand,     SEC_GAMEMASTER, Console::No },
+                { "open",       HandleStageOpenCommand,     SEC_GAMEMASTER, Console::No },
+                { "spawn",      HandleStageSpawnCommand,    SEC_GAMEMASTER, Console::No },
                 { "start",      HandleStageStartCommand,    SEC_GAMEMASTER, Console::No },
                 { "stop",       HandleStageStopCommand,     SEC_GAMEMASTER, Console::No },
-                { "reset",      HandleStageResetCommand,    SEC_GAMEMASTER, Console::No },
                 { "status",     HandleStageStatusCommand,   SEC_GAMEMASTER, Console::No },
+                { "close",      HandleStageCloseCommand,    SEC_GAMEMASTER, Console::No },
             };
 
             static ChatCommandTable animusCommandTable =
@@ -109,35 +111,55 @@ namespace
             return ReplyLines(handler, sAnimusMod->StageList(), "There are no stages.");
         }
 
-        /// .animus stage start <stage> [policy] [arena]: teleport to where the stage happens and run it there without
-        /// the learner. policy: model (the seats' exported models, Animus.Stage.Policy by default), random, greedy or
-        /// fight; arena: only that arena of a stage that mixes several.
-        static bool HandleStageStartCommand(ChatHandler* handler, std::string_view stage,
+        /// .animus stage open <stage> [policy] [arena]: teleport to where the stage happens, run it there without the
+        /// learner, and spawn its first episode frozen. policy: model (the seats' exported models, Animus.Stage.Policy
+        /// by default), random, greedy or fight; arena: only that arena of a stage that mixes several.
+        static bool HandleStageOpenCommand(ChatHandler* handler, std::string_view stage,
             Optional<std::string_view> policy, Optional<std::string_view> arena)
         {
             std::string message;
-            return Reply(handler, sAnimusMod->StageStart(handler->GetPlayer(), stage, policy.value_or(""),
+            return Reply(handler, sAnimusMod->StageOpen(handler->GetPlayer(), stage, policy.value_or(""),
                 arena.value_or(""), message), message);
         }
 
-        /// .animus stage stop: remove the stage you are watching.
+        /// .animus stage spawn [tier] [class_role] [level]: remove the episode and spawn a new one, frozen. tier: a
+        /// difficulty tier of a stage that fights a creature; class_role: what the first seat plays (warlock_dps);
+        /// level: every character's level. Each is "any" or left out for the curriculum's own, and holds for the
+        /// episodes after it.
+        static bool HandleStageSpawnCommand(ChatHandler* handler, Optional<std::string_view> tier,
+            Optional<std::string_view> classRole, Optional<std::string_view> level)
+        {
+            std::string message;
+            return Reply(handler, sAnimusMod->StageSpawn(handler->GetPlayer(), tier.value_or(""),
+                classRole.value_or(""), level.value_or(""), message), message);
+        }
+
+        /// .animus stage start: let the stage play; episodes follow one another until `.animus stage stop`.
+        static bool HandleStageStartCommand(ChatHandler* handler)
+        {
+            std::string message;
+            return Reply(handler, sAnimusMod->StageRun(handler->GetPlayer(), message), message);
+        }
+
+        /// .animus stage stop: freeze the stage where it is.
         static bool HandleStageStopCommand(ChatHandler* handler)
         {
             std::string message;
-            return Reply(handler, sAnimusMod->StageStop(handler->GetPlayer(), message), message);
+            return Reply(handler, sAnimusMod->StageFreeze(handler->GetPlayer(), message), message);
         }
 
-        /// .animus stage reset: end the current episode and start a new one.
-        static bool HandleStageResetCommand(ChatHandler* handler)
+        /// .animus stage close: remove the stage you have open.
+        static bool HandleStageCloseCommand(ChatHandler* handler)
         {
             std::string message;
-            return Reply(handler, sAnimusMod->StageReset(handler->GetPlayer(), message), message);
+            return Reply(handler, sAnimusMod->StageClose(handler->GetPlayer(), message), message);
         }
 
         /// .animus stage status: the stage you are watching, its episode and its seats.
         static bool HandleStageStatusCommand(ChatHandler* handler)
         {
-            return ReplyLines(handler, sAnimusMod->StageStatus(handler->GetPlayer()), "You are not watching a stage.");
+            return ReplyLines(handler, sAnimusMod->StageStatus(handler->GetPlayer()),
+                "You have no stage open: `.animus stage open <stage>` opens one.");
         }
     };
 

@@ -293,12 +293,12 @@ std::vector<std::string> Animus::AnimusMod::StageList() const
         lines.push_back(Acore::StringFormat("{}: {} (arenas: {})", stage.Name, stage.Summary, arenas));
     }
 
-    lines.push_back("Start one with .animus stage start <stage> [model|random|greedy|fight] [arena]: it teleports you "
-        "to where the stage happens.");
+    lines.push_back("Open one with .animus stage open <stage> [model|random|greedy|fight] [arena]: it teleports you "
+        "to where the stage happens and spawns its first episode, frozen.");
     return lines;
 }
 
-bool Animus::AnimusMod::StageStart(Player* viewer, std::string_view stage, std::string_view policy,
+bool Animus::AnimusMod::StageOpen(Player* viewer, std::string_view stage, std::string_view policy,
     std::string_view arena, std::string& message)
 {
     if (!_config.Enable)
@@ -313,7 +313,7 @@ bool Animus::AnimusMod::StageStart(Player* viewer, std::string_view stage, std::
         return false;
     }
 
-    // A viewer watches one stage at a time: starting another replaces it.
+    // A viewer has one stage open at a time: opening another replaces it.
     bool const replacing = _viewers.contains(viewer->GetGUID());
     RemoveViewer(viewer->GetGUID());
 
@@ -335,37 +335,51 @@ bool Animus::AnimusMod::StageStart(Player* viewer, std::string_view stage, std::
         return false;
 
     if (replacing)
-        message = "Your previous stage stopped. " + message;
+        message = "Your previous stage closed. " + message;
 
     _viewers[viewer->GetGUID()] = std::move(stageViewer);
     return true;
 }
 
-bool Animus::AnimusMod::StageStop(Player* viewer, std::string& message)
+bool Animus::AnimusMod::StageSpawn(Player* viewer, std::string_view tier, std::string_view classRole,
+    std::string_view level, std::string& message)
 {
-    if (!_viewers.contains(viewer->GetGUID()))
-    {
-        message = "You are not watching a stage.";
+    StageViewer* stage = FindViewer(viewer, message);
+    return stage && stage->Spawn(tier, classRole, level, _models, message);
+}
+
+bool Animus::AnimusMod::StageRun(Player* viewer, std::string& message)
+{
+    StageViewer* stage = FindViewer(viewer, message);
+    return stage && stage->Run(message);
+}
+
+bool Animus::AnimusMod::StageFreeze(Player* viewer, std::string& message)
+{
+    StageViewer* stage = FindViewer(viewer, message);
+    return stage && stage->Freeze(message);
+}
+
+bool Animus::AnimusMod::StageClose(Player* viewer, std::string& message)
+{
+    if (!FindViewer(viewer, message))
         return false;
-    }
 
     RemoveViewer(viewer->GetGUID());
-    message = "Stage stopped.";
+    message = "Stage closed.";
     return true;
 }
 
-bool Animus::AnimusMod::StageReset(Player* viewer, std::string& message)
+Animus::StageViewer* Animus::AnimusMod::FindViewer(Player* viewer, std::string& message)
 {
     auto const itr = _viewers.find(viewer->GetGUID());
     if (itr == _viewers.end())
     {
-        message = "You are not watching a stage.";
-        return false;
+        message = "You have no stage open: `.animus stage open <stage>` opens one.";
+        return nullptr;
     }
 
-    itr->second->RequestReset();
-    message = "A new episode starts at the next decision.";
-    return true;
+    return itr->second.get();
 }
 
 std::vector<std::string> Animus::AnimusMod::StageStatus(Player* viewer)

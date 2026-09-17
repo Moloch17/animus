@@ -17,9 +17,12 @@
  */
 
 #include "StageViewer.h"
+#include "CellImpl.h"
 #include "Chat.h"
 #include "DBCStores.h"
 #include "EnvPool.h"
+#include "GridNotifiers.h"
+#include "GridNotifiersImpl.h"
 #include "Log.h"
 #include "Map.h"
 #include "MlpPolicy.h"
@@ -29,9 +32,14 @@
 #include "PoolRegistry.h"
 #include "StageDefinition.h"
 #include "StageScenario.h"
+#include "SpellAuras.h"
+#include "SpellMgr.h"
 #include "StringFormat.h"
 #include <algorithm>
 #include <array>
+#include <charconv>
+#include <list>
+#include <optional>
 #include <string_view>
 
 namespace
@@ -47,6 +55,25 @@ namespace
     /// The local policies a viewer can pick besides the models: random actions and the scripted baselines.
     constexpr std::array<char const*, 3> LOCAL_POLICIES = { POLICY_RANDOM, "greedy", "fight" };
 
+    /// What `.freeze` puts on a player or creature: stunned, and nothing it does can move or act.
+    constexpr uint32 SPELL_GM_FREEZE = 9454;
+    /// How far around the viewer and each seat a freeze reaches: a stage's creatures, pets and allies are in it.
+    constexpr float FREEZE_RADIUS = 150.0f;
+    /// While frozen, how often units that turned up since (a pet summoned on arrival) are frozen too.
+    constexpr uint32 FREEZE_SWEEP_MS = 500;
+
+    constexpr std::string_view ANY = "any";
+
+    /// A whole non-negative number, or nothing.
+    std::optional<uint32> ParseNumber(std::string_view text)
+    {
+        uint32 value = 0;
+        auto const [end, error] = std::from_chars(text.data(), text.data() + text.size(), value);
+        if (error != std::errc() || end != text.data() + text.size())
+            return std::nullopt;
+        return value;
+    }
+
     /// "warrior_tank" for a class and role, "class 1" when no class/role has them.
     std::string ClassRoleName(uint8 playerClass, uint32 role)
     {
@@ -59,7 +86,8 @@ namespace
 }
 
 Animus::StageViewer::StageViewer(ObjectGuid viewer, uint32 envId, StageSettings settings)
-    : _viewer(viewer), _envId(envId), _settings(std::move(settings)), _arena(NO_ARENA)
+    : _viewer(viewer), _envId(envId), _settings(std::move(settings)), _arena(NO_ARENA), _tier(NO_TIER),
+    _layout(NO_LAYOUT)
 {
     _settings.FirstEnvId = envId;
 }
@@ -128,7 +156,7 @@ bool Animus::StageViewer::Begin(Player* viewer, std::string const& stage, std::s
         return false;
     }
 
-    message = Acore::StringFormat("{}Teleporting you to {}'s spawn point (map {}); the stage starts when you arrive.",
+    message = Acore::StringFormat("{}Teleporting you to {}'s spawn point (map {}); the stage is built when you arrive.",
         gmModeTurnedOn ? "GM mode is on. " : "", _stage->Name, _settings.SpawnMapId);
     return true;
 }
@@ -170,6 +198,18 @@ Animus::StageViewer::Status Animus::StageViewer::Update(uint32 diff, ModelLibrar
     {
         End("you left its instance");
         return Status::Ended;
+    }
+
+    if (_frozen)
+    {
+        // Nothing decides and the episode's clock stands still; what turned up since the last sweep is frozen too.
+        _sinceFreezeMs += diff;
+        if (_sinceFreezeMs >= FREEZE_SWEEP_MS)
+        {
+            _sinceFreezeMs = 0;
+            FreezeUnits();
+        }
+        return Status::Active;
     }
 
     _pool->AdvanceClock(diff);
@@ -225,12 +265,16 @@ bool Animus::StageViewer::Build(Player* viewer, ModelLibrary& models)
     PoolRegistry::Register(_pool.get());
     _phase = Phase::Running;
     _sinceDecisionMs = 0;
+    _frozen = true;
+    FreezeUnits();
 
     LOG_INFO("module.animus", "{} started stage {} in map {} instance {} with policy {}", viewer->GetName(),
         _stage->Name, map->GetId(), map->GetInstanceId(), _policy);
 
     for (std::string const& line : Describe(models))
         Tell(line);
+    Tell("Everything is frozen: `.animus stage spawn [tier] [class_role] [level]` spawns another episode, "
+        "`.animus stage start` lets it play.");
     return true;
 }
 
@@ -246,14 +290,6 @@ void Animus::StageViewer::Decide(ModelLibrary& models)
         ReportEpisode(elapsedMs, _pool->Terminated[0] != 0);
     }
 
-    if (_resetRequested)
-    {
-        _resetRequested = false;
-        _pool->ResetAll();
-        Tell(Acore::StringFormat("{}: a new episode starts ({}).", _stage->Name,
-            _scenario->Arena(_pool->GetEnv(0)).Name));
-    }
-
     if (_policy == POLICY_MODEL)
         ChooseModelActions(models);
     else if (!_pool->ChooseLocalActions(_policy))
@@ -263,6 +299,181 @@ void Animus::StageViewer::Decide(ModelLibrary& models)
     }
 
     _pool->ApplyActions();
+}
+
+bool Animus::StageViewer::Spawn(std::string_view tier, std::string_view classRole, std::string_view level,
+    ModelLibrary& models, std::string& message)
+{
+    if (_phase != Phase::Running)
+    {
+        message = "The stage is not built yet: it is built, and its first episode spawned, when you arrive.";
+        return false;
+    }
+
+    // Every choice is checked before anything is removed.
+    uint32 chosenTier = NO_TIER;
+    if (!tier.empty() && tier != ANY)
+    {
+        auto const fightsCreature = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Creature; };
+        bool const tiered = _arena < _stage->Arenas.size() ? fightsCreature(_stage->Arenas[_arena])
+            : _stage->AnyArena(fightsCreature);
+        uint32 const maxTier = _scenario->Tuning().Difficulty.MaxTier;
+        std::optional<uint32> const number = ParseNumber(tier);
+        if (!tiered)
+        {
+            message = Acore::StringFormat("{} has no difficulty tiers (only a stage that fights one creature has): "
+                "use any.", _stage->Name);
+            return false;
+        }
+        if (!number || *number > maxTier)
+        {
+            message = Acore::StringFormat("The tier is 0 to {} or any: below {} a normal creature that many levels "
+                "above the character, from it an elite.", maxTier, _scenario->Tuning().Difficulty.EliteTier);
+            return false;
+        }
+        chosenTier = *number;
+    }
+
+    uint32 chosenLayout = NO_LAYOUT;
+    if (!classRole.empty() && classRole != ANY)
+    {
+        std::vector<Layout> const& layouts = _scenario->Layouts();
+        auto const itr = std::find_if(layouts.begin(), layouts.end(),
+            [classRole](Layout const& layout) { return layout.Profile->Name == classRole; });
+        if (itr == layouts.end())
+        {
+            message = Acore::StringFormat("{} is not a class/role this stage plays. Its class/roles:", classRole);
+            for (Layout const& layout : layouts)
+                message += " " + layout.Profile->Name;
+            return false;
+        }
+        chosenLayout = itr->Index;
+    }
+
+    uint32 chosenLevel = 0;
+    if (!level.empty() && level != ANY)
+    {
+        std::optional<uint32> const number = ParseNumber(level);
+        if (!number || !*number || *number > DEFAULT_MAX_LEVEL)
+        {
+            message = Acore::StringFormat("The level is 1 to {} or any.", DEFAULT_MAX_LEVEL);
+            return false;
+        }
+        chosenLevel = *number;
+    }
+
+    _tier = chosenTier;
+    _layout = chosenLayout;
+    _level = chosenLevel;
+    _scenario->ForceTier(_tier);
+    _scenario->ForceLayout(_layout);
+    _scenario->ForceLevel(_level);
+
+    // The old episode's units are removed with it; any other unit the freeze held is let go first.
+    ThawUnits();
+    _pool->ResetAll();
+    _sinceDecisionMs = 0;
+    _frozen = true;
+    FreezeUnits();
+
+    for (std::string const& line : Describe(models))
+        Tell(line);
+    message = "Spawned, frozen. `.animus stage start` lets it play.";
+    return true;
+}
+
+bool Animus::StageViewer::Run(std::string& message)
+{
+    if (_phase != Phase::Running)
+    {
+        message = "The stage is not built yet: it is built when you arrive.";
+        return false;
+    }
+
+    if (!_frozen)
+    {
+        message = "The stage is already playing; `.animus stage stop` freezes it.";
+        return false;
+    }
+
+    ThawUnits();
+    _frozen = false;
+    _sinceDecisionMs = 0;
+    message = Acore::StringFormat("{} is playing with policy {}: episodes follow one another until "
+        "`.animus stage stop`.", _stage->Name, _policy);
+    return true;
+}
+
+bool Animus::StageViewer::Freeze(std::string& message)
+{
+    if (_phase != Phase::Running)
+    {
+        message = "The stage is not built yet: it is built when you arrive.";
+        return false;
+    }
+
+    if (_frozen)
+    {
+        message = "The stage is already frozen; `.animus stage start` lets it play.";
+        return false;
+    }
+
+    _frozen = true;
+    _sinceFreezeMs = 0;
+    FreezeUnits();
+    message = "Frozen where it stood. `.animus stage start` lets it play on.";
+    return true;
+}
+
+void Animus::StageViewer::FreezeUnits()
+{
+    Player* viewer = ObjectAccessor::FindConnectedPlayer(_viewer);
+    SpellInfo const* freeze = sSpellMgr->GetSpellInfo(SPELL_GM_FREEZE);
+    if (!viewer || !viewer->IsInWorld() || !freeze || !_pool)
+        return;
+
+    Env const& env = _pool->GetEnv(0);
+    std::vector<WorldObject*> centres = { viewer };
+    for (uint32 seat = 0; seat < _pool->Spec().AgentsPerEnv; ++seat)
+        if (Player* bot = env.FindBot(seat); bot && bot->IsInWorld() && bot->GetMap() == viewer->GetMap())
+            centres.push_back(bot);
+
+    std::list<Unit*> units;
+    for (WorldObject* centre : centres)
+    {
+        Acore::AnyUnitInObjectRangeCheck check(centre, FREEZE_RADIUS);
+        Acore::UnitListSearcher<Acore::AnyUnitInObjectRangeCheck> searcher(centre, units, check);
+        Cell::VisitObjects(centre, searcher, FREEZE_RADIUS);
+    }
+
+    for (Unit* unit : units)
+    {
+        // Players other than the stage's own (its seats and scripted allies) are never frozen: the viewer, another GM.
+        if (Player* player = unit->ToPlayer())
+        {
+            bool const stagePlayer = std::find(env.Bots.begin(), env.Bots.end(), player->GetGUID()) != env.Bots.end()
+                || std::find(env.Allies.begin(), env.Allies.end(), player->GetGUID()) != env.Allies.end();
+            if (!stagePlayer)
+                continue;
+        }
+
+        if (unit->HasAura(SPELL_GM_FREEZE))
+            continue;
+
+        Aura::TryRefreshStackOrCreate(freeze, MAX_EFFECT_MASK, unit, unit);
+        _frozenUnits.insert(unit->GetGUID());
+    }
+}
+
+void Animus::StageViewer::ThawUnits()
+{
+    Player* viewer = ObjectAccessor::FindConnectedPlayer(_viewer);
+    if (viewer && viewer->IsInWorld())
+        for (ObjectGuid const& guid : _frozenUnits)
+            if (Unit* unit = ObjectAccessor::GetUnit(*viewer, guid))
+                unit->RemoveAurasDueToSpell(SPELL_GM_FREEZE);
+
+    _frozenUnits.clear();
 }
 
 void Animus::StageViewer::ChooseModelActions(ModelLibrary& models)
@@ -346,9 +557,13 @@ std::vector<std::string> Animus::StageViewer::Describe(ModelLibrary& models) con
     }
 
     Env const& env = _pool->GetEnv(0);
-    lines.push_back(Acore::StringFormat("{} (policy {}{}): episode {}, arena {}, {:.0f} of {:.0f} s", name, _policy,
-        forced, _episodes + 1, _scenario->Arena(env).Name, float(env.EpisodeElapsedMs) / 1000.0f,
-        float(env.EpisodeLengthMs) / 1000.0f));
+    lines.push_back(Acore::StringFormat("{} (policy {}{}): {}, episode {}, arena {}, {:.0f} of {:.0f} s", name, _policy,
+        forced, _frozen ? "frozen" : "playing", _episodes + 1, _scenario->Arena(env).Name,
+        float(env.EpisodeElapsedMs) / 1000.0f, float(env.EpisodeLengthMs) / 1000.0f));
+    lines.push_back(Acore::StringFormat("  spawning: tier {}, class/role {}, level {}",
+        _tier == NO_TIER ? "any (the class/role's training tier)" : std::to_string(_tier),
+        _layout < _scenario->Layouts().size() ? _scenario->Layouts()[_layout].Profile->Name : "any",
+        _level ? std::to_string(_level) : "any"));
 
     EnvState const& data = _scenario->Data(env);
     for (uint32 seat = 0; seat < _pool->Spec().AgentsPerEnv; ++seat)
@@ -393,6 +608,7 @@ void Animus::StageViewer::End(std::string const& reason)
 void Animus::StageViewer::Stop()
 {
     _phase = Phase::Ended;
+    ThawUnits();
 
     if (_pool)
     {

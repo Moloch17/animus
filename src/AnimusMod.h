@@ -64,13 +64,16 @@ namespace Animus
         /// One line per class/role companion of `owner`.
         [[nodiscard]] std::vector<std::string> List(Player* owner);
 
-        /// Stage viewer commands: every stage and its arenas; start one where the stage happens (see StageViewer);
-        /// stop it, start a new episode, or describe it.
+        /// Stage viewer commands (see StageViewer): every stage and its arenas; open one where the stage happens, its
+        /// first episode frozen; spawn another episode, frozen; let it play, or freeze it; describe it; close it.
         [[nodiscard]] std::vector<std::string> StageList() const;
-        bool StageStart(Player* viewer, std::string_view stage, std::string_view policy, std::string_view arena,
+        bool StageOpen(Player* viewer, std::string_view stage, std::string_view policy, std::string_view arena,
             std::string& message);
-        bool StageStop(Player* viewer, std::string& message);
-        bool StageReset(Player* viewer, std::string& message);
+        bool StageSpawn(Player* viewer, std::string_view tier, std::string_view classRole, std::string_view level,
+            std::string& message);
+        bool StageRun(Player* viewer, std::string& message);
+        bool StageFreeze(Player* viewer, std::string& message);
+        bool StageClose(Player* viewer, std::string& message);
         [[nodiscard]] std::vector<std::string> StageStatus(Player* viewer);
 
         /// A player logged out: remove the companions they own and the stage they watch.
@@ -82,6 +85,9 @@ namespace Animus
 
     private:
         AnimusMod() = default;
+
+        /// The stage `viewer` has open, or null with `message` set.
+        StageViewer* FindViewer(Player* viewer, std::string& message);
 
         void RemoveParty(ObjectGuid owner);
         void RemoveViewer(ObjectGuid viewer);
