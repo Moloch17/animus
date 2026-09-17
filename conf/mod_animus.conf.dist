@@ -230,8 +230,8 @@ Animus.Curriculum.Duel.Timeout = 10.0
 Animus.Curriculum.Duel.Stall = 0.05
 #   ... the time a seat has to summon, buff and sneak up before it (ms)
 Animus.Curriculum.Duel.StallGraceMs = 15000
-#   ... which grows by the time spent starting buffs, forms, stances, stealth and pet summons out of combat (each its cast
-#   time, at least a global cooldown), up to this much (ms)
+#   ... which grows by the time spent starting buffs, forms, stances, stealth and pet summons out of combat (each its
+#   cast time, at least a global cooldown), up to this much (ms)
 Animus.Curriculum.Duel.PreparationRefundMaxMs = 30000
 #   creature duel, ranged specs: per second the opponent stands in melee range hitting the bot
 Animus.Curriculum.Duel.Spacing = 0.03
@@ -341,13 +341,13 @@ Animus.Curriculum.Pulls.Interrupt = 0.3
 Animus.Curriculum.Pulls.Kill = 0.5
 #   per decision
 Animus.Curriculum.Pulls.StepCost = 0.0002
-#   gauntlet and owner stages: each pull cleared
-Animus.Curriculum.Pulls.Clear = 2.0
-#   gauntlet: times 1 - time since the pull engaged / 60 s
-Animus.Curriculum.Pulls.FastPull = 2.0
-#   gauntlet and owner stages: times the fraction of the bot's health not lost this pull
-Animus.Curriculum.Pulls.HealthKept = 2.0
-Animus.Curriculum.Pulls.GauntletDeath = 5.0
+#   owner stages (the solo gauntlet has SoloGauntlet*), win-first: each pull cleared, and FastPull times
+#   1 - its time since engaged / 60 s, both x OwnerClearScale; HealthKept times the seat's own health kept through it;
+#   GauntletDeath per seat death (the owner's is Owner.Death)
+Animus.Curriculum.Pulls.Clear = 2.5
+Animus.Curriculum.Pulls.FastPull = 0.5
+Animus.Curriculum.Pulls.HealthKept = 0.5
+Animus.Curriculum.Pulls.GauntletDeath = 10.0
 #   A single pack (stage2_pack): the clear, the fast clear bonus (times the episode fraction left after engaging),
 #   health kept, death, running out of time (a lost fight), standing off once StallGraceMs are gone (per second),
 #   and a ranged spec hit in melee reach (per second). As mod_animus_forge.conf.dist.
@@ -402,6 +402,13 @@ Animus.Curriculum.Pulls.NextPullShrinkMs = 1000
 Animus.Curriculum.Pulls.NextPullFloorMs = 4000
 #   owner stages: kills and clears count this many times
 Animus.Curriculum.Pulls.OwnerClearScale = 2.0
+#   owner stages keep the solo gauntlet's lessons: readiness paid when a pull is engaged (times the lower of health and
+#   mana), crowd control per enemy-second an add is kept out of the fight (up to OwnerControlMax a pull), and a win --
+#   the episode lasted with the owner never dead, no wipe and OwnerWinPulls pulls cleared -- counted as the kill
+Animus.Curriculum.Pulls.OwnerReadiness = 0.5
+Animus.Curriculum.Pulls.OwnerControl = 0.02
+Animus.Curriculum.Pulls.OwnerControlMax = 1.5
+Animus.Curriculum.Pulls.OwnerWinPulls = 5
 
 #
 #    Animus.Curriculum.Owner.*
@@ -436,7 +443,7 @@ Animus.Curriculum.Owner.FollowFar = 0.002
 Animus.Curriculum.Owner.FollowNear = 0.0005
 Animus.Curriculum.Owner.FollowFarDistance = 25.0
 Animus.Curriculum.Owner.FollowNearDistance = 12.0
-Animus.Curriculum.Owner.Death = 6.0
+Animus.Curriculum.Owner.Death = 15.0
 
 #
 #    Animus.Curriculum.Resurrection.*
