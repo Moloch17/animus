@@ -447,6 +447,15 @@ void Animus::Curriculum::StageScenario::AddCoreEpisodeInfo()
     });
     _info.Add("equipped_items", [seat](Env const& env, uint32 index) { return float(seat(env, index).EquippedItems); });
     _info.Add("spell_casts", [seat](Env const& env, uint32 index) { return float(seat(env, index).SpellCasts); });
+    // Durative actions: how many the seat started and how long they ran.
+    _info.Add("options_started", [seat](Env const& env, uint32 index)
+    {
+        return float(seat(env, index).OptionPresses);
+    });
+    _info.Add("option_seconds", [seat](Env const& env, uint32 index)
+    {
+        return float(seat(env, index).OptionMs) / 1000.0f;
+    });
     _info.Add("trinket_uses", [seat](Env const& env, uint32 index) { return float(seat(env, index).TrinketUses); });
     _info.Add("item_uses", [seat](Env const& env, uint32 index) { return float(seat(env, index).ItemUses); });
     _info.Add("class", [seat](Env const& env, uint32 index)
@@ -1406,6 +1415,9 @@ Animus::Curriculum::SeatView Animus::Curriculum::StageScenario::ViewSeat(Env con
     view.Build = &seat.Build;
     view.KnownRanks = &seat.KnownRanks;
     view.Memory = &seat.Memory;
+    // Observing only reads the durative action; applying an action starts, runs and stops it (ApplySeatAction hands
+    // the same seat's own).
+    view.Options = _tuning.Options;
     view.NowMs = env.EpisodeElapsedMs;
     view.LastStepDamage = seat.LastStepDamage;
     view.LastStepPowerDelta = seat.LastStepPowerDelta;
@@ -1488,10 +1500,20 @@ void Animus::Curriculum::StageScenario::ApplySeatAction(Env& env, uint32 seatInd
         action = 0;
 
     SeatView view = ViewSeat(env, seatIndex, bot, target);
+    view.Option = &seat.Option;
     SeatActionResult result;
+    SeatOptionKind const started = seat.Option.Kind;
     SeatEncoder::Apply(view, action, result);
     if (action > 0)
         Press(env, seat, bot, uint32(action));
+
+    // Time a durative action ran, and each one started (the option is set by the action this decision applied).
+    if (seat.Option.Kind != SeatOptionKind::None)
+    {
+        seat.OptionMs += _decisionMs;
+        if (started != seat.Option.Kind)
+            ++seat.OptionPresses;
+    }
 
     seat.TargetSlot = view.TargetSlot;
     seat.FriendSlot = view.FriendSlot;
@@ -1586,7 +1608,9 @@ void Animus::Curriculum::StageScenario::ObserveSeat(Env& env, uint32 seatIndex, 
     if (seat.Memory.Actions() != seat.L->NumActions)
         seat.Memory.Reset(seat.L->NumActions);
     seat.Memory.Observe(bot, target, env.EpisodeElapsedMs);
-    SeatEncoder::Observe(ViewSeat(env, seatIndex, bot, target), obs, mask);
+    SeatView view = ViewSeat(env, seatIndex, bot, target);
+    view.Option = &seat.Option;
+    SeatEncoder::Observe(view, obs, mask);
 
     if (mask)
         for (uint32 action = 1; action < seat.L->NumActions; ++action)

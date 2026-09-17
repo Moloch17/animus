@@ -220,7 +220,7 @@ void Animus::Curriculum::TravelBlock::Observe(SeatView const& view, float* obs, 
         mask[action] = IsAllowed(view, action) ? 1 : 0;
 }
 
-void Animus::Curriculum::TravelBlock::BeforeApply(SeatView& view) const
+void Animus::Curriculum::TravelBlock::BeforeApply(SeatView& view, SeatActionResult& /*result*/) const
 {
     // A cast, a dismount or a lost flying mount leaves no one hanging in the air.
     FallIfAirborne(view.Bot);

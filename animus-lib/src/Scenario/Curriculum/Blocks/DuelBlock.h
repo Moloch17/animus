@@ -117,8 +117,11 @@ namespace Animus::Curriculum
             ACTION_SOULSTONE_SELF       = 13,   // warlocks: soulstone itself
             ACTION_SELF_RESURRECT       = 14,   // dead: use its Soulstone or Reincarnation (not in the PvP stages)
             ACTION_BREAK_LINE_OF_SIGHT  = 15,   // run to the nearest place the target cannot see (a pillar, a hill)
-            ACTION_CALL_BEAST_FIRST     = 16,   // hunters: call stable slot 0..STABLE_SLOTS-1
-            ACTION_COUNT_WITHOUT_STABLE = 16
+            /// A ranged spec: back to casting range whenever the target closes in, decision after decision, until
+            /// Options.KeepRangeMs runs out or the policy does something else (SeatOption).
+            ACTION_KEEP_RANGE           = 16,
+            ACTION_CALL_BEAST_FIRST     = 17,   // hunters: call stable slot 0..STABLE_SLOTS-1
+            ACTION_COUNT_WITHOUT_STABLE = 17
         };
 
         static constexpr float MOVE_TO_RANGE_DISTANCE = 24.0f;
@@ -136,7 +139,7 @@ namespace Animus::Curriculum
         void DescribeManifest(Layout const& layout, boost::json::object& block) const override;
         [[nodiscard]] std::string ActionName(Layout const& layout, uint32 local) const override;
         void Observe(SeatView const& view, float* obs, uint8* mask) const override;
-        void BeforeApply(SeatView& view) const override;
+        void BeforeApply(SeatView& view, SeatActionResult& result) const override;
         void Apply(SeatView& view, uint32 local, SeatActionResult& result) const override;
         [[nodiscard]] bool IsMovement(uint32 local) const override
         {

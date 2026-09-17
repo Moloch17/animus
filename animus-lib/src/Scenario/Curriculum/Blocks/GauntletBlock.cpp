@@ -30,11 +30,30 @@ namespace
 {
     using namespace Animus::Curriculum;
 
+    /// A rest is done once health and mana are at least this full.
+    constexpr float REST_UNTIL_PERCENT = 90.0f;
+
+    /// Health and mana are back (a rest has nothing left to do).
+    bool Recovered(Player const* bot)
+    {
+        uint32 const maxMana = bot->GetMaxPower(POWER_MANA);
+        return bot->GetHealthPct() >= REST_UNTIL_PERCENT
+            && (!maxMana || float(bot->GetPower(POWER_MANA)) * 100.0f / float(maxMana) >= REST_UNTIL_PERCENT);
+    }
+
     bool IsAllowed(SeatView const& view, uint32 action)
     {
         Player* bot = view.Bot;
         if (action >= GauntletBlock::ACTION_COUNT)
             return false;
+
+        if (action == GauntletBlock::ACTION_REST_UNTIL_READY)
+        {
+            // Offered when there is something to restore and something to restore it with, and not while it runs.
+            return !view.Option->Running(SeatOptionKind::RestUntilReady, view.NowMs) && bot->IsAlive()
+                && !bot->IsInCombat() && !Recovered(bot)
+                && (IsAllowed(view, GauntletBlock::ACTION_EAT) || IsAllowed(view, GauntletBlock::ACTION_DRINK));
+        }
 
         bool const eat = action == GauntletBlock::ACTION_EAT;
         uint32 const item = eat ? view.FoodItem : view.DrinkItem;
@@ -85,10 +104,50 @@ void Animus::Curriculum::GauntletBlock::Apply(SeatView& view, uint32 local, Seat
     if (!IsAllowed(view, local))
         return;
 
+    if (local == ACTION_REST_UNTIL_READY)
+    {
+        view.Option->Kind = SeatOptionKind::RestUntilReady;
+        view.Option->UntilMs = view.NowMs + view.Options.RestMaxMs;
+        Rest(view, result);
+        return;
+    }
+
     Player* bot = view.Bot;
     bool const eat = local == ACTION_EAT;
     if (Encoding::UseItemOn(bot, eat ? view.FoodItem : view.DrinkItem, bot))
         ++(eat ? result.FoodUsed : result.DrinkUsed);
     else
         ++(eat ? result.FoodFailed : result.DrinkFailed);
+}
+
+void Animus::Curriculum::GauntletBlock::BeforeApply(SeatView& view, SeatActionResult& result) const
+{
+    if (!view.Option || !view.Option->Running(SeatOptionKind::RestUntilReady, view.NowMs))
+        return;
+
+    // The rest is over once the fight starts, the seat is dead, it is full again, or nothing is left to eat or drink.
+    Player* bot = view.Bot;
+    bool const usable = IsAllowed(view, ACTION_EAT) || IsAllowed(view, ACTION_DRINK)
+        || bot->HasAuraType(SPELL_AURA_MOD_REGEN) || bot->HasAuraType(SPELL_AURA_MOD_POWER_REGEN);
+    if (!bot->IsAlive() || bot->IsInCombat() || Recovered(bot) || !usable)
+    {
+        *view.Option = SeatOption();
+        return;
+    }
+
+    Rest(view, result);
+}
+
+void Animus::Curriculum::GauntletBlock::Rest(SeatView& view, SeatActionResult& result) const
+{
+    // Whichever of the two is missing and can be started now; eating and drinking run side by side.
+    Player* bot = view.Bot;
+    uint32 const maxMana = bot->GetMaxPower(POWER_MANA);
+    bool const fed = bot->GetHealthPct() >= REST_UNTIL_PERCENT || bot->HasAuraType(SPELL_AURA_MOD_REGEN);
+    bool const watered = !maxMana || float(bot->GetPower(POWER_MANA)) * 100.0f / float(maxMana) >= REST_UNTIL_PERCENT
+        || bot->HasAuraType(SPELL_AURA_MOD_POWER_REGEN);
+    if (!fed && IsAllowed(view, ACTION_EAT))
+        Apply(view, ACTION_EAT, result);
+    else if (!watered && IsAllowed(view, ACTION_DRINK))
+        Apply(view, ACTION_DRINK, result);
 }

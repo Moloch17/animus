@@ -83,9 +83,14 @@ void Animus::Curriculum::SeatEncoder::Apply(SeatView& view, int32 action, SeatAc
     if (!view.Target && !view.HiddenTarget && !ActsWithoutTarget(layout))
         return;
 
-    // Every decision, whatever the action (the no-op included).
+    // A durative action runs until the policy does something else: anything but the no-op takes over from it. Its own
+    // action is masked while it runs, so this cannot cancel a press of the option that is already going.
+    if (action > 0 && view.Option)
+        *view.Option = SeatOption();
+
+    // Every decision, whatever the action (the no-op included): this is where a running option acts.
     for (BlockId id : layout.Blocks)
-        GetBlock(id).BeforeApply(view);
+        GetBlock(id).BeforeApply(view, result);
 
     if (action <= 0)
         return;

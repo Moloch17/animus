@@ -21,6 +21,7 @@
 
 #include "Block.h"
 #include "ClassRoleProfile.h"
+#include "CurriculumTuning.h"
 #include "ObjectGuid.h"
 #include "Position.h"
 #include "Supplies.h"
@@ -40,10 +41,39 @@ namespace Animus::Curriculum
 
     /// One bot's situation at a decision: what the blocks cannot read from the world themselves. The scenario fills
     /// it; each part is only used by the blocks that need it.
+    /// What a durative action ("option") the seat started is doing. One press stands for many decisions -- resting
+    /// until it is ready to fight, holding an interrupt for the target's next cast, keeping a caster's distance --
+    /// which is how a plan longer than a decision is expressed at all: 1800 decisions of a 450 s episode are far more
+    /// than credit reaches back over. The block that owns the action starts it, the block that can act runs it every
+    /// decision until its own stop condition or UntilMs, and any other action the policy takes cancels it.
+    enum class SeatOptionKind : uint8
+    {
+        None = 0,
+        RestUntilReady,     // eat and drink between pulls until health and mana are back
+        HoldInterrupt,      // interrupt the target as soon as it casts
+        KeepRange,          // a ranged spec: back to its range whenever the target closes in
+        Count
+    };
+
+    struct SeatOption
+    {
+        SeatOptionKind Kind = SeatOptionKind::None;
+        uint64 UntilMs = 0;                         // the clock (SeatView::NowMs) it runs out at
+
+        [[nodiscard]] bool Running(SeatOptionKind kind, uint64 nowMs) const
+        {
+            return Kind == kind && nowMs < UntilMs;
+        }
+    };
+
     struct SeatView
     {
         Layout const* L = nullptr;
         Player* Bot = nullptr;
+        /// The seat's durative action, to read, start and stop. Null for a view without one.
+        SeatOption* Option = nullptr;
+        /// How long each durative action may run (CurriculumTuning::OptionTuning).
+        CurriculumTuning::OptionTuning Options;
         /// What the actions aim at: the opponent, the selected enemy. May be null (between pulls).
         Unit* Target = nullptr;
         /// The target when the bot can neither see nor detect it (stealth, invisibility). Target is null then, so no
