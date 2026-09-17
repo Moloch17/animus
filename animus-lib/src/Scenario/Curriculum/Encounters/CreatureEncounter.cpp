@@ -1,0 +1,176 @@
+/*
+ * This file is part of the Animus Forge project, based on AzerothCore.
+ * See AUTHORS file for Copyright information.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
+ * more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program. If not, see <http://www.gnu.org/licenses/>.
+ */
+
+#include "Encounters.h"
+#include "CombatReward.h"
+#include "Creature.h"
+#include "Env.h"
+#include "Opponents.h"
+#include "EnvPool.h"
+#include "EpisodeInfoTable.h"
+#include "Log.h"
+#include "Player.h"
+#include "Random.h"
+#include "StageScenario.h"
+
+namespace
+{
+    /// How long a creature duel's opponent may have no path to its victim before it is put beside it (the core evades
+    /// it after 10 s, and it regenerates from 5 s before that).
+    constexpr uint32 UNREACHABLE_TELEPORT_MS = 3000;
+}
+
+std::vector<Animus::Curriculum::RewardTerm> Animus::Curriculum::CreatureEncounter::RewardTerms() const
+{
+    return { RewardTerm::StepCost, RewardTerm::DamageDealt, RewardTerm::DamageTaken, RewardTerm::Casting,
+        RewardTerm::Approach, RewardTerm::StealthOpener, RewardTerm::StealthUtility, RewardTerm::Kill,
+        RewardTerm::HealthKept, RewardTerm::Death, RewardTerm::Timeout, RewardTerm::Stall, RewardTerm::Spacing };
+}
+
+Animus::Curriculum::CreatureEncounter::CreatureEncounter(StageScenario& scenario, uint32 envs)
+    : Encounter(scenario), _envs(envs), _ladder(scenario, "difficulty tier")
+{
+}
+
+void Animus::Curriculum::CreatureEncounter::AddEpisodeInfo(EpisodeInfoTable& table)
+{
+    // The fight's difficulty tier, and whether its opponent was an elite.
+    table.Add("difficulty", [this](Env const& env, uint32) { return float(_envs[env.Index].Tier); });
+    table.Add("opponent_elite", [this](Env const& env, uint32) { return _envs[env.Index].Elite ? 1.0f : 0.0f; });
+}
+
+bool Animus::Curriculum::CreatureEncounter::Build(Env& env, Map* map, uint8 /*level*/)
+{
+    EnvState& data = _scenario.Data(env);
+    Player* bot = _scenario.SeatBot(env, 0);
+    CurriculumTuning::DifficultyTuning const& difficulty = _scenario.Tuning().Difficulty;
+    SeatState const& seat = data.Seats[0];
+
+    // The tier (DifficultyLadder): the one the stage viewer chose, spread over the seeds in an evaluation, the
+    // class/role's own in training (now and then a lower one).
+    EnvFight& fight = _envs[env.Index];
+    fight = EnvFight();
+    fight.Layout = seat.L ? seat.L->Index : 0;
+    DifficultyLadder::Pick const pick = _ladder.Draw(env, fight.Layout, difficulty.MaxTier);
+    fight.Tier = uint8(pick.Tier);
+    fight.Counts = pick.Counts;
+
+    fight.Elite = fight.Tier >= difficulty.EliteTier;
+    uint32 const steps = fight.Elite ? fight.Tier - difficulty.EliteTier : fight.Tier;
+    uint8 const level = uint8(std::min<uint32>(seat.Level + steps * difficulty.LevelsPerTier, DEFAULT_MAX_LEVEL + 3));
+
+    Opponents::OpponentPool const& pool = Opponents::OpponentPool::Instance();
+    data.OpponentEntry = fight.Elite ? pool.RandomElite(level) : 0;
+    if (!data.OpponentEntry)
+    {
+        fight.Elite = false;
+        data.OpponentEntry = pool.Random(level);
+    }
+
+    Creature* opponent = data.OpponentEntry
+        ? Opponents::SummonOpponent(bot, map, data.OpponentEntry, Opponents::FindSpawnPoint(bot, map), level) : nullptr;
+    if (!opponent)
+        return false;
+
+    env.Targets = { opponent->GetGUID() };
+
+    // No pet and no attack: summoning one, stealthing and approaching are all the policy's to learn.
+    _scenario.PrepareFighter(bot, data.Seats[0]);
+    return true;
+}
+
+void Animus::Curriculum::CreatureEncounter::Reward(Env& env, uint32 seat, Player* bot, RewardLedger& ledger)
+{
+    Unit* opponent = env.FindTargetUnit(0);
+    CombatReward::OneOnOne(_scenario, env, seat, bot, opponent, ledger);
+
+    SeatState& seatState = _scenario.Data(env).Seats[seat];
+    CombatTally& tally = seatState.Combat;
+    CurriculumTuning::DuelTuning const& tuning = _scenario.Tuning().Duel;
+    if (bot && opponent && opponent->IsAlive())
+    {
+        uint32 const decisionMs = _scenario.DecisionMs();
+        float const seconds = float(decisionMs) / 1000.0f;
+        Creature* creature = opponent->ToCreature();
+        if (creature && creature->IsInEvadeMode())
+            tally.TargetEvadeMs += decisionMs;
+        if (creature && creature->CanNotReachTarget())
+        {
+            tally.UnreachableMs += decisionMs;
+            tally.UnreachableStreakMs += decisionMs;
+
+            // A creature with no path to its victim regenerates, and evades home at full health after 10 s: a fight
+            // no play can win. Put it beside its victim first, as instance trash does with
+            // Creature.Instance.TeleportToUnreachableTarget.
+            Unit* victim = creature->GetVictim();
+            if (tally.UnreachableStreakMs >= UNREACHABLE_TELEPORT_MS && victim && victim->IsAlive()
+                && victim->IsInMap(creature))
+            {
+                creature->NearTeleportTo(victim->GetPositionX(), victim->GetPositionY(), victim->GetPositionZ(),
+                    victim->GetOrientation());
+                creature->SetCannotReachTarget();
+                tally.UnreachableStreakMs = 0;
+                ++tally.OpponentTeleports;
+            }
+        }
+        else
+            tally.UnreachableStreakMs = 0;
+        if (tally.Engaged && bot->IsAlive() && !bot->IsWithinLOSInMap(opponent))
+            tally.OutOfSightMs += decisionMs;
+
+        // The fight not started once the grace is gone: standing where it spawned is paid for as it happens, not
+        // only when the clock runs out.
+        if (!tally.Engaged && bot->IsAlive() && env.EpisodeElapsedMs > tuning.StallGraceMs)
+            ledger.Add(RewardTerm::Stall, -tuning.Stall * seconds);
+
+        // A ranged spec with the opponent hitting it in melee.
+        if (bot->IsAlive() && seatState.L && seatState.L->Profile->Specs[seatState.Spec].Range != RangeBand::Melee
+            && opponent->GetVictim() == bot && opponent->IsWithinMeleeRange(bot))
+            ledger.Add(RewardTerm::Spacing, -tuning.Spacing * seconds);
+    }
+
+    // The outcome, once: a kill without a death is a win, a death or the clock a loss.
+    EnvFight& fight = _envs[env.Index];
+    if (seat == 0 && !fight.Recorded && (tally.Killed || tally.Died || TimeIsUp(env)))
+    {
+        fight.Recorded = true;
+        if (fight.Counts)
+            _ladder.Record(fight.Layout, fight.Tier, tally.Killed && !tally.Died,
+                _scenario.Tuning().Difficulty.MaxTier);
+    }
+
+    // Out of time with neither side dead: the fight is lost (IsTerminal ends it as a loss, not a cut-off).
+    if (!tally.Killed && !tally.Died && !tally.TimedOut && TimeIsUp(env))
+    {
+        tally.TimedOut = true;
+        ledger.Add(RewardTerm::Timeout, -tuning.Timeout);
+    }
+}
+
+bool Animus::Curriculum::CreatureEncounter::TimeIsUp(Env const& env)
+{
+    return env.EpisodeLengthMs && env.EpisodeElapsedMs >= env.EpisodeLengthMs;
+}
+
+bool Animus::Curriculum::CreatureEncounter::IsTerminal(Env const& env) const
+{
+    // A death ends it once no resurrection of its own is left to wait for. Running out of time ends it too, and as
+    // an outcome: the duel is there to be won, so the learner must not bootstrap past the clock as if the fight went
+    // on.
+    return _scenario.Data(env).Seats[0].Combat.Killed || _scenario.DeadForGood(env, 0) || TimeIsUp(env);
+}
