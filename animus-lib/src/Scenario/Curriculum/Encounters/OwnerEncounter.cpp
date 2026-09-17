@@ -64,6 +64,23 @@ void Animus::Curriculum::OwnerEncounter::AddEpisodeInfo(EpisodeInfoTable& table)
         return float(_envs[env.Index].Seats[seat].ThreatOnBot);
     });
     table.Add("threat_on_owner", [this](Env const& env, uint32) { return float(_envs[env.Index].ThreatOnOwner); });
+
+    // Role checks, as shares so they read alike at every level: how much of the damage the owner took the seat healed
+    // (a healer's job), and how much of the enemies' attention was on the seat rather than the owner (a tank wants it
+    // high, a damage dealer or healer low).
+    table.Add("owner_heal_share", [this](Env const& env, uint32 seat)
+    {
+        EnvOwner const& owner = _envs[env.Index];
+        return owner.DamageTaken
+            ? std::min(1.0f, float(owner.Seats[seat].Healing) / float(owner.DamageTaken)) : 0.0f;
+    });
+    table.Add("threat_share", [this](Env const& env, uint32 seat)
+    {
+        EnvOwner const& owner = _envs[env.Index];
+        uint64 const onSeat = owner.Seats[seat].ThreatOnBot;
+        uint64 const total = onSeat + owner.ThreatOnOwner;
+        return total ? float(onSeat) / float(total) : 0.0f;
+    });
     table.Add("revives", [this](Env const& env, uint32 seat) { return float(_scenario.Data(env).Seats[seat].Revives); });
 }
 

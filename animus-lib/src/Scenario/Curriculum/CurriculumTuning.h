@@ -211,10 +211,15 @@ namespace Animus::Curriculum
             float Interrupt = 0.3f;
             float Kill = 0.5f;
             float StepCost = 0.0002f;           // per decision
-            float Clear = 2.0f;                 // gauntlet and owner stages: each pull cleared
-            float FastPull = 2.0f;              // gauntlet: times 1 - time since the pull engaged / 60 s
-            float HealthKept = 2.0f;            // gauntlet and owner stages: times the health kept through the pull
-            float GauntletDeath = 5.0f;
+            /// Owner arenas (stages 4, 5, 8), win-first as the solo gauntlet: each pull cleared pays Clear plus
+            /// FastPull times 1 - its time since engaged / 60 s, both x OwnerClearScale, and HealthKept times the
+            /// seat's own health kept through it; the seat's death costs GauntletDeath and the owner's Owner.Death. At
+            /// 2 + 2 (doubled), 2 and 5 against an owner's death of 6, a pull cleared was worth more than the owner's
+            /// life, and the seat's own health as much as guarding it.
+            float Clear = 2.5f;
+            float FastPull = 0.5f;
+            float HealthKept = 0.5f;
+            float GauntletDeath = 10.0f;
             /// A single pack is won or lost, as the duel is: the clear outweighs finishing it untouched, and dying or
             /// running out of time costs as much as the clear pays. Clear and HealthKept had the pack worth 2 + 2, so
             /// keeping health paid as much as winning, and a death cost only 3.
@@ -270,6 +275,14 @@ namespace Animus::Curriculum
             uint32 NextPullShrinkMs = 1000;
             uint32 NextPullFloorMs = 4000;
             float OwnerClearScale = 2.0f;       // owner stages: kills and clears count this many times
+            /// Owner arenas keep what the solo gauntlet teaches: readiness paid when a pull is engaged (the lower of
+            /// health and mana), crowd control that keeps an add out of the fight (per enemy-second, capped per pull),
+            /// and a win: lasting to the end with the owner never dead, no wipe and OwnerWinPulls pulls cleared,
+            /// counted as the kill so clean_kill is the gauntlet won beside the owner.
+            float OwnerReadiness = 0.5f;
+            float OwnerControl = 0.02f;
+            float OwnerControlMax = 1.5f;
+            uint32 OwnerWinPulls = 5;
         } Pulls;
 
         /// The scripted owner of the companion and party stages.
@@ -292,7 +305,7 @@ namespace Animus::Curriculum
             float FollowNear = 0.0005f;         // per decision out of combat within FollowNearDistance
             float FollowFarDistance = 25.0f;
             float FollowNearDistance = 12.0f;
-            float Death = 6.0f;
+            float Death = 15.0f;                // per owner death, every seat: more than the seat's own (GauntletDeath)
         } Owner;
 
         /// Resurrecting: a seat's own Soulstone or Reincarnation, and revives on allies (companion and party stages).
@@ -502,6 +515,10 @@ namespace Animus::Curriculum
             f("Pulls.NextPullShrinkMs", tuning.Pulls.NextPullShrinkMs);
             f("Pulls.NextPullFloorMs", tuning.Pulls.NextPullFloorMs);
             f("Pulls.OwnerClearScale", tuning.Pulls.OwnerClearScale);
+            f("Pulls.OwnerReadiness", tuning.Pulls.OwnerReadiness);
+            f("Pulls.OwnerControl", tuning.Pulls.OwnerControl);
+            f("Pulls.OwnerControlMax", tuning.Pulls.OwnerControlMax);
+            f("Pulls.OwnerWinPulls", tuning.Pulls.OwnerWinPulls);
 
             f("Owner.LevelSpread", tuning.Owner.LevelSpread);
             f("Owner.TankChance", tuning.Owner.TankChance);
