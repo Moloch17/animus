@@ -41,7 +41,7 @@ Game master commands, not available from the console.
 | `.animus dismiss` | Remove all your companions |
 | `.animus stage list` | Every curriculum stage and its arenas |
 | `.animus stage open <stage> [policy] [arena]` | Build a stage in your own instance and spawn its first episode, frozen. `policy` is `model` (the default), `random`, `greedy` or `fight` |
-| `.animus stage spawn [tier] [class_role] [level]` | Replace the episode with a new one, frozen: a difficulty tier (stages that fight one creature), what the first seat plays (`warlock_dps`), every character's level. Each is `any` or left out for the curriculum's own, and holds for later episodes |
+| `.animus stage spawn [tier] [class_role] [level]` | Replace the episode with a new one, frozen: a difficulty tier (stages that fight one creature or one pack), what the first seat plays (`warlock_dps`), every character's level. Each is `any` or left out for the curriculum's own, and holds for later episodes |
 | `.animus stage start` | Let it play: episodes follow one another until `stop` |
 | `.animus stage stop` | Freeze everything where it is |
 | `.animus stage status` | The open stage: frozen or playing, episode, arena, spawn choices, seats and their models |

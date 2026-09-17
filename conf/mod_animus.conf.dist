@@ -349,6 +349,9 @@ Animus.Curriculum.Pulls.PackClear = 10.0
 Animus.Curriculum.Pulls.FastClear = 1.0
 Animus.Curriculum.Pulls.PackHealthKept = 0.5
 Animus.Curriculum.Pulls.PackDeath = 10.0
+#   pack: the single pack's top ladder rung (0-5: 2, 3, 4 creatures with a caster, two casters, an elite, an elite a
+#   level above), climbed per class/role at the Difficulty.* rates; 0 keeps every pack on the first rung
+Animus.Curriculum.Pulls.MaxTier = 5
 Animus.Curriculum.Pulls.Timeout = 10.0
 #   pack: per second a fight goes on past OvertimeGraceMs after it was engaged, and a death in overtime is charged the
 #   overtime left; a timeout alone, 150 s away, is too discounted to stop kiting out the clock

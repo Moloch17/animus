@@ -76,8 +76,9 @@ namespace Animus
         Status Update(uint32 diff, ModelLibrary& models);
 
         /// Remove the current episode and spawn a new one, frozen. `tier` (a difficulty tier of a stage that fights a
-        /// creature), `classRole` (warlock_dps, ...) and `level` choose that part of it, and of every episode after it;
-        /// empty or "any" leaves it to the curriculum. False with `message` set when refused.
+        /// creature, a ladder rung of one that fights a pack), `classRole` (warlock_dps, ...) and `level` choose that
+        /// part of it, and of every episode after it; empty or "any" leaves it to the curriculum. False with `message`
+        /// set when refused.
         bool Spawn(std::string_view tier, std::string_view classRole, std::string_view level, ModelLibrary& models,
             std::string& message);
 

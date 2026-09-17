@@ -123,9 +123,9 @@ namespace
         }
 
         /// .animus stage spawn [tier] [class_role] [level]: remove the episode and spawn a new one, frozen. tier: a
-        /// difficulty tier of a stage that fights a creature; class_role: what the first seat plays (warlock_dps);
-        /// level: every character's level. Each is "any" or left out for the curriculum's own, and holds for the
-        /// episodes after it.
+        /// difficulty tier of a stage that fights a creature or a pack; class_role: what the first seat plays
+        /// (warlock_dps); level: every character's level. Each is "any" or left out for the curriculum's own, and holds
+        /// for the episodes after it.
         static bool HandleStageSpawnCommand(ChatHandler* handler, Optional<std::string_view> tier,
             Optional<std::string_view> classRole, Optional<std::string_view> level)
         {

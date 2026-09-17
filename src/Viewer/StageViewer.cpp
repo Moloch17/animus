@@ -314,21 +314,34 @@ bool Animus::StageViewer::Spawn(std::string_view tier, std::string_view classRol
     uint32 chosenTier = NO_TIER;
     if (!tier.empty() && tier != ANY)
     {
+        // The creature duel's tiers and the single pack's ladder rungs.
         auto const fightsCreature = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Creature; };
-        bool const tiered = _arena < _stage->Arenas.size() ? fightsCreature(_stage->Arenas[_arena])
-            : _stage->AnyArena(fightsCreature);
-        uint32 const maxTier = _scenario->Tuning().Difficulty.MaxTier;
-        std::optional<uint32> const number = ParseNumber(tier);
-        if (!tiered)
+        auto const singlePack = [](ArenaDefinition const& arena)
         {
-            message = Acore::StringFormat("{} has no difficulty tiers (only a stage that fights one creature has): "
-                "use any.", _stage->Name);
+            return arena.Against == Opposition::Pulls && arena.Schedule == PullSchedule::SinglePack && !arena.Owner;
+        };
+        auto const anyArena = [this](auto const& predicate)
+        {
+            return _arena < _stage->Arenas.size() ? predicate(_stage->Arenas[_arena]) : _stage->AnyArena(predicate);
+        };
+        bool const duel = anyArena(fightsCreature);
+        bool const pack = anyArena(singlePack);
+        CurriculumTuning const& tuning = _scenario->Tuning();
+        uint32 const maxTier = std::max(duel ? tuning.Difficulty.MaxTier : 0, pack ? tuning.Pulls.MaxTier : 0);
+        std::optional<uint32> const number = ParseNumber(tier);
+        if (!duel && !pack)
+        {
+            message = Acore::StringFormat("{} has no difficulty tiers (only a stage that fights one creature or one "
+                "pack has): use any.", _stage->Name);
             return false;
         }
         if (!number || *number > maxTier)
         {
-            message = Acore::StringFormat("The tier is 0 to {} or any: below {} a normal creature that many levels "
-                "above the character, from it an elite.", maxTier, _scenario->Tuning().Difficulty.EliteTier);
+            message = duel
+                ? Acore::StringFormat("The tier is 0 to {} or any: below {} a normal creature that many levels above "
+                    "the character, from it an elite.", maxTier, tuning.Difficulty.EliteTier)
+                : Acore::StringFormat("The tier is 0 to {} or any: the pack ladder's rung (2, 3 and 4 creatures, two "
+                    "casters, then an elite, then a level more).", maxTier);
             return false;
         }
         chosenTier = *number;
