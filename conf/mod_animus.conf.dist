@@ -272,6 +272,10 @@ Animus.Curriculum.Casting.TimeCompleted = 0.03
 Animus.Curriculum.Casting.Cancel = 0.05
 #   every stage, per decision: the bot's effective healing on itself plus what its own absorbs soaked and damage-taken
 #   reductions prevented on itself, as a fraction of its health; below every DamageTaken so it never pays to be hit
+#   per decision whose actions matched the goal the learner is pursuing for the seat (fight, control, recover,
+#   protect, position, prepare). Small on purpose: it keeps the goals apart so a goal head cannot collapse into one
+#   goal, rather than paying for play the stage's own terms already price
+Animus.Curriculum.Goals.Match = 0.01
 Animus.Curriculum.Support.SelfHealing = 0.5
 #   gauntlets: engaging a pull pays this times the share of the class's buff groups up on the bot (and the owner)
 Animus.Curriculum.Support.BuffCoverage = 0.3
@@ -405,6 +409,10 @@ Animus.Curriculum.Pulls.ArriveFloorMs = 10000
 #   solo gauntlet: the break before the next pull shrinks by this per pull cleared, down to NextPullFloorMs (ms)
 Animus.Curriculum.Pulls.NextPullShrinkMs = 1000
 Animus.Curriculum.Pulls.NextPullFloorMs = 4000
+#   gauntlets: what the per-hit terms (damage dealt and taken, kills, approach) are multiplied by there. A plan pays
+#   at the end of a pull or an episode -- the clear, surviving, readiness, control -- and dense terms paid every
+#   decision drown those out. 1 leaves the single pack's balance alone
+Animus.Curriculum.Pulls.GauntletDenseScale = 0.5
 #   owner stages: kills and clears count this many times
 Animus.Curriculum.Pulls.OwnerClearScale = 2.0
 #   owner stages keep the solo gauntlet's lessons: readiness paid when a pull is engaged (times the lower of health and
