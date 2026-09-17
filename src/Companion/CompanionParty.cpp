@@ -511,6 +511,8 @@ void Animus::CompanionParty::Decide(Member& member, Player* bot, Player* owner, 
         return;
 
     int32 const action = policy.Decide(member.Obs.data(), member.Mask.data(), &member.Policy);
+    // What it is pursuing, for its teammates to see, as a forge party seat's goal reaches the others.
+    member.Goal = policy.GoalCount() ? int32(member.Policy.Goal) : Curriculum::NO_GOAL;
 
     SeatActionResult result;
     SeatEncoder::Apply(view, action, result);
@@ -614,7 +616,8 @@ Animus::Curriculum::SeatView Animus::CompanionParty::View(Member const& member, 
         if (teammate && (!teammate->IsInWorld() || teammate->GetMap() != bot->GetMap()))
             teammate = nullptr;
 
-        view.Teammates[slot++] = { teammate, other->L->PlayRole(), other->L->Profile->Class };
+        // The goal a teammate is pursuing, as a forge party seat sees it: what its own model last chose.
+        view.Teammates[slot++] = { teammate, other->Goal, other->L->PlayRole(), other->L->Profile->Class };
     }
 
     // As the forge's PartyTank: the first living tank of the party, the bot itself included.

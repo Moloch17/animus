@@ -134,6 +134,7 @@ namespace Animus
             Curriculum::SeatMemory Memory;      // pacing, and what it has been doing (as a forge seat's)
             Curriculum::SeatOption Option;      // the durative action it is running (rest, hold an interrupt, ...)
             MlpPolicy::State Policy;            // what its model carries between decisions (memory, goal)
+            int32 Goal = Curriculum::NO_GOAL;   // ... the goal of it, as its teammates see it
             bool ModelErrorLogged = false;
             bool Parked = false;                // out of the world while the owner flies or rides a vehicle
         };
