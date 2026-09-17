@@ -155,6 +155,8 @@ namespace Animus::Curriculum
             uint32 MealsCutShort = 0;           // food or drink ended early with health or mana still to restore
             int32 FoodLeftMs = -1;              // the food aura's remaining time last decision; -1 without one ...
             int32 DrinkLeftMs = -1;             // ... and the drink's
+            uint32 ControlMs = 0;               // enemy-time kept out of the fight by crowd control (solo gauntlet)
+            float PullControlPaid = 0.0f;       // ... and the control reward paid for the current pull
         };
 
         struct EnvPulls
@@ -196,8 +198,8 @@ namespace Animus::Curriculum
             return Gauntlet(env) && !_scenario.Arena(env).Owner;
         }
 
-        /// A solo gauntlet's per-decision terms: its survival counted as the kill, stall and spacing.
-        void GauntletAloneTerms(Env& env, SeatState& seat, Player* bot, RewardLedger& ledger);
+        /// A solo gauntlet's per-decision terms: its survival counted as the kill, stall, spacing and control.
+        void GauntletAloneTerms(Env& env, SeatState& seat, SeatPull& pull, Player* bot, RewardLedger& ledger);
         /// A solo gauntlet's pull nobody engaged in time walks over to the seat.
         void SendPull(Env& env);
         /// Food and drink stocked, each: Pulls.GauntletSupplies alone, else CONSUMABLE_COUNT.

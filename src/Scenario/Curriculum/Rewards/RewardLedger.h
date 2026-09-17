@@ -65,6 +65,7 @@ namespace Animus::Curriculum
         Stall,
         Spacing,
         Readiness,
+        Control,
         Repeat,
         Count
     };

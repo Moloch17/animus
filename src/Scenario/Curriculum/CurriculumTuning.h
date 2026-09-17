@@ -253,6 +253,13 @@ namespace Animus::Curriculum
             /// by staying away from it.
             uint32 SoloGauntletWinPulls = 5;
             uint32 GauntletSupplies = 7;        // solo gauntlet: food and drink stocked, each
+            /// Solo gauntlet: per second per pack member kept out of the fight once the pull is engaged -- stunned,
+            /// incapacitated, asleep, polymorphed, feared, or rooted out of melee reach and not casting -- other than
+            /// the seat's target, while another member is alive. It stops when the control breaks, so controlling an
+            /// add and hitting it pays nothing. At most SoloGauntletControlMax per pull: a fight isn't worth dragging
+            /// out for it.
+            float SoloGauntletControl = 0.02f;
+            float SoloGauntletControlMax = 1.5f;
             /// Solo gauntlet pacing. A pull nobody has engaged comes to the seat ArriveMinMs-ArriveMaxMs after it
             /// spawns, so resting has a clock; each pull cleared brings the next one sooner (ArriveShrinkMs, down to
             /// ArriveFloorMs) and shortens the break before it (NextPullShrinkMs, down to NextPullFloorMs).
@@ -486,6 +493,8 @@ namespace Animus::Curriculum
             f("Pulls.SoloGauntletReadiness", tuning.Pulls.SoloGauntletReadiness);
             f("Pulls.SoloGauntletWinPulls", tuning.Pulls.SoloGauntletWinPulls);
             f("Pulls.GauntletSupplies", tuning.Pulls.GauntletSupplies);
+            f("Pulls.SoloGauntletControl", tuning.Pulls.SoloGauntletControl);
+            f("Pulls.SoloGauntletControlMax", tuning.Pulls.SoloGauntletControlMax);
             f("Pulls.ArriveMinMs", tuning.Pulls.ArriveMinMs);
             f("Pulls.ArriveMaxMs", tuning.Pulls.ArriveMaxMs);
             f("Pulls.ArriveShrinkMs", tuning.Pulls.ArriveShrinkMs);

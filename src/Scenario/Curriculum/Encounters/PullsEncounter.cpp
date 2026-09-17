@@ -139,7 +139,10 @@ std::vector<Animus::Curriculum::RewardTerm> Animus::Curriculum::PullsEncounter::
         RewardTerm::Interrupt, RewardTerm::Kill, RewardTerm::Clear, RewardTerm::HealthKept, RewardTerm::Death,
         RewardTerm::Timeout, RewardTerm::Stall, RewardTerm::Spacing };
     if (AnyGauntlet())
+    {
         terms.push_back(RewardTerm::Readiness);
+        terms.push_back(RewardTerm::Control);
+    }
     return terms;
 }
 
@@ -219,6 +222,10 @@ void Animus::Curriculum::PullsEncounter::AddEpisodeInfo(EpisodeInfoTable& table)
         table.Add("meals_cut_short", [this](Env const& env, uint32 seat)
         {
             return float(_envs[env.Index].Seats[seat].MealsCutShort);
+        });
+        table.Add("control_seconds", [this](Env const& env, uint32 seat)
+        {
+            return float(_envs[env.Index].Seats[seat].ControlMs) / 1000.0f;
         });
     }
 
@@ -400,6 +407,7 @@ bool Animus::Curriculum::PullsEncounter::SpawnPull(Env& env, Map* map)
         data.Seats[seat].TargetSlot = 0;
         data.Seats[seat].Combat.LastDistance = -1.0f;
         pulls.Seats[seat].PullDamageTaken = 0;
+        pulls.Seats[seat].PullControlPaid = 0.0f;
         if (Player* bot = env.FindBot(seat))
         {
             pulls.Seats[seat].ReadyHealth = HealthFraction(bot);
@@ -833,7 +841,7 @@ void Animus::Curriculum::PullsEncounter::Reward(Env& env, uint32 seatIndex, Play
 
     if (SoloGauntlet(env))
     {
-        GauntletAloneTerms(env, seat, bot, ledger);
+        GauntletAloneTerms(env, seat, pull, bot, ledger);
         return;
     }
 
@@ -879,7 +887,8 @@ void Animus::Curriculum::PullsEncounter::Reward(Env& env, uint32 seatIndex, Play
     }
 }
 
-void Animus::Curriculum::PullsEncounter::GauntletAloneTerms(Env& env, SeatState& seat, Player* bot, RewardLedger& ledger)
+void Animus::Curriculum::PullsEncounter::GauntletAloneTerms(Env& env, SeatState& seat, SeatPull& pull, Player* bot,
+    RewardLedger& ledger)
 {
     EnvPulls const& pulls = _envs[env.Index];
     CombatTally& tally = seat.Combat;
@@ -920,6 +929,42 @@ void Animus::Curriculum::PullsEncounter::GauntletAloneTerms(Env& env, SeatState&
 
         if (meleed)
             ledger.Add(RewardTerm::Spacing, -tuning.Spacing * seconds);
+    }
+
+    if (!pulls.PullEngaged)
+        return;
+
+    // Control: pack members other than the target kept out of the fight while another member is alive.
+    Unit const* target = env.FindTargetUnit(seat.TargetSlot);
+    uint32 alive = 0;
+    uint32 controlled = 0;
+    for (uint32 slot = 0; slot < env.Targets.size(); ++slot)
+    {
+        Unit* enemy = env.FindTargetUnit(slot);
+        if (!enemy || !enemy->IsAlive())
+            continue;
+
+        ++alive;
+        if (enemy->IsPlayer() || enemy == target)
+            continue;
+
+        Unit const* victim = enemy->GetVictim();
+        bool const rootedAway = enemy->HasUnitState(UNIT_STATE_ROOT) && !enemy->IsNonMeleeSpellCast(false)
+            && (!victim || !enemy->IsWithinMeleeRange(victim));
+        if (enemy->HasUnitState(UNIT_STATE_CONTROLLED) || enemy->HasAuraType(SPELL_AURA_TRANSFORM) || rootedAway)
+            ++controlled;
+    }
+
+    if (!controlled || alive < 2)
+        return;
+
+    pull.ControlMs += controlled * _scenario.DecisionMs();
+    float const pay = std::min(tuning.SoloGauntletControl * seconds * float(controlled),
+        std::max(0.0f, tuning.SoloGauntletControlMax - pull.PullControlPaid));
+    if (pay > 0.0f)
+    {
+        pull.PullControlPaid += pay;
+        ledger.Add(RewardTerm::Control, pay);
     }
 }
 
