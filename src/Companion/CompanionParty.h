@@ -114,6 +114,8 @@ namespace Animus
             ObjectGuid LastPetGuid;             // the pet given its default stance (PetBlock::DefaultStance)
 
             uint32 TargetSlot = 0;
+            uint32 FriendSlot = Curriculum::FRIEND_SELF;    // the support block's selected friend and heal rank tier
+            uint32 RankTier = 0;
             uint32 SinceDecisionMs = 0;
             uint32 DeadMs = 0;
             bool InCombat = false;

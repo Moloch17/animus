@@ -270,6 +270,11 @@ Animus.Curriculum.Casting.TimeCompleted = 0.03
 #   per cast the bot cut short itself, whatever it had spent on it; TimeWasted alone charges by the second, so
 #   stopping a cast the decision after starting it is nearly free and a deterministic policy can loop on it
 Animus.Curriculum.Casting.Cancel = 0.05
+#   every stage, per decision: the bot's effective healing on itself plus what its own absorbs soaked and damage-taken
+#   reductions prevented on itself, as a fraction of its health; below every DamageTaken so it never pays to be hit
+Animus.Curriculum.Support.SelfHealing = 0.5
+#   gauntlets: engaging a pull pays this times the share of the class's buff groups up on the bot (and the owner)
+Animus.Curriculum.Support.BuffCoverage = 0.3
 
 #
 #    Animus.Curriculum.Actions.*

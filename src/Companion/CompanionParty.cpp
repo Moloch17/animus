@@ -508,6 +508,8 @@ void Animus::CompanionParty::Decide(Member& member, Player* bot, Player* owner, 
     if (action > 0)
         member.Memory.Press(layout, uint32(action), _nowMs, settings.Actions, bot, nullptr);
     member.TargetSlot = view.TargetSlot;
+    member.FriendSlot = view.FriendSlot;
+    member.RankTier = view.RankTier;
 
     if (result.CallBeast && CallHunterBeast(bot, result.CallBeast))
         Encoding::StartCallBeastCooldown(bot);
@@ -569,6 +571,8 @@ Animus::Curriculum::SeatView Animus::CompanionParty::View(Member const& member, 
     view.EnemyCount = uint32(_enemies.size());
     view.Enemies = _enemyUnits;
     view.TargetSlot = member.TargetSlot;
+    view.FriendSlot = member.FriendSlot;
+    view.RankTier = member.RankTier;
 
     if (layout.Has(BlockId::Gauntlet))
     {
