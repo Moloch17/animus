@@ -79,7 +79,7 @@ namespace
             .Suffix = "_gauntlet",
             .Extends = "stage2_pack",
             .Summary = "pull after pull with short breaks: heals, food and drink",
-            .Blocks = { Core, Duel, Pet, Pack, Gauntlet },
+            .Blocks = { Core, Duel, Pet, Pack, Gauntlet, Support },
             // 450 s: pull after pull is the point. At the host's 60 s a break of 8-20 s before each pull left two or
             // three of them, with nothing to recover for. Pulls come to the seat when it waits too long and come
             // sooner as it clears them, so seven and a half minutes hold eight or more, and the solo gauntlet is won
@@ -93,7 +93,7 @@ namespace
             .Suffix = "_companion",
             .Extends = "stage3_gauntlet",
             .Summary = "the gauntlet beside a scripted owner: follow, assist, guard and heal it",
-            .Blocks = { Core, Duel, Pet, Pack, Gauntlet, Companion },
+            .Blocks = { Core, Duel, Pet, Pack, Gauntlet, Companion, Support },
             // 450 s, as the solo gauntlet: without its own length the arena took the host's 60 s, two or three pulls
             // with nothing to recover for and no win to reach (Pulls.OwnerWinPulls).
             .Arenas = { { .Name = "companion", .Against = Opposition::Pulls, .Schedule = PullSchedule::Gauntlet,
@@ -105,7 +105,7 @@ namespace
             .Suffix = "_party",
             .Extends = "stage4_companion",
             .Summary = "four learned seats and the scripted owner against elite-heavy pulls",
-            .Blocks = { Core, Duel, Pet, Pack, Gauntlet, Companion, Party },
+            .Blocks = { Core, Duel, Pet, Pack, Gauntlet, Companion, Party, Support },
             .Arenas = { { .Name = "party", .Seats = SeatPlan::Party, .Against = Opposition::Pulls,
                 .Schedule = PullSchedule::Gauntlet, .Owner = true, .PartyGroup = true, .EpisodeSeconds = 450 } },
         });
@@ -142,7 +142,7 @@ namespace
                 "stage7_arena", "stage6_pvp", "stage4_companion", "stage3_gauntlet", "stage1_duel",
             },
             .Summary = "PvE and PvP in one policy: every earlier situation, an ambush mid-gauntlet and a ganked owner",
-            .Blocks = { Core, Duel, Pet, Pack, Gauntlet, Companion, Party, Pvp, Context, Hostiles },
+            .Blocks = { Core, Duel, Pet, Pack, Gauntlet, Companion, Party, Pvp, Context, Hostiles, Support },
             .Arenas = {
                 { .Name = "companion", .Weight = 20, .Against = Opposition::Pulls, .Schedule = PullSchedule::Gauntlet,
                     .Owner = true, .EpisodeSeconds = 300 },

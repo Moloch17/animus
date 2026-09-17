@@ -129,6 +129,26 @@ namespace Animus::Curriculum
         bool InCombat = false;
         uint32 CombatStartMs = 0;               // episode time the bot entered its current combat
         uint32 TargetSlot = 0;                  // the selected enemy (pulls)
+        uint32 FriendSlot = FRIEND_SELF;        // the selected friend (support block)
+        uint32 RankTier = 0;                    // the heals' rank tier (support block)
+
+        /// An absorb the bot keeps on a friend, as it was at the last reward: what it soaked since is read from how
+        /// much it lost, or from its disappearing early.
+        struct AbsorbTrack
+        {
+            ObjectGuid Unit;
+            uint32 SpellId = 0;
+            int32 Amount = 0;
+            int32 DurationLeftMs = 0;
+        };
+        std::vector<AbsorbTrack> Absorbs;
+
+        // Support (every stage): wasted and deliberate casts, and time any friend spent low.
+        uint32 HealsOnFull = 0;
+        uint32 DefensiveCasts = 0;
+        uint32 HealingCasts = 0;
+        uint32 DownrankedCasts = 0;
+        uint32 LowHealthMs = 0;
 
         // Where the bot last saw its target, for when the target hides (SeatView::HiddenTarget).
         ObjectGuid LastSeenGuid;
@@ -180,6 +200,14 @@ namespace Animus::Curriculum
             InCombat = false;
             CombatStartMs = 0;
             TargetSlot = 0;
+            FriendSlot = FRIEND_SELF;
+            RankTier = 0;
+            Absorbs.clear();
+            HealsOnFull = 0;
+            DefensiveCasts = 0;
+            HealingCasts = 0;
+            DownrankedCasts = 0;
+            LowHealthMs = 0;
             LastSeenGuid.Clear();
             LastSeenMs = 0;
             Supplies = BattleSupplies();

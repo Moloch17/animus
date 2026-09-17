@@ -169,7 +169,8 @@ void Animus::Curriculum::PartyEncounter::Reward(Env& env, uint32 seatIndex, Play
         Role const teammateRole = data.Seats[teammateSeat].L->PlayRole();
         float const health = float(std::max<uint32>(1, teammate->GetMaxHealth()));
         uint64 const taken = env.StepStats[teammateSeat].DamageTaken;
-        uint64 const healed = step.AgentHealingBy[teammateSeat];
+        // Healing, and what the seat's absorbs soaked and its reductions prevented on the teammate, count alike.
+        uint64 const healed = step.AgentHealingBy[teammateSeat] + step.AgentProtectionBy[teammateSeat];
 
         seat.TeammateDamageTaken += taken;
         seat.TeammateHealing += healed;

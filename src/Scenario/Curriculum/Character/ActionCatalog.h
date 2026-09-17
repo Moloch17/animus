@@ -71,7 +71,13 @@ namespace Animus::Curriculum
             /// after the lists are built; the brace initialisers above it are positional.
             uint32 Index = 0;
             Group From = Group::None;
-            bool Disabled = false;      // Spell: never allowed (IsSelfControlSpell)
+            // Spell kinds the masks, rewards and reports read (derived from the first rank's effects):
+            bool Healing = false;       // heals, heals over time or absorbs (IsHealingSpell)
+            bool Rankable = false;      // ... with more than one rank: cast at the seat's rank tier (SupportBlock)
+            bool DirectHeal = false;    // a single-target heal with nothing else to it (IsDirectHealSpell)
+            bool KeepsAura = false;     // an aura kept up on one unit: HoT, shield, buff, defensive (KeepsAuraSpell)
+            bool Defensive = false;     // a short damage reduction or immunity (IsDefensiveSpell)
+            bool LongBuff = false;      // a buff of ten minutes or more (IsLongBuff)
         };
 
         ActionCatalog(uint8 playerClass, ClassKit const& kit, TalentBuilder const& talents);
@@ -102,11 +108,26 @@ namespace Animus::Curriculum
         [[nodiscard]] static bool IsSustainSpell(SpellInfo const* info);
 
         /// Whether the spell only puts a control effect (stun, confusion, fear, root, silence, pacify, transform)
-        /// on its caster. Grovel (7267, from the hidden GENERIC (DND) skill every character has) is one:
-        /// IsTacticalSpell took its stun for crowd control, so it is an action in every layout, and stage 3's policy
-        /// learned to press it about 15 times an episode. Such an action is never allowed; it keeps its slot so the
-        /// layouts' shapes, and every checkpoint and exported model, stay valid.
+        /// on its caster. Grovel (7267, from the hidden GENERIC (DND) skill every character has) is one: its stun
+        /// looked like crowd control, so it was an action in every layout, and stage 3's policy learned to press it
+        /// about 15 times an episode. No such spell is in the catalog.
         [[nodiscard]] static bool IsSelfControlSpell(SpellInfo const* info);
+
+        /// Heals, heal-over-time and absorb effects (SPELL_EFFECT_HEAL*, PERIODIC_HEAL, OBS_MOD_HEALTH, SCHOOL_ABSORB).
+        [[nodiscard]] static bool IsHealingSpell(SpellInfo const* info);
+        /// A positive heal on one unit and nothing else: no heal over time, absorb, area or damage part. Casting it
+        /// on a unit at full health only overheals.
+        [[nodiscard]] static bool IsDirectHealSpell(SpellInfo const* info);
+        /// A positive short damage reduction or immunity: damage taken lowered by a percentage, school or damage
+        /// immunity, split damage, dodge, parry or block raised, for less than five minutes.
+        [[nodiscard]] static bool IsDefensiveSpell(SpellInfo const* info);
+        /// A positive buff of ten minutes or more with no heal, damage, form or stealth to it (Fortitude, Mark of the
+        /// Wild, blessings, armors, Inner Fire).
+        [[nodiscard]] static bool IsLongBuff(SpellInfo const* info);
+        /// A positive aura put on one unit (not an area aura) and kept up there: a heal over time, an absorb, a long
+        /// buff or a defensive, that does not stack. Re-casting it while the caster's own copy has plenty left
+        /// wastes the cast (SupportBlock's refresh mask).
+        [[nodiscard]] static bool KeepsAuraSpell(SpellInfo const* info);
 
         /// Whether casting the spell on a casting target stops the cast (interrupt, stun, silence, ...).
         [[nodiscard]] static bool IsInterruptingSpell(SpellInfo const* info);

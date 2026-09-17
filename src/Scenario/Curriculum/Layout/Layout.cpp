@@ -24,11 +24,77 @@
 #include <boost/json/array.hpp>
 #include <boost/json/object.hpp>
 #include <boost/json/serialize.hpp>
+#include <algorithm>
+#include <map>
+#include <set>
 
 namespace
 {
     /// Manifest format: 3 lists blocks generically (format 2 had one fixed field per stage block).
     constexpr uint32 MANIFEST_FORMAT = 3;
+
+    /// The catalog's long buffs, grouped by what a unit can have at once: chains joined when any of their ranks share
+    /// a spell group (spell_group, whose stack rules keep one of them per target) or an exclusive kind (a seal, an
+    /// armor, an elemental shield: SpellInfo::GetSpellSpecific), each group listing every rank.
+    std::vector<std::vector<uint32>> BuffGroupsOf(Animus::Curriculum::ActionCatalog const& catalog)
+    {
+        struct Chain
+        {
+            std::vector<uint32> Ranks;
+            std::set<uint32> Groups;
+            SpellSpecificType Specific = SPELL_SPECIFIC_NORMAL;
+        };
+
+        std::vector<Chain> chains;
+        for (Animus::Curriculum::ActionCatalog::Action const& action : catalog.Actions())
+        {
+            if (action.Type != Animus::Curriculum::ActionCatalog::Kind::Spell || !action.LongBuff)
+                continue;
+
+            Chain chain;
+            if (SpellInfo const* first = sSpellMgr->GetSpellInfo(action.FirstRank))
+                chain.Specific = first->GetSpellSpecific();
+            for (SpellInfo const* rank = sSpellMgr->GetSpellInfo(action.FirstRank); rank;
+                rank = rank->GetNextRankSpell())
+            {
+                chain.Ranks.push_back(rank->Id);
+                auto const bounds = sSpellMgr->GetSpellSpellGroupMapBounds(rank->Id);
+                for (auto itr = bounds.first; itr != bounds.second; ++itr)
+                    chain.Groups.insert(uint32(itr->second));
+            }
+            chains.push_back(std::move(chain));
+        }
+
+        // Union chains that share a group, until nothing joins.
+        std::vector<uint32> parent(chains.size());
+        for (uint32 i = 0; i < parent.size(); ++i)
+            parent[i] = i;
+        auto const root = [&parent](uint32 i)
+        {
+            while (parent[i] != i)
+                i = parent[i] = parent[parent[i]];
+            return i;
+        };
+
+        for (uint32 i = 0; i < chains.size(); ++i)
+            for (uint32 j = i + 1; j < chains.size(); ++j)
+                if ((chains[i].Specific != SPELL_SPECIFIC_NORMAL && chains[i].Specific == chains[j].Specific)
+                    || std::any_of(chains[i].Groups.begin(), chains[i].Groups.end(),
+                        [&](uint32 group) { return chains[j].Groups.contains(group); }))
+                    parent[root(j)] = root(i);
+
+        std::map<uint32, std::vector<uint32>> groups;
+        for (uint32 i = 0; i < chains.size(); ++i)
+        {
+            std::vector<uint32>& ranks = groups[root(i)];
+            ranks.insert(ranks.end(), chains[i].Ranks.begin(), chains[i].Ranks.end());
+        }
+
+        std::vector<std::vector<uint32>> result;
+        for (auto& [id, ranks] : groups)
+            result.push_back(std::move(ranks));
+        return result;
+    }
 }
 
 std::string_view Animus::Curriculum::BlockName(BlockId id)
@@ -47,6 +113,7 @@ std::string_view Animus::Curriculum::BlockName(BlockId id)
         case BlockId::Pet:       return "pet";
         case BlockId::Travel:    return "travel";
         case BlockId::Flag:      return "flag";
+        case BlockId::Support:   return "support";
         case BlockId::Count:     break;
     }
 
@@ -71,27 +138,12 @@ Animus::Curriculum::Layout Animus::Curriculum::Layout::Build(ClassRoleProfile co
     layout.Assets = &ClassRoleAssets::For(profile);
     layout.Blocks = stage.Blocks;
 
-    // Positive spells that take a friendly unit target, resurrections and the soulstone can be cast on an ally
-    // (companion and party blocks): the heals first, then everything else a player casts on a friend.
+    // Resurrections and the soulstone are cast on a dead or living ally (companion and party blocks). Heals, shields
+    // and buffs are core actions cast on the support block's selected friend.
     if (stage.Has(BlockId::Companion) || stage.Has(BlockId::Party))
-    {
-        auto const onAlly = [](ActionCatalog::Action const& action)
-        {
-            SpellInfo const* info = sSpellMgr->GetSpellInfo(action.FirstRank);
-            return info && info->IsPositive() && info->NeedsExplicitUnitTarget();
-        };
-
-        for (ActionCatalog::Action const& heal : layout.Catalog().Sustain())
-            if (onAlly(heal))
-                layout.AllySpells.push_back(heal);
-        layout.AllyHealCount = uint32(layout.AllySpells.size());
-
-        for (ActionCatalog::Action const& action : layout.Catalog().Actions())
-            if (action.Type == ActionCatalog::Kind::Spell && onAlly(action))
-                layout.AllySpells.push_back(action);
-
         layout.AllyRevives = layout.Catalog().Revives();
-    }
+
+    layout.BuffGroups = BuffGroupsOf(layout.Catalog());
 
     // Each block starts where the previous one ended.
     for (BlockId id : layout.Blocks)

@@ -37,10 +37,9 @@ namespace
     {
         Player* bot = view.Bot;
         Player* owner = view.Owner;
-        uint32 const heals = uint32(view.L->AllySpells.size());
-        if (action >= CompanionBlock::ACTION_HEAL_FIRST + heals)
+        if (action >= CompanionBlock::ACTION_REVIVE_FIRST)
         {
-            uint32 const revive = action - CompanionBlock::ACTION_HEAL_FIRST - heals;
+            uint32 const revive = action - CompanionBlock::ACTION_REVIVE_FIRST;
             return revive < view.L->AllyRevives.size() && Encoding::CanRevive(view, view.L->AllyRevives[revive], owner);
         }
 
@@ -60,22 +59,19 @@ namespace
             case CompanionBlock::ACTION_GUARD:
                 return Encoding::SlotAttacking(view, owner, view.TargetSlot) >= 0;
             default:
-                break;
+                return false;
         }
-
-        return Encoding::CanHeal(bot, view.L->AllySpells[action - CompanionBlock::ACTION_HEAL_FIRST], owner);
     }
 }
 
 Animus::Curriculum::BlockSize Animus::Curriculum::CompanionBlock::Size(Layout const& layout) const
 {
-    uint32 const allyActions = uint32(layout.AllySpells.size() + layout.AllyRevives.size());
-    return { OBS_GLOBAL_COUNT + allyActions * 2, ACTION_HEAL_FIRST + allyActions };
+    uint32 const revives = uint32(layout.AllyRevives.size());
+    return { OBS_GLOBAL_COUNT + revives * 2, ACTION_REVIVE_FIRST + revives };
 }
 
 void Animus::Curriculum::CompanionBlock::DescribeManifest(Layout const& layout, boost::json::object& block) const
 {
-    block["ally_spells"] = SpellList(layout.AllySpells);
     block["ally_revives"] = SpellList(layout.AllyRevives);
 }
 
@@ -120,8 +116,7 @@ void Animus::Curriculum::CompanionBlock::Observe(SeatView const& view, float* ob
         obs[OBS_OWNER_ATTACKERS] = float(attackers) / float(PACK_SLOTS);
     }
 
-    Encoding::WriteKnownCooldowns(bot, view.L->AllySpells, obs + OBS_GLOBAL_COUNT);
-    Encoding::WriteRevives(view, obs + OBS_GLOBAL_COUNT + view.L->AllySpells.size() * 2);
+    Encoding::WriteRevives(view, obs + OBS_GLOBAL_COUNT);
 
     uint32 const actions = view.L->Slice(BlockId::Companion).ActionCount;
     for (uint32 action = 0; mask && action < actions; ++action)
@@ -135,10 +130,9 @@ void Animus::Curriculum::CompanionBlock::Apply(SeatView& view, uint32 local, Sea
 
     Player* bot = view.Bot;
     Player* owner = view.Owner;
-    uint32 const heals = uint32(view.L->AllySpells.size());
-    if (local >= ACTION_HEAL_FIRST + heals)
+    if (local >= ACTION_REVIVE_FIRST)
     {
-        Encoding::Revive(view, view.L->AllyRevives[local - ACTION_HEAL_FIRST - heals], owner, result);
+        Encoding::Revive(view, view.L->AllyRevives[local - ACTION_REVIVE_FIRST], owner, result);
         return;
     }
 
@@ -166,6 +160,4 @@ void Animus::Curriculum::CompanionBlock::Apply(SeatView& view, uint32 local, Sea
         default:
             break;
     }
-
-    Encoding::Heal(bot, view.L->AllySpells[local - ACTION_HEAL_FIRST], owner, result);
 }

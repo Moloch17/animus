@@ -156,6 +156,19 @@ namespace Animus::Curriculum
             float Cancel = 0.05f;
         } Casting;
 
+        /// Looking after itself and its friends, in every stage.
+        struct SupportTuning
+        {
+            /// Per decision: the bot's effective healing on itself, and the damage its own absorbs soaked and its own
+            /// damage-taken reductions prevented on itself, as fractions of its health. Kept below every stage's
+            /// DamageTaken, so a heal recovers part of what the hit cost and taking damage to heal it back never pays.
+            /// (Healing and protecting the owner and teammates pay through Owner.Healing and Party.TeammateHealing.)
+            float SelfHealing = 0.5f;
+            /// Gauntlets: engaging a pull pays this times the share of the layout's buff groups up on the seat (and on
+            /// the owner, averaged, with one), next to readiness.
+            float BuffCoverage = 0.3f;
+        } Support;
+
         /// How often a seat may press the same button, as a player would. Each decision is 100 ms apart, and a
         /// policy free to act on every one of them re-issues orders nobody would: stage1_duel's warlocks sent their
         /// pet in 125 times an episode and started and stopped a cast 26 times while standing out of the fight. A
@@ -459,6 +472,9 @@ namespace Animus::Curriculum
             f("Actions.Repeat", tuning.Actions.Repeat);
             f("Actions.RepeatWindowMs", tuning.Actions.RepeatWindowMs);
             f("Actions.RepeatFree", tuning.Actions.RepeatFree);
+
+            f("Support.SelfHealing", tuning.Support.SelfHealing);
+            f("Support.BuffCoverage", tuning.Support.BuffCoverage);
 
             f("Pulls.LinkedChance", tuning.Pulls.LinkedChance);
             f("Pulls.EliteChance", tuning.Pulls.EliteChance);

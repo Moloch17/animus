@@ -54,6 +54,7 @@ namespace Animus::Curriculum
         Pet,            // the pet bar: abilities, stance, follow and stay (classes with a controllable pet)
         Travel,         // mounts, flying and an objective to get to
         Flag,           // a flag match: both flags, both bases, the score (no actions)
+        Support,        // friends (self, owner, teammates) to heal, shield and buff, and the heals' rank tier
         Count
     };
 
@@ -77,6 +78,13 @@ namespace Animus::Curriculum
     constexpr uint32 PARTY_MEMBERS = 3;     // a party seat's teammates
     constexpr uint32 PACK_SLOTS = 4;        // enemies observed
     constexpr uint32 STABLE_SLOTS = 4;      // a hunter's stabled beasts
+    /// Friends a seat heals, shields and buffs (SupportBlock): itself, the owner, the party's teammates.
+    constexpr uint32 FRIEND_SLOTS = 2 + PARTY_MEMBERS;
+    constexpr uint32 FRIEND_SELF = 0;
+    constexpr uint32 FRIEND_OWNER = 1;
+    constexpr uint32 FRIEND_TEAMMATE_FIRST = 2;
+    /// Rank tiers of a heal with ranks: the highest known, about two thirds up the known ranks, about a third up.
+    constexpr uint32 RANK_TIERS = 3;
     /// The episode clock's scale: the longest arena's episode, so it rises through every episode instead of
     /// saturating. Elapsed time, not the fraction of an episode's own limit: a companion has no limit, and the
     /// critic already sees the fraction (StageScenario::STATE_EPISODE_TIME).

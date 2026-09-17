@@ -23,9 +23,10 @@
 
 namespace Animus::Curriculum
 {
-    /// The player the bot fights for: its health, position, class, target and attackers, and the class's ally heals and
-    /// revives. Actions: follow, assist (its target), guard (an enemy on it), cast an ally heal on it, revive it
-    /// (resurrection spells on the dead owner, a warlock's soulstone on the living one).
+    /// The player the bot fights for: its health, position, class, target and attackers, and the class's revives.
+    /// Actions: follow, assist (its target), guard (an enemy on it), revive it (resurrection spells on the dead owner,
+    /// a warlock's soulstone on the living one). Heals, shields and buffs on it are core actions aimed by the support
+    /// block's friend selection.
     class CompanionBlock final : public Block
     {
     public:
@@ -48,7 +49,7 @@ namespace Animus::Curriculum
             OBS_SLOT_ON_OWNER_FIRST     = 26,   // per enemy slot: attacking the owner
             OBS_GLOBAL_COUNT            = 30
 
-            // Then per ally heal, then per revive: known, cooldown.
+            // Then per revive: known, cooldown.
         };
 
         enum Action : uint32
@@ -56,7 +57,7 @@ namespace Animus::Curriculum
             ACTION_FOLLOW               = 0,    // run to just behind the owner
             ACTION_ASSIST               = 1,    // target the owner's target
             ACTION_GUARD                = 2,    // target an enemy attacking the owner
-            ACTION_HEAL_FIRST           = 3     // one per ally heal, then one per revive
+            ACTION_REVIVE_FIRST         = 3     // one per revive
         };
 
         [[nodiscard]] BlockId Id() const override { return BlockId::Companion; }

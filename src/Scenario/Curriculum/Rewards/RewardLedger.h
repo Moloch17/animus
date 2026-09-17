@@ -66,6 +66,7 @@ namespace Animus::Curriculum
         Spacing,
         Readiness,
         Control,
+        SelfHealing,
         Repeat,
         Count
     };
