@@ -125,6 +125,11 @@ namespace Animus::Curriculum
         float LastStepDamageTaken = 0.0f;
         uint32 SpellCasts = 0;
         uint32 TrinketUses = 0;
+        /// The durative action the seat is running (SeatOption), how many it started and how long they ran: one press
+        /// that stands for many decisions of resting, holding an interrupt or keeping range.
+        SeatOption Option;
+        uint32 OptionPresses = 0;
+        uint32 OptionMs = 0;
         uint32 ItemUses = 0;
         bool InCombat = false;
         uint32 CombatStartMs = 0;               // episode time the bot entered its current combat
@@ -196,6 +201,9 @@ namespace Animus::Curriculum
             LastStepDamageTaken = 0.0f;
             SpellCasts = 0;
             TrinketUses = 0;
+            Option = SeatOption();
+            OptionPresses = 0;
+            OptionMs = 0;
             ItemUses = 0;
             InCombat = false;
             CombatStartMs = 0;

@@ -131,7 +131,9 @@ namespace Animus::Curriculum
         virtual void Observe(SeatView const& view, float* obs, uint8* mask) const = 0;
 
         /// Before an action of a layout with this block is applied (whichever block the action belongs to).
-        virtual void BeforeApply(SeatView& /*view*/) const { }
+        /// Every decision before the chosen action, whatever it is: where a durative action (SeatOption) acts. What
+        /// it does is recorded in `result` as a press would be.
+        virtual void BeforeApply(SeatView& /*view*/, SeatActionResult& /*result*/) const { }
 
         /// Apply the block's action `local` (0-based within the block) as the client would. Masked actions do nothing.
         virtual void Apply(SeatView& /*view*/, uint32 /*local*/, SeatActionResult& /*result*/) const { }

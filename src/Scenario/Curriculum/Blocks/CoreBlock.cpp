@@ -41,6 +41,10 @@ namespace
     };
 
     constexpr float RUNE_COOLDOWN_MS = 10000.0f;
+    /// The durative actions a seat can be running (SeatOptionKind without None), and the scale their time left is
+    /// reported on.
+    constexpr uint32 OPTION_KINDS = uint32(SeatOptionKind::Count) - 1;
+    constexpr float OPTION_SCALE_MS = 30000.0f;
     constexpr float TALENT_POINTS_AT_MAX_LEVEL = 71.0f;
 
     bool IsActionAllowed(SeatView const& view, uint32 action)
@@ -258,6 +262,15 @@ void Animus::Curriculum::CoreBlock::Observe(SeatView const& view, float* obs, ui
         obs[OBS_SINCE_MODE_CHANGE] = 1.0f;
     }
 
+    // The durative action it is running, and how much of its clock is left.
+    if (view.Option && view.Option->Kind != SeatOptionKind::None && view.NowMs < view.Option->UntilMs)
+    {
+        uint32 const kind = uint32(view.Option->Kind) - 1;
+        if (kind < OPTION_KINDS)
+            obs[OBS_OPTION_FIRST + kind] = 1.0f;
+        obs[OBS_OPTION_LEFT] = std::min(1.0f, float(view.Option->UntilMs - view.NowMs) / OPTION_SCALE_MS);
+    }
+
     std::vector<ActionCatalog::Action> const& actions = view.L->Catalog().Actions();
     for (uint32 action = 0; action < actions.size(); ++action)
     {
@@ -325,4 +338,38 @@ void Animus::Curriculum::CoreBlock::Apply(SeatView& view, uint32 local, SeatActi
 
     if (Encoding::ApplySpellAction(view, view.Target, def, result) && def.From == ActionCatalog::Group::Sustain)
         ++result.SustainCasts;
+}
+
+void Animus::Curriculum::CoreBlock::BeforeApply(SeatView& view, SeatActionResult& result) const
+{
+    if (!view.Option || !view.Option->Running(SeatOptionKind::HoldInterrupt, view.NowMs))
+        return;
+
+    // Holding an interrupt is over once there is nothing left to interrupt.
+    Player* bot = view.Bot;
+    Unit* target = view.Target;
+    if (!bot->IsAlive() || !target || !target->IsAlive())
+    {
+        *view.Option = SeatOption();
+        return;
+    }
+
+    // The moment the target casts, the first interrupt the seat has and may use goes off, and the hold is done: an
+    // interrupt is spent, not held on.
+    if (!target->IsNonMeleeSpellCast(false))
+        return;
+
+    std::vector<ActionCatalog::Action> const& actions = view.L->Catalog().Actions();
+    for (uint32 action = 0; action < actions.size(); ++action)
+    {
+        ActionCatalog::Action const& def = actions[action];
+        if (def.Type != ActionCatalog::Kind::Spell
+            || !ActionCatalog::IsInterruptingSpell(Encoding::KnownRank(view, def))
+            || !IsActionAllowed(view, action))
+            continue;
+
+        Apply(view, action, result);
+        *view.Option = SeatOption();
+        return;
+    }
 }

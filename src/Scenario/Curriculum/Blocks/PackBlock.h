@@ -58,6 +58,16 @@ namespace Animus::Curriculum
             SLOT_FEATURES
         };
 
+        enum Action : uint32
+        {
+            ACTION_SLOT_FIRST           = 0,    // select enemy slot 0..PACK_SLOTS-1
+            /// Interrupt the target as soon as it starts casting, decision after decision, until
+            /// Options.HoldInterruptMs runs out or the policy does something else (SeatOption). The core block, which
+            /// owns the spells, casts it.
+            ACTION_HOLD_INTERRUPT       = PACK_SLOTS,
+            ACTION_COUNT                = PACK_SLOTS + 1
+        };
+
         [[nodiscard]] BlockId Id() const override { return BlockId::Pack; }
         [[nodiscard]] BlockSize Size(Layout const& layout) const override;
         void DescribeManifest(Layout const& layout, boost::json::object& block) const override;

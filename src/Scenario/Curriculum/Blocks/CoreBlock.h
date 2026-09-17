@@ -75,7 +75,12 @@ namespace Animus::Curriculum
                                                 // stance change / 10 s; 1 = none yet
             OBS_HEALTH_TREND            = 65,   // its health now - its average over the last few seconds
             OBS_TARGET_HEALTH_TREND     = 66,   // the same for its target
-            OBS_GLOBAL_COUNT            = 67
+            /// The durative action the seat is running (SeatOptionKind, one-hot without None) and how long it has
+            /// left / its full length. Without them a running option is hidden state: the policy could not tell that
+            /// it is already resting, holding an interrupt or keeping range.
+            OBS_OPTION_FIRST            = 67,
+            OBS_OPTION_LEFT             = 70,
+            OBS_GLOBAL_COUNT            = 71
 
             // Then, per catalog action: ACTION_FEATURES features (known, cooldown, aura on target, aura on self,
             // stacks, time since the seat pressed it / 10 s). Then per talent of the class: rank / max rank. Then
@@ -86,6 +91,8 @@ namespace Animus::Curriculum
         static constexpr uint32 FIRST_CAST_ACTION = 2;
         static constexpr uint32 ACTION_FEATURES = 6;
         static constexpr uint32 MAX_SPECS = 3;
+
+        void BeforeApply(SeatView& view, SeatActionResult& result) const override;
 
         [[nodiscard]] BlockId Id() const override { return BlockId::Core; }
         [[nodiscard]] BlockSize Size(Layout const& layout) const override;

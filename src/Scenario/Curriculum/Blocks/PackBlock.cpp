@@ -41,7 +41,7 @@ namespace
 
 Animus::Curriculum::BlockSize Animus::Curriculum::PackBlock::Size(Layout const& /*layout*/) const
 {
-    return { OBS_GLOBAL_COUNT + PACK_SLOTS * SLOT_FEATURES, PACK_SLOTS };
+    return { OBS_GLOBAL_COUNT + PACK_SLOTS * SLOT_FEATURES, ACTION_COUNT };
 }
 
 void Animus::Curriculum::PackBlock::DescribeManifest(Layout const& /*layout*/, boost::json::object& block) const
@@ -95,10 +95,24 @@ void Animus::Curriculum::PackBlock::Observe(SeatView const& view, float* obs, ui
 
     for (uint32 slot = 0; slot < PACK_SLOTS; ++slot)
         mask[slot] = IsSlotAllowed(view, slot) ? 1 : 0;
+
+    // Holding an interrupt is offered while there is something to interrupt and it is not already being held.
+    mask[ACTION_HOLD_INTERRUPT] = view.Target && view.Target->IsAlive() && bot->IsAlive() && view.Option
+        && !view.Option->Running(SeatOptionKind::HoldInterrupt, view.NowMs) ? 1 : 0;
 }
 
 void Animus::Curriculum::PackBlock::Apply(SeatView& view, uint32 local, SeatActionResult& /*result*/) const
 {
+    if (local == ACTION_HOLD_INTERRUPT)
+    {
+        if (view.Option && view.Target && view.Target->IsAlive() && view.Bot->IsAlive())
+        {
+            view.Option->Kind = SeatOptionKind::HoldInterrupt;
+            view.Option->UntilMs = view.NowMs + view.Options.HoldInterruptMs;
+        }
+        return;
+    }
+
     if (IsSlotAllowed(view, local))
         Encoding::SelectEnemy(view, local);
 }

@@ -321,6 +321,15 @@ namespace Animus::Curriculum
             float Death = 15.0f;                // per owner death, every seat: more than the seat's own (GauntletDeath)
         } Owner;
 
+        /// Durative actions (SeatOption): how long each may run before the seat has to choose again. They end on
+        /// their own conditions too, and any other action the policy takes cancels them.
+        struct OptionTuning
+        {
+            uint32 RestMaxMs = 30000;           // eat and drink until health and mana are back
+            uint32 HoldInterruptMs = 10000;     // interrupt the target as soon as it casts
+            uint32 KeepRangeMs = 10000;         // a ranged spec: back to its range whenever the target closes in
+        } Options;
+
         /// Resurrecting: a seat's own Soulstone or Reincarnation, and revives on allies (companion and party stages).
         struct ResurrectionTuning
         {
@@ -536,6 +545,9 @@ namespace Animus::Curriculum
             f("Pulls.OwnerControlMax", tuning.Pulls.OwnerControlMax);
             f("Pulls.OwnerWinPulls", tuning.Pulls.OwnerWinPulls);
 
+            f("Options.RestMaxMs", tuning.Options.RestMaxMs);
+            f("Options.HoldInterruptMs", tuning.Options.HoldInterruptMs);
+            f("Options.KeepRangeMs", tuning.Options.KeepRangeMs);
             f("Owner.LevelSpread", tuning.Owner.LevelSpread);
             f("Owner.TankChance", tuning.Owner.TankChance);
             f("Owner.HealerChance", tuning.Owner.HealerChance);

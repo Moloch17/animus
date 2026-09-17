@@ -49,7 +49,10 @@ namespace Animus::Curriculum
         {
             ACTION_EAT                  = 0,
             ACTION_DRINK                = 1,
-            ACTION_COUNT                = 2     // the sustain spells are core actions, cast on the bot itself
+            /// Eat and drink, decision after decision, until health and mana are back, something interrupts it or
+            /// Options.RestMaxMs runs out: one press for a whole break between pulls (SeatOption).
+            ACTION_REST_UNTIL_READY     = 2,
+            ACTION_COUNT                = 3     // the sustain spells are core actions, cast on the bot itself
         };
 
         [[nodiscard]] BlockId Id() const override { return BlockId::Gauntlet; }
@@ -57,6 +60,11 @@ namespace Animus::Curriculum
         void DescribeManifest(Layout const& layout, boost::json::object& block) const override;
         void Observe(SeatView const& view, float* obs, uint8* mask) const override;
         void Apply(SeatView& view, uint32 local, SeatActionResult& result) const override;
+        void BeforeApply(SeatView& view, SeatActionResult& result) const override;
+
+    private:
+        /// One decision of a rest: eat or drink, whichever the seat is short of.
+        void Rest(SeatView& view, SeatActionResult& result) const;
     };
 }
 
