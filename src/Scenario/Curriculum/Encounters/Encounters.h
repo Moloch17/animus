@@ -182,6 +182,7 @@ namespace Animus::Curriculum
             bool RungCounts = false;            // ... a training pack at the class/role's own rung
             bool RungRecorded = false;          // ... whose outcome is in
             uint32 Wipes = 0;                   // owner stages: pulls that killed everyone and were cleared away
+            bool OwnerDied = false;             // owner stages: the owner died this episode (it stands up again)
             bool AwaitingRevive = false;        // owner stages: someone dead waits for a resurrection (Recover)
             std::array<SeatPull, MAX_SEATS> Seats;
         };
@@ -200,6 +201,12 @@ namespace Animus::Curriculum
 
         /// A solo gauntlet's per-decision terms: its survival counted as the kill, stall, spacing and control.
         void GauntletAloneTerms(Env& env, SeatState& seat, SeatPull& pull, Player* bot, RewardLedger& ledger);
+        /// An owner arena's: its win counted as the kill, and control.
+        void GauntletOwnerTerms(Env& env, SeatState& seat, SeatPull& pull, Player* bot, RewardLedger& ledger);
+        /// Crowd control that keeps pack members other than the seat's target out of an engaged pull, while another
+        /// member is alive: `perSecond` per enemy-second, up to `perPull` a pull.
+        void ControlTerm(Env& env, SeatState const& seat, SeatPull& pull, float perSecond, float perPull,
+            RewardLedger& ledger);
         /// A solo gauntlet's pull nobody engaged in time walks over to the seat.
         void SendPull(Env& env);
         /// Food and drink stocked, each: Pulls.GauntletSupplies alone, else CONSUMABLE_COUNT.

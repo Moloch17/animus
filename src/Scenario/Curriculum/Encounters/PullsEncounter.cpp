@@ -447,7 +447,12 @@ void Animus::Curriculum::PullsEncounter::Update(Env& env)
 {
     bool const hasOwner = _scenario.Arena(env).Owner;
     if (hasOwner)
+    {
+        // Seen before Recover stands it up again: an owner death loses the episode's win.
+        if (Player* owner = _scenario.Owner(env); owner && !owner->IsAlive())
+            _envs[env.Index].OwnerDied = true;
         Recover(env);
+    }
 
     EnvPulls const& pulls = _envs[env.Index];
     if (SoloGauntlet(env) && HasCreatures(env) && !pulls.PullEngaged && env.EpisodeElapsedMs >= pulls.ArriveMs)
@@ -516,7 +521,7 @@ void Animus::Curriculum::PullsEncounter::TrackRest(uint32 decisionMs, SeatPull& 
 
 uint32 Animus::Curriculum::PullsEncounter::Supplies(Env const& env) const
 {
-    return SoloGauntlet(env) ? _scenario.Tuning().Pulls.GauntletSupplies : CONSUMABLE_COUNT;
+    return Gauntlet(env) ? _scenario.Tuning().Pulls.GauntletSupplies : CONSUMABLE_COUNT;
 }
 
 void Animus::Curriculum::PullsEncounter::EndPull(Env& env, EnvPulls& pulls)
@@ -743,8 +748,8 @@ void Animus::Curriculum::PullsEncounter::Reward(Env& env, uint32 seatIndex, Play
             pull.EngageManaSum += pull.ReadyMana;
             if (pull.ReadyHealth < READY_LOW_HEALTH || (usesMana && pull.ReadyMana < READY_LOW_MANA))
                 ++pull.PullsStartedLow;
-            if (SoloGauntlet(env))
-                ledger.Add(RewardTerm::Readiness, tuning.SoloGauntletReadiness * ready);
+            ledger.Add(RewardTerm::Readiness,
+                (SoloGauntlet(env) ? tuning.SoloGauntletReadiness : tuning.OwnerReadiness) * ready);
         }
 
         if (!pulls.PullEngaged || pulls.PullEngageMs != env.EpisodeElapsedMs)
@@ -845,6 +850,12 @@ void Animus::Curriculum::PullsEncounter::Reward(Env& env, uint32 seatIndex, Play
         return;
     }
 
+    if (Gauntlet(env))
+    {
+        GauntletOwnerTerms(env, seat, pull, bot, ledger);
+        return;
+    }
+
     if (!SinglePack(env))
         return;
 
@@ -934,7 +945,41 @@ void Animus::Curriculum::PullsEncounter::GauntletAloneTerms(Env& env, SeatState&
     if (!pulls.PullEngaged)
         return;
 
+    ControlTerm(env, seat, pull, tuning.SoloGauntletControl, tuning.SoloGauntletControlMax, ledger);
+}
+
+void Animus::Curriculum::PullsEncounter::GauntletOwnerTerms(Env& env, SeatState& seat, SeatPull& pull, Player* bot,
+    RewardLedger& ledger)
+{
+    EnvPulls const& pulls = _envs[env.Index];
+    CombatTally& tally = seat.Combat;
+    CurriculumTuning::PullTuning const& tuning = _scenario.Tuning().Pulls;
+
+    // Beside an owner the gauntlet is won by lasting to the end with the owner never dead, no wipe and
+    // Pulls.OwnerWinPulls cleared: counted as the kill, so clean_kill is the gauntlet won with the seat alive. Anything
+    // short of it is the clock running out. Deaths don't end the episode here, so it is judged at the end whatever
+    // happened to the seat.
+    if (!tally.Killed && !tally.TimedOut && TimeIsUp(env))
+    {
+        if (!pulls.OwnerDied && !pulls.Wipes && pulls.PullsCleared >= tuning.OwnerWinPulls)
+        {
+            tally.Killed = true;
+            tally.KillTimeMs = env.EpisodeElapsedMs;
+        }
+        else
+            tally.TimedOut = true;
+    }
+
+    // Control keeps adds off the owner as much as off the seat.
+    if (bot->IsAlive() && HasCreatures(env) && pulls.PullEngaged)
+        ControlTerm(env, seat, pull, tuning.OwnerControl, tuning.OwnerControlMax, ledger);
+}
+
+void Animus::Curriculum::PullsEncounter::ControlTerm(Env& env, SeatState const& seat, SeatPull& pull, float perSecond,
+    float perPull, RewardLedger& ledger)
+{
     // Control: pack members other than the target kept out of the fight while another member is alive.
+    float const seconds = float(_scenario.DecisionMs()) / 1000.0f;
     Unit const* target = env.FindTargetUnit(seat.TargetSlot);
     uint32 alive = 0;
     uint32 controlled = 0;
@@ -959,8 +1004,7 @@ void Animus::Curriculum::PullsEncounter::GauntletAloneTerms(Env& env, SeatState&
         return;
 
     pull.ControlMs += controlled * _scenario.DecisionMs();
-    float const pay = std::min(tuning.SoloGauntletControl * seconds * float(controlled),
-        std::max(0.0f, tuning.SoloGauntletControlMax - pull.PullControlPaid));
+    float const pay = std::min(perSecond * seconds * float(controlled), std::max(0.0f, perPull - pull.PullControlPaid));
     if (pay > 0.0f)
     {
         pull.PullControlPaid += pay;

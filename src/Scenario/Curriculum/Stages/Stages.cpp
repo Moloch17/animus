@@ -94,8 +94,10 @@ namespace
             .Extends = "stage3_gauntlet",
             .Summary = "the gauntlet beside a scripted owner: follow, assist, guard and heal it",
             .Blocks = { Core, Duel, Pet, Pack, Gauntlet, Companion },
+            // 450 s, as the solo gauntlet: without its own length the arena took the host's 60 s, two or three pulls
+            // with nothing to recover for and no win to reach (Pulls.OwnerWinPulls).
             .Arenas = { { .Name = "companion", .Against = Opposition::Pulls, .Schedule = PullSchedule::Gauntlet,
-                .Owner = true } },
+                .Owner = true, .EpisodeSeconds = 450 } },
         });
 
         stages.push_back({
@@ -105,7 +107,7 @@ namespace
             .Summary = "four learned seats and the scripted owner against elite-heavy pulls",
             .Blocks = { Core, Duel, Pet, Pack, Gauntlet, Companion, Party },
             .Arenas = { { .Name = "party", .Seats = SeatPlan::Party, .Against = Opposition::Pulls,
-                .Schedule = PullSchedule::Gauntlet, .Owner = true, .PartyGroup = true } },
+                .Schedule = PullSchedule::Gauntlet, .Owner = true, .PartyGroup = true, .EpisodeSeconds = 450 } },
         });
 
         // The PvP branch: off the duel, without the PvE blocks it would never fill.
