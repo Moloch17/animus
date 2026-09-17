@@ -385,6 +385,12 @@ Animus.Curriculum.Pulls.SoloGauntletReadiness = 0.5
 Animus.Curriculum.Pulls.SoloGauntletWinPulls = 5
 #   solo gauntlet: food and drink stocked, each
 Animus.Curriculum.Pulls.GauntletSupplies = 7
+#   solo gauntlet: per second per pack member kept out of the engaged fight by crowd control (stunned, incapacitated,
+#   asleep, polymorphed, feared, or rooted out of melee reach and not casting), other than the seat's target, while
+#   another member is alive ...
+Animus.Curriculum.Pulls.SoloGauntletControl = 0.02
+#   ... up to this much per pull
+Animus.Curriculum.Pulls.SoloGauntletControlMax = 1.5
 #   solo gauntlet: a pull nobody engaged comes to the seat this long after it spawned (ms) ...
 Animus.Curriculum.Pulls.ArriveMinMs = 20000
 Animus.Curriculum.Pulls.ArriveMaxMs = 40000
