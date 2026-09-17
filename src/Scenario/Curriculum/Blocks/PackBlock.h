@@ -1,0 +1,69 @@
+/*
+ * This file is part of the Animus Forge project, based on AzerothCore.
+ * See AUTHORS file for Copyright information.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
+ * more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program. If not, see <http://www.gnu.org/licenses/>.
+ */
+
+#ifndef ANIMUS_LIB_CURRICULUM_PACK_BLOCK_H
+#define ANIMUS_LIB_CURRICULUM_PACK_BLOCK_H
+
+#include "Block.h"
+
+namespace Animus::Curriculum
+{
+    /// Several enemies at once: PACK_SLOTS enemy slots. Actions: select an enemy slot. (The tactical spells --
+    /// interrupts, stuns, crowd control, taunts -- are core actions, cast at the selected enemy.)
+    class PackBlock final : public Block
+    {
+    public:
+        enum Obs : uint32
+        {
+            OBS_ALIVE                   = 0,    // living enemies / PACK_SLOTS
+            OBS_IN_COMBAT               = 1,    // enemies in combat / PACK_SLOTS
+            OBS_GLOBAL_COUNT            = 2
+
+            // Then PACK_SLOTS enemy slots of SLOT_FEATURES.
+        };
+
+        enum SlotFeature : uint32
+        {
+            SLOT_PRESENT                = 0,
+            SLOT_ALIVE                  = 1,
+            SLOT_HEALTH                 = 2,
+            SLOT_DISTANCE               = 3,    // yards / 60
+            SLOT_BEARING_SIN            = 4,
+            SLOT_BEARING_COS            = 5,
+            SLOT_BEHIND                 = 6,    // the bot is in its back arc
+            SLOT_ATTACKS_BOT            = 7,
+            SLOT_ATTACKS_PET            = 8,
+            SLOT_CASTING                = 9,
+            SLOT_IN_COMBAT              = 10,
+            SLOT_CROWD_CONTROLLED       = 11,   // stunned, feared, confused, rooted, silenced or polymorphed
+            SLOT_CURRENT_TARGET         = 12,
+            SLOT_ELITE                  = 13,
+            SLOT_LEVEL_DIFFERENCE       = 14,   // (its level - the bot's) / 5
+            SLOT_IN_LINE_OF_SIGHT       = 15,   // the bot can see it past the terrain and buildings
+            SLOT_FEATURES
+        };
+
+        [[nodiscard]] BlockId Id() const override { return BlockId::Pack; }
+        [[nodiscard]] BlockSize Size(Layout const& layout) const override;
+        void DescribeManifest(Layout const& layout, boost::json::object& block) const override;
+        void Observe(SeatView const& view, float* obs, uint8* mask) const override;
+        void Apply(SeatView& view, uint32 local, SeatActionResult& result) const override;
+    };
+}
+
+#endif

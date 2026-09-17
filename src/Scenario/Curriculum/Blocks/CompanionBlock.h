@@ -1,0 +1,71 @@
+/*
+ * This file is part of the Animus Forge project, based on AzerothCore.
+ * See AUTHORS file for Copyright information.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
+ * more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program. If not, see <http://www.gnu.org/licenses/>.
+ */
+
+#ifndef ANIMUS_LIB_CURRICULUM_COMPANION_BLOCK_H
+#define ANIMUS_LIB_CURRICULUM_COMPANION_BLOCK_H
+
+#include "Block.h"
+
+namespace Animus::Curriculum
+{
+    /// The player the bot fights for: its health, position, class, target and attackers, and the class's ally heals and
+    /// revives. Actions: follow, assist (its target), guard (an enemy on it), cast an ally heal on it, revive it
+    /// (resurrection spells on the dead owner, a warlock's soulstone on the living one).
+    class CompanionBlock final : public Block
+    {
+    public:
+        enum Obs : uint32
+        {
+            OBS_OWNER_PRESENT           = 0,
+            OBS_OWNER_ALIVE             = 1,
+            OBS_OWNER_HEALTH            = 2,
+            OBS_OWNER_MANA              = 3,    // 0 without mana
+            OBS_OWNER_DISTANCE          = 4,    // yards / 40
+            OBS_OWNER_BEARING_SIN       = 5,
+            OBS_OWNER_BEARING_COS       = 6,
+            OBS_OWNER_IN_COMBAT         = 7,
+            OBS_OWNER_MOVING            = 8,
+            OBS_OWNER_LEVEL_DIFF        = 9,    // (owner level - bot level) / 5
+            OBS_OWNER_CLASS_FIRST       = 10,   // one-hot over PLAYABLE_CLASSES (10)
+            OBS_OWNER_ATTACKERS         = 20,   // enemies attacking the owner / PACK_SLOTS
+            OBS_OWNER_TARGET_FIRST      = 21,   // one-hot: which enemy slot the owner attacks
+            OBS_OWNER_NO_TARGET         = 25,
+            OBS_SLOT_ON_OWNER_FIRST     = 26,   // per enemy slot: attacking the owner
+            OBS_GLOBAL_COUNT            = 30
+
+            // Then per ally heal, then per revive: known, cooldown.
+        };
+
+        enum Action : uint32
+        {
+            ACTION_FOLLOW               = 0,    // run to just behind the owner
+            ACTION_ASSIST               = 1,    // target the owner's target
+            ACTION_GUARD                = 2,    // target an enemy attacking the owner
+            ACTION_HEAL_FIRST           = 3     // one per ally heal, then one per revive
+        };
+
+        [[nodiscard]] BlockId Id() const override { return BlockId::Companion; }
+        [[nodiscard]] BlockSize Size(Layout const& layout) const override;
+        void DescribeManifest(Layout const& layout, boost::json::object& block) const override;
+        void Observe(SeatView const& view, float* obs, uint8* mask) const override;
+        void Apply(SeatView& view, uint32 local, SeatActionResult& result) const override;
+        [[nodiscard]] bool IsMovement(uint32 local) const override { return local == ACTION_FOLLOW; }
+    };
+}
+
+#endif

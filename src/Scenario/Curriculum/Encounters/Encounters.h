@@ -1,0 +1,479 @@
+/*
+ * This file is part of the Animus Forge project, based on AzerothCore.
+ * See AUTHORS file for Copyright information.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
+ * more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program. If not, see <http://www.gnu.org/licenses/>.
+ */
+
+#ifndef ANIMUS_LIB_CURRICULUM_ENCOUNTERS_H
+#define ANIMUS_LIB_CURRICULUM_ENCOUNTERS_H
+
+#include "BotSlot.h"
+#include "DifficultyLadder.h"
+#include "Encounter.h"
+#include "ObjectGuid.h"
+#include "RewardLedger.h"
+#include "ScriptedPlayer.h"
+#include "SeatView.h"
+#include "StageDefinition.h"
+#include "StageScenario.h"
+#include <array>
+#include <functional>
+#include <string>
+#include <mutex>
+#include <vector>
+
+class Group;
+class Map;
+
+/*
+ * The encounters a StageDefinition can ask for (see Encounter). Each keeps its state per env, sized at construction.
+ */
+namespace Animus::Curriculum
+{
+    /// Scripted enemy players: the PvP stages' opponent and the ambushers.
+    namespace EnemyPlayers
+    {
+        /// Give `enemy` the other side's faction and flag both for PvP, which players need to attack each other.
+        void MakeEnemies(Player* player, Player* enemy);
+        /// Flag a player for PvP (zone updates can drop the flag).
+        void Flag(Player* player);
+
+        /// A bot slot's names and account ids, per session slot.
+        struct Naming
+        {
+            std::function<std::string(uint8)> Name;
+            std::function<uint32(uint8)> Account;
+        };
+
+        struct Spawned
+        {
+            Player* Bot = nullptr;
+            uint8 Class = 0;
+            Role PlayRole = Role::Dps;
+        };
+
+        /// Rebuild `slot` as an enemy player at `level` of a random class and role (tuning's chances), with a
+        /// standard build, kit and PvP gear, 40-50 yd from `near` in `map`. Bot is null on failure.
+        Spawned Create(BotSlot& slot, Naming const& naming, uint8 level, CurriculumTuning::OpponentTuning const& tuning,
+            Player* near, Map* map, uint32 mapId, ScriptedPlayer::State& state);
+    }
+
+    /// A same-level creature spawned out of aggro range, which fights back. Reward: CombatReward::OneOnOne.
+    ///
+    /// Its difficulty adapts per class/role (CurriculumTuning::DifficultyTuning): once a class/role wins most of its
+    /// fights at a tier, its opponents come from the next one -- a level or more above it, then elites. A fight that
+    /// simple play wins every time teaches nothing a plan would add. An evaluation spreads its seeds over every tier
+    /// instead, so two checkpoints meet the same fights.
+    class CreatureEncounter final : public Encounter
+    {
+    public:
+        CreatureEncounter(StageScenario& scenario, uint32 envs);
+
+        [[nodiscard]] std::vector<RewardTerm> RewardTerms() const override;
+        void AddEpisodeInfo(EpisodeInfoTable& table) override;
+        bool Build(Env& env, Map* map, uint8 level) override;
+        void Reward(Env& env, uint32 seat, Player* bot, RewardLedger& ledger) override;
+        [[nodiscard]] bool IsTerminal(Env const& env) const override;
+
+        /// Class/role `layout`'s current training tier.
+        [[nodiscard]] uint32 Tier(uint16 layout) const { return _ladder.Tier(layout); }
+
+    private:
+        struct EnvFight
+        {
+            uint8 Tier = 0;
+            bool Elite = false;
+            uint16 Layout = 0;
+            bool Counts = false;        // a training fight at its class/role's current tier: its outcome moves it
+            bool Recorded = false;      // the outcome is in
+        };
+
+        /// The episode's time limit is reached.
+        [[nodiscard]] static bool TimeIsUp(Env const& env);
+
+        std::vector<EnvFight> _envs;
+        DifficultyLadder _ladder;
+    };
+
+    /// Packs of creatures (casters included, often linked): one pack, or the gauntlet's pull after pull with breaks
+    /// between. Pulls are shared by every seat: whether one was cleared is decided once per decision, before the
+    /// seats' rewards, and a cleared gauntlet pull is removed after them. With an owner, pulls spawn around it, and
+    /// after a pull everyone who died stands up again (a pull that killed everyone is cleared away).
+    class PullsEncounter final : public Encounter
+    {
+    public:
+        PullsEncounter(StageScenario& scenario, uint32 envs);
+
+        [[nodiscard]] std::vector<RewardTerm> RewardTerms() const override;
+        void AddEpisodeInfo(EpisodeInfoTable& table) override;
+        void ResetEpisode(Env& env) override;
+        bool Build(Env& env, Map* map, uint8 level) override;
+        void UpdateEnemies(Env& env) override;
+        void Update(Env& env) override;
+        bool SelectTarget(Env const& env, uint32 seat, Unit*& target) override;
+        void OnSeatAction(Env& env, uint32 seat, SeatActionResult const& result) override;
+        void View(Env const& env, uint32 seat, SeatView& view) const override;
+        void BeforeRewards(Env& env) override;
+        void Reward(Env& env, uint32 seat, Player* bot, RewardLedger& ledger) override;
+        void AfterRewards(Env& env) override;
+        void WriteState(Env const& env, float* state) const override;
+        [[nodiscard]] bool IsTerminal(Env const& env) const override;
+
+    private:
+        struct SeatPull
+        {
+            uint32 Interrupts = 0;
+            ObjectGuid PendingInterrupt;        // a casting enemy the seat just cast an interrupt at
+            uint64 PullDamageTaken = 0;
+            uint32 FoodItem = 0;
+            uint32 DrinkItem = 0;
+            uint32 FoodUsed = 0;
+            uint32 DrinkUsed = 0;
+            uint32 SustainCasts = 0;
+        };
+
+        struct EnvPulls
+        {
+            bool Linked = false;
+            uint32 PackSize = 0;                // creatures in the episode's first pull
+            uint32 PullKills = 0;               // dead enemies of the current pull
+            uint32 Kills = 0;
+            uint32 PullStartMs = 0;
+            bool PullEngaged = false;           // a creature of the current pull entered combat ...
+            uint32 PullEngageMs = 0;            // ... at this episode time: the fast clear bonuses count from here
+            bool PullCleared = false;          // decided once per decision, before the seats' rewards
+            uint32 NewKills = 0;                // ... and the kills since the last decision
+            uint32 PullsCleared = 0;
+            uint32 QuietSinceMs = 0;            // episode time the last pull ended
+            uint32 NextPullMs = 0;              // spawn the next pull at this episode time
+            bool EliteOrHigher = false;
+            uint32 Rung = 0;                    // single pack: its ladder rung ...
+            uint16 RungLayout = 0;              // ... for this class/role
+            bool RungCounts = false;            // ... a training pack at the class/role's own rung
+            bool RungRecorded = false;          // ... whose outcome is in
+            uint32 Wipes = 0;                   // owner stages: pulls that killed everyone and were cleared away
+            bool AwaitingRevive = false;        // owner stages: someone dead waits for a resurrection (Recover)
+            std::array<SeatPull, MAX_SEATS> Seats;
+        };
+
+        /// Whether the env's episode is pull after pull (else a single pack).
+        [[nodiscard]] bool Gauntlet(Env const& env) const
+        {
+            return _scenario.Arena(env).Schedule == PullSchedule::Gauntlet;
+        }
+        /// Whether the env's episode is one pack on its own (no owner): won on the clear, lost on a death or the clock.
+        [[nodiscard]] bool SinglePack(Env const& env) const;
+        /// Whether any arena of the stage is: its supplies, episode info columns.
+        [[nodiscard]] bool AnyGauntlet() const;
+        /// The single pack's top rung: Pulls.MaxTier, no higher than the ladder has.
+        [[nodiscard]] uint32 MaxRung() const;
+        bool SpawnPull(Env& env, Map* map);
+        /// The field is empty: schedule the next pull and restart the seats' target selection.
+        void EndPull(Env& env, EnvPulls& pulls);
+        void Recover(Env& env);
+
+        std::vector<EnvPulls> _envs;
+        DifficultyLadder _ladder;
+    };
+
+    /// A scripted player of a random class and role near the seats' level, whom the seats fight for (companion and
+    /// party stages). It is the env's ally 0.
+    class OwnerEncounter final : public Encounter
+    {
+    public:
+        OwnerEncounter(StageScenario& scenario, uint32 envs);
+
+        [[nodiscard]] Player* Find(Env const& env) const;
+
+        [[nodiscard]] std::vector<RewardTerm> RewardTerms() const override;
+        void AddEpisodeInfo(EpisodeInfoTable& table) override;
+        void ResetEpisode(Env& env) override;
+        bool Build(Env& env, Map* map, uint8 level) override;
+        void Update(Env& env) override;
+        void View(Env const& env, uint32 seat, SeatView& view) const override;
+        void BeforeRewards(Env& env) override;
+        void Reward(Env& env, uint32 seat, Player* bot, RewardLedger& ledger) override;
+        void WriteState(Env const& env, float* state) const override;
+        void OnRecovered(Env& env, int32 who) override;
+        void OnPullStarting(Env& env) override;
+        void Deactivate(Env& env) override;
+        void Teardown(Env& env) override;
+
+    private:
+        struct SeatOwner
+        {
+            uint64 Healing = 0;                 // effective healing the seat did on the owner
+            uint64 ThreatOnBot = 0;             // enemy-decisions spent attacking the seat
+            bool DeathSeen = false;             // the seat has paid for the owner's current death
+        };
+
+        struct EnvOwner
+        {
+            BotSlot Bot;
+            uint8 Class = 0;
+            Role PlayRole = Role::Dps;
+            ScriptedPlayer::State Script;
+            bool Died = false;
+            uint32 Deaths = 0;
+            bool DeathCounted = false;
+            uint64 DamageTaken = 0;
+            uint64 ThreatOnOwner = 0;
+            uint32 StepEnemiesOnOwner = 0;      // living enemies in combat attacking the owner, this decision
+            std::array<SeatOwner, MAX_SEATS> Seats;
+        };
+
+        std::vector<EnvOwner> _envs;
+    };
+
+    /// The owner and the seats form a real core group every episode (a sim group: it lives only in memory), so party
+    /// spells, auras and group heals work as in play. Each seat sees its three teammates and is rewarded for them.
+    class PartyEncounter final : public Encounter
+    {
+    public:
+        PartyEncounter(StageScenario& scenario, uint32 envs);
+
+        /// The party's living tank seat, or null.
+        [[nodiscard]] Player* Tank(Env const& env) const;
+
+        [[nodiscard]] std::vector<RewardTerm> RewardTerms() const override;
+        void AddEpisodeInfo(EpisodeInfoTable& table) override;
+        void ResetEpisode(Env& env) override;
+        void BeforeRebuild(Env& env) override;
+        bool Build(Env& env, Map* map, uint8 level) override;
+        void View(Env const& env, uint32 seat, SeatView& view) const override;
+        void Reward(Env& env, uint32 seat, Player* bot, RewardLedger& ledger) override;
+        void OnRecovered(Env& env, int32 who) override;
+        void Teardown(Env& env) override;
+
+    private:
+        struct SeatParty
+        {
+            uint64 TeammateDamageTaken = 0;
+            uint64 TeammateHealing = 0;
+            uint64 ThreatOnTeammates = 0;
+            uint32 TeammatesDied = 0;
+            std::array<bool, MAX_SEATS> TeammateDeathSeen{};
+        };
+
+        struct EnvParty
+        {
+            Group* PartyGroup = nullptr;
+            std::array<SeatParty, MAX_SEATS> Seats;
+        };
+
+        /// The seat index of teammate slot `slot` (0..PARTY_MEMBERS-1) of `seat`: the other seats in order.
+        [[nodiscard]] static uint32 TeammateSeat(uint32 seat, uint32 slot) { return slot < seat ? slot : slot + 1; }
+        void Disband(Env& env);
+
+        std::vector<EnvParty> _envs;
+    };
+
+    /// An enemy player: one played by a script (Opposition::ScriptedPlayer), or the other seat (self-play,
+    /// Opposition::MirrorSeat), as the env's arena says. Reward: CombatReward::OneOnOne against it.
+    class OpponentEncounter final : public Encounter
+    {
+    public:
+        OpponentEncounter(StageScenario& scenario, uint32 envs);
+
+        [[nodiscard]] std::vector<RewardTerm> RewardTerms() const override;
+        void AddEpisodeInfo(EpisodeInfoTable& table) override;
+        bool Build(Env& env, Map* map, uint8 level) override;
+        void Update(Env& env) override;
+        bool SelectTarget(Env const& env, uint32 seat, Unit*& target) override;
+        void View(Env const& env, uint32 seat, SeatView& view) const override;
+        void Reward(Env& env, uint32 seat, Player* bot, RewardLedger& ledger) override;
+        [[nodiscard]] bool IsTerminal(Env const& env) const override;
+        void Deactivate(Env& env) override;
+        void Teardown(Env& env) override;
+
+    private:
+        struct EnvOpponent
+        {
+            BotSlot Bot;
+            uint8 Class = 0;
+            Role PlayRole = Role::Dps;
+            ScriptedPlayer::State Script;
+        };
+
+        /// Whether the env's opponent is the other seat.
+        /// The other seat is the opponent: self-play, or a flag match.
+        [[nodiscard]] bool Mirror(Env const& env) const
+        {
+            return _scenario.Arena(env).Seats == SeatPlan::Mirror;
+        }
+        [[nodiscard]] bool Flag(Env const& env) const
+        {
+            return _scenario.Arena(env).Against == Opposition::Flag;
+        }
+        [[nodiscard]] Player* Find(Env const& env, uint32 seat) const;
+        bool RebuildScripted(Env& env, Player* bot, Map* map);
+
+        std::vector<EnvOpponent> _envs;
+    };
+
+    /// Scripted enemy players who ambush the owner (ArenaDefinition::Ambushers): beside pulls they arrive at a random
+    /// time and take enemy slots the pulls leave free; against Opposition::Ambush one of them is the whole fight from
+    /// the start. They attack the owner while it lives, then the nearest seat. The pvp block sees the first living one.
+    /// Reward: beside pulls, every seat is paid per ambusher killed (the pulls and the owner pay the rest); alone,
+    /// CombatReward::OneOnOne against it.
+    class AmbushEncounter final : public Encounter
+    {
+    public:
+        AmbushEncounter(StageScenario& scenario, uint32 envs);
+
+        [[nodiscard]] std::vector<RewardTerm> RewardTerms() const override;
+        void AddEpisodeInfo(EpisodeInfoTable& table) override;
+        void ResetEpisode(Env& env) override;
+        void BeforeRebuild(Env& env) override;
+        bool Build(Env& env, Map* map, uint8 level) override;
+        void Update(Env& env) override;
+        bool SelectTarget(Env const& env, uint32 seat, Unit*& target) override;
+        void View(Env const& env, uint32 seat, SeatView& view) const override;
+        void BeforeRewards(Env& env) override;
+        void Reward(Env& env, uint32 seat, Player* bot, RewardLedger& ledger) override;
+        [[nodiscard]] bool IsTerminal(Env const& env) const override;
+        void Deactivate(Env& env) override;
+        void Teardown(Env& env) override;
+
+    private:
+        struct Ambusher
+        {
+            BotSlot Bot;
+            uint8 Class = 0;
+            Role PlayRole = Role::Dps;
+            ScriptedPlayer::State Script;
+            bool KillCounted = false;
+        };
+
+        struct EnvAmbush
+        {
+            std::array<Ambusher, MAX_AMBUSHERS> Ambushers;
+            uint32 Count = 0;                   // ambushers this episode
+            uint32 ArriveMs = 0;                // episode time they arrive (beside pulls)
+            bool Arrived = false;
+            uint32 Killed = 0;
+            uint32 StepKills = 0;               // killed since the last decision
+        };
+
+        /// Whether the env's episode is the ambush alone (no pulls).
+        [[nodiscard]] bool Alone(Env const& env) const { return _scenario.Arena(env).Against == Opposition::Ambush; }
+        [[nodiscard]] Player* Find(Env const& env, uint32 ambusher) const;
+        /// The first living ambusher that arrived, or null.
+        [[nodiscard]] Player* FirstAlive(Env const& env, uint32* index = nullptr) const;
+        bool Arrive(Env& env, Map* map);
+        void RemoveBots(Env& env);
+
+        std::vector<EnvAmbush> _envs;
+    };
+
+    /// A place to get to: on the ground a reachable spot 60-320 yd away by path, in a flying arena a spot 350-700 yd
+    /// away. Reward: potential shaping on the distance left, arriving (on the ground; faster pays more), damage taken
+    /// (falls), death. The episode ends on arriving or dying.
+    class TravelEncounter final : public Encounter
+    {
+    public:
+        TravelEncounter(StageScenario& scenario, uint32 envs);
+
+        [[nodiscard]] std::vector<RewardTerm> RewardTerms() const override;
+        void AddEpisodeInfo(EpisodeInfoTable& table) override;
+        void ResetEpisode(Env& env) override;
+        bool Build(Env& env, Map* map, uint8 level) override;
+        bool SelectTarget(Env const& env, uint32 seat, Unit*& target) override;
+        void View(Env const& env, uint32 seat, SeatView& view) const override;
+        void Reward(Env& env, uint32 seat, Player* bot, RewardLedger& ledger) override;
+        [[nodiscard]] bool IsTerminal(Env const& env) const override;
+
+        /// A place `nearest`-`furthest` yd from `bot` on ground that is not water; on foot (`flying` false) one it can
+        /// walk to by a path not much longer than the straight line. False if none was found.
+        static bool FindPlace(Player* bot, Map* map, float nearest, float furthest, bool flying, Position& place);
+
+    private:
+        struct EnvTravel
+        {
+            bool HasObjective = false;
+            Position Objective;
+            float StartDistance = 0.0f;         // yards on the ground at the start
+            float LastDistance = -1.0f;         // shaping: yards at the last reward; < 0 = none yet
+            bool Arrived = false;
+            uint32 ArriveMs = 0;
+            uint32 MountedMs = 0;               // episode time spent mounted
+            uint32 FlyingMs = 0;                // ... on a flying mount in the air
+            uint32 LastRewardMs = 0;
+        };
+
+        std::vector<EnvTravel> _envs;
+    };
+
+    /// Warsong Gulch's rules between the two mirror seats: each has a flag at its base; touching the other's takes it
+    /// (and dismounts the carrier, who cannot mount while carrying), touching one's own dropped flag returns it, and
+    /// carrying the other's home while one's own is there captures it. A carrier who dies drops the flag where it fell;
+    /// a dropped flag goes home on its own after a while. The dead stand up at their base after a wave. First to
+    /// Flag.CapturesToWin ends the match. The seat's travel objective is where its side needs it next.
+    class FlagEncounter final : public Encounter
+    {
+    public:
+        FlagEncounter(StageScenario& scenario, uint32 envs);
+
+        [[nodiscard]] std::vector<RewardTerm> RewardTerms() const override;
+        void AddEpisodeInfo(EpisodeInfoTable& table) override;
+        void ResetEpisode(Env& env) override;
+        bool Build(Env& env, Map* map, uint8 level) override;
+        void Update(Env& env) override;
+        void View(Env const& env, uint32 seat, SeatView& view) const override;
+        void Reward(Env& env, uint32 seat, Player* bot, RewardLedger& ledger) override;
+        [[nodiscard]] bool IsTerminal(Env const& env) const override;
+
+    private:
+        /// What a seat heads for, in the order a player would pick it.
+        enum class Goal : uint8 { None, CaptureHome, ReturnOwn, TakeEnemy, PickUpEnemy, ChaseCarrier };
+
+        struct Side
+        {
+            Position Base;
+            SeatView::FlagState State = SeatView::FlagState::AtBase;   // this side's own flag
+            Position Dropped;
+            uint32 DroppedMs = 0;
+            uint32 Captures = 0;
+            uint32 Pickups = 0;
+            uint32 Returns = 0;
+            uint32 CarrierKills = 0;
+            uint32 Deaths = 0;
+            bool Dead = false;
+            uint32 RespawnMs = 0;
+            // Since the last reward.
+            uint32 StepCaptures = 0;
+            uint32 StepPickups = 0;
+            uint32 StepReturns = 0;
+            uint32 StepCarrierKills = 0;
+            uint32 StepLost = 0;
+            uint32 StepDeaths = 0;
+            float LastDistance = -1.0f;         // shaping toward the current goal; < 0 = none yet
+            Goal LastGoal = Goal::None;
+        };
+
+        struct EnvFlags
+        {
+            std::array<Side, 2> Sides;
+            bool Built = false;
+        };
+
+        /// Where seat `seat` should go now, and why.
+        [[nodiscard]] Goal CurrentGoal(Env const& env, uint32 seat, Position& place) const;
+
+        std::vector<EnvFlags> _envs;
+    };
+}
+
+#endif
