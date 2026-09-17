@@ -18,8 +18,8 @@
 
 #include "GauntletBlock.h"
 #include "EncoderSupport.h"
-#include "Item.h"
 #include "Layout.h"
+#include <algorithm>
 #include <boost/json/array.hpp>
 #include <boost/json/object.hpp>
 #include "MoveSpline.h"
@@ -38,11 +38,12 @@ namespace
 
         bool const eat = action == GauntletBlock::ACTION_EAT;
         uint32 const item = eat ? view.FoodItem : view.DrinkItem;
-        SpellInfo const* info = item ? Encoding::UseSpell(item) : nullptr;
 
-        return info && bot->IsAlive() && !bot->IsInCombat() && bot->movespline->Finalized()
-            && !bot->IsNonMeleeSpellCast(false) && bot->GetItemCount(item) && !bot->HasSpellCooldown(info->Id)
-            && !bot->HasAuraType(eat ? SPELL_AURA_MOD_REGEN : SPELL_AURA_MOD_POWER_REGEN);
+        // The item's own cast check as for potions and bandages (forms, the global cooldown, stuns): eat and drink
+        // offered where the cast then failed were pressed over and over for nothing.
+        return item && bot->IsAlive() && !bot->IsInCombat() && bot->movespline->Finalized()
+            && !bot->HasAuraType(eat ? SPELL_AURA_MOD_REGEN : SPELL_AURA_MOD_POWER_REGEN)
+            && Encoding::CanUseItemOn(bot, item, bot);
     }
 }
 
@@ -68,8 +69,11 @@ void Animus::Curriculum::GauntletBlock::Observe(SeatView const& view, float* obs
     obs[OBS_ELITE_PULL] = pullActive && view.ElitePull ? 1.0f : 0.0f;
     obs[OBS_EATING] = bot->HasAuraType(SPELL_AURA_MOD_REGEN) ? 1.0f : 0.0f;
     obs[OBS_DRINKING] = bot->HasAuraType(SPELL_AURA_MOD_POWER_REGEN) ? 1.0f : 0.0f;
-    obs[OBS_FOOD_LEFT] = view.FoodItem ? float(bot->GetItemCount(view.FoodItem)) / float(CONSUMABLE_COUNT) : 0.0f;
-    obs[OBS_DRINK_LEFT] = view.DrinkItem ? float(bot->GetItemCount(view.DrinkItem)) / float(CONSUMABLE_COUNT) : 0.0f;
+    float const stocked = float(std::max<uint32>(1, view.GauntletSupplies));
+    obs[OBS_FOOD_LEFT] = view.FoodItem ? std::min(1.0f, float(bot->GetItemCount(view.FoodItem)) / stocked) : 0.0f;
+    obs[OBS_DRINK_LEFT] = view.DrinkItem ? std::min(1.0f, float(bot->GetItemCount(view.DrinkItem)) / stocked) : 0.0f;
+    obs[OBS_PULL_ARRIVAL] = view.PullArrival;
+    obs[OBS_NEXT_PULL] = pullActive ? 0.0f : view.NextPull;
 
     uint32 const actions = view.L->Slice(BlockId::Gauntlet).ActionCount;
     for (uint32 action = 0; mask && action < actions; ++action)
@@ -83,14 +87,8 @@ void Animus::Curriculum::GauntletBlock::Apply(SeatView& view, uint32 local, Seat
 
     Player* bot = view.Bot;
     bool const eat = local == ACTION_EAT;
-    Item* item = bot->GetItemByEntry(eat ? view.FoodItem : view.DrinkItem);
-    if (!item)
-        return;
-
-    SpellCastTargets targets;
-    targets.SetUnitTarget(bot);
-    bot->CastItemUseSpell(item, targets, 1, 0);
-
-    if (bot->HasAuraType(eat ? SPELL_AURA_MOD_REGEN : SPELL_AURA_MOD_POWER_REGEN))
+    if (Encoding::UseItemOn(bot, eat ? view.FoodItem : view.DrinkItem, bot))
         ++(eat ? result.FoodUsed : result.DrinkUsed);
+    else
+        ++(eat ? result.FoodFailed : result.DrinkFailed);
 }

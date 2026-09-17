@@ -45,6 +45,11 @@ namespace
     constexpr float PACK_SPREAD = 5.0f;
     constexpr float MAX_HEIGHT_DIFFERENCE = 6.0f;
     constexpr float MAX_PATH_DETOUR = 1.5f;     // a walking path at most this many times the straight line
+    constexpr float MAX_STAT_MOD = 2.0f;        // health and damage multipliers of a normal creature
+    /// An elite's are higher by design: at 2 the world has six elites a gauntlet or pack could meet, the same few in
+    /// every elite pull. These bounds keep open-world and outdoor-quest elites and leave out raid and boss tuning.
+    constexpr float MAX_ELITE_HEALTH_MOD = 3.0f;
+    constexpr float MAX_ELITE_DAMAGE_MOD = 2.5f;
 
     constexpr uint32 UNUSABLE_UNIT_FLAGS = UNIT_FLAG_NON_ATTACKABLE | UNIT_FLAG_IMMUNE_TO_PC | UNIT_FLAG_NOT_SELECTABLE
         | UNIT_FLAG_PACIFIED;
@@ -159,9 +164,13 @@ Animus::Curriculum::Opponents::OpponentPool::OpponentPool()
             continue;
 
         // Plain combat creatures with sane stat multipliers.
+        bool const elite = info.rank == CREATURE_ELITE_ELITE;
+        float const maxHealthMod = elite ? MAX_ELITE_HEALTH_MOD : MAX_STAT_MOD;
+        float const maxDamageMod = elite ? MAX_ELITE_DAMAGE_MOD : MAX_STAT_MOD;
         if (!IsFairOpponentType(info.type) || info.npcflag || info.VehicleId || (info.unit_flags & UNUSABLE_UNIT_FLAGS)
-            || (info.flags_extra & UNUSABLE_EXTRA_FLAGS) || info.ModHealth < 0.5f || info.ModHealth > 2.0f
-            || info.DamageModifier < 0.5f || info.DamageModifier > 2.0f || !info.minlevel || SpawnsUnreachable(info))
+            || (info.flags_extra & UNUSABLE_EXTRA_FLAGS) || info.ModHealth < 0.5f || info.ModHealth > maxHealthMod
+            || info.DamageModifier < 0.5f || info.DamageModifier > maxDamageMod || !info.minlevel
+            || SpawnsUnreachable(info))
             continue;
 
         // Default AI: no SmartAI or C++ script that could summon, flee or despawn.
@@ -187,7 +196,7 @@ Animus::Curriculum::Opponents::OpponentPool::OpponentPool()
             casters += caster ? 1 : 0;
             ++packMembers;
         }
-        else if (info.rank == CREATURE_ELITE_ELITE)
+        else if (elite)
         {
             for (uint32 level = info.minlevel; level <= maxLevel; ++level)
                 _elitesByLevel[level].push_back(entry);

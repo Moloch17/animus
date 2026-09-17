@@ -189,7 +189,7 @@ namespace Animus::Curriculum
         {
             int32 LinkedChance = 70;            // percent of pulls whose members aggro together
             int32 EliteChance = 15;             // gauntlet: a single elite instead of a pack
-            int32 HigherLevelChance = 25;       // gauntlet: a pack 1-3 levels above the bot
+            int32 HigherLevelChance = 25;       // gauntlet: a pack 1-3 levels above (1 below level 20, 2 below 30)
             int32 PartyEliteChance = 50;        // party: per pack member
             uint32 NextPullMinMs = 8000;        // gauntlet: the break between pulls
             uint32 NextPullMaxMs = 20000;
@@ -246,6 +246,22 @@ namespace Animus::Curriculum
             float SoloGauntletFastPull = 1.0f;  // times 1 - time since the pull engaged / 60 s
             float SoloGauntletHealthKept = 0.5f;
             float SoloGauntletDeath = 10.0f;
+            /// Paid when a pull is engaged, times the seat's health fraction the decision before, or the lower of its
+            /// health and mana fractions if it uses mana: entering a fight ready is what resting between pulls is for.
+            float SoloGauntletReadiness = 0.5f;
+            /// Lasting to the end wins only with this many pulls cleared: a gauntlet is endured by fighting it, not
+            /// by staying away from it.
+            uint32 SoloGauntletWinPulls = 5;
+            uint32 GauntletSupplies = 7;        // solo gauntlet: food and drink stocked, each
+            /// Solo gauntlet pacing. A pull nobody has engaged comes to the seat ArriveMinMs-ArriveMaxMs after it
+            /// spawns, so resting has a clock; each pull cleared brings the next one sooner (ArriveShrinkMs, down to
+            /// ArriveFloorMs) and shortens the break before it (NextPullShrinkMs, down to NextPullFloorMs).
+            uint32 ArriveMinMs = 20000;
+            uint32 ArriveMaxMs = 40000;
+            uint32 ArriveShrinkMs = 1500;
+            uint32 ArriveFloorMs = 10000;
+            uint32 NextPullShrinkMs = 1000;
+            uint32 NextPullFloorMs = 4000;
             float OwnerClearScale = 2.0f;       // owner stages: kills and clears count this many times
         } Pulls;
 
@@ -467,6 +483,15 @@ namespace Animus::Curriculum
             f("Pulls.SoloGauntletFastPull", tuning.Pulls.SoloGauntletFastPull);
             f("Pulls.SoloGauntletHealthKept", tuning.Pulls.SoloGauntletHealthKept);
             f("Pulls.SoloGauntletDeath", tuning.Pulls.SoloGauntletDeath);
+            f("Pulls.SoloGauntletReadiness", tuning.Pulls.SoloGauntletReadiness);
+            f("Pulls.SoloGauntletWinPulls", tuning.Pulls.SoloGauntletWinPulls);
+            f("Pulls.GauntletSupplies", tuning.Pulls.GauntletSupplies);
+            f("Pulls.ArriveMinMs", tuning.Pulls.ArriveMinMs);
+            f("Pulls.ArriveMaxMs", tuning.Pulls.ArriveMaxMs);
+            f("Pulls.ArriveShrinkMs", tuning.Pulls.ArriveShrinkMs);
+            f("Pulls.ArriveFloorMs", tuning.Pulls.ArriveFloorMs);
+            f("Pulls.NextPullShrinkMs", tuning.Pulls.NextPullShrinkMs);
+            f("Pulls.NextPullFloorMs", tuning.Pulls.NextPullFloorMs);
             f("Pulls.OwnerClearScale", tuning.Pulls.OwnerClearScale);
 
             f("Owner.LevelSpread", tuning.Owner.LevelSpread);

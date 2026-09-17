@@ -347,14 +347,14 @@ void Animus::Curriculum::StockBattleSupplies(Player* bot, BattleSupplies const& 
         bot->CastSpell(bot, buff, true);
 }
 
-void Animus::Curriculum::StockConsumables(Player* bot, uint32 food, uint32 drink)
+void Animus::Curriculum::StockConsumables(Player* bot, uint32 food, uint32 drink, uint32 count)
 {
     for (uint32 item : { food, drink })
     {
         if (!item)
             continue;
 
-        for (uint32 count = bot->GetItemCount(item); count < CONSUMABLE_COUNT; ++count)
+        for (uint32 carried = bot->GetItemCount(item); carried < count; ++carried)
             if (!StoreInBags(bot, item, 1))
                 break;
     }

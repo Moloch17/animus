@@ -88,6 +88,9 @@ namespace Animus::Curriculum
         bool ElitePull = false;
         uint32 FoodItem = 0;
         uint32 DrinkItem = 0;
+        uint32 GauntletSupplies = CONSUMABLE_COUNT; // food and drink stocked, each
+        float PullArrival = 0.0f;                   // an unengaged pull comes to the seat in this / 30 s; else 0
+        float NextPull = 0.0f;                      // between pulls: the next one spawns in this / 20 s
 
         // Companion: the player the bot fights for.
         Player* Owner = nullptr;
@@ -152,6 +155,8 @@ namespace Animus::Curriculum
         uint32 SustainCasts = 0;
         uint32 FoodUsed = 0;
         uint32 DrinkUsed = 0;
+        uint32 FoodFailed = 0;                      // eat or drink pressed and allowed, but nothing was consumed
+        uint32 DrinkFailed = 0;
         bool StealthOpener = false;                 // a harmful spell that breaks stealth started from stealth
         ObjectGuid StealthUtilityTarget;            // a harmful spell that keeps stealth (Sap, Distract) aimed here
         ObjectGuid PendingInterrupt;                // an interrupt was cast at this casting enemy

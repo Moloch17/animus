@@ -64,6 +64,7 @@ namespace Animus::Curriculum
         Timeout,
         Stall,
         Spacing,
+        Readiness,
         Repeat,
         Count
     };

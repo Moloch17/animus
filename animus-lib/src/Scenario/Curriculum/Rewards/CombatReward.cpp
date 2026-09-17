@@ -88,6 +88,7 @@ std::string_view Animus::Curriculum::RewardTermName(RewardTerm term)
         case RewardTerm::Timeout:               return "timeout";
         case RewardTerm::Stall:                 return "stall";
         case RewardTerm::Spacing:               return "spacing";
+        case RewardTerm::Readiness:             return "readiness";
         case RewardTerm::Repeat:                return "repeat";
         case RewardTerm::Count:                 break;
     }

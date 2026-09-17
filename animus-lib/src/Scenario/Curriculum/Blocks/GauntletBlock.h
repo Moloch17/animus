@@ -38,9 +38,11 @@ namespace Animus::Curriculum
             OBS_ELITE_PULL              = 4,
             OBS_EATING                  = 5,
             OBS_DRINKING                = 6,
-            OBS_FOOD_LEFT               = 7,    // / CONSUMABLE_COUNT
+            OBS_FOOD_LEFT               = 7,    // / the food stocked
             OBS_DRINK_LEFT              = 8,
-            OBS_GLOBAL_COUNT            = 9
+            OBS_PULL_ARRIVAL            = 9,    // alone: an unengaged pull comes to the bot in this / 30 s; else 0
+            OBS_NEXT_PULL               = 10,   // between pulls: the next one spawns in this / 20 s
+            OBS_GLOBAL_COUNT            = 11
         };
 
         enum Action : uint32

@@ -95,6 +95,8 @@ Animus::Curriculum::CurriculumTuning Animus::Curriculum::CurriculumTuning::Load(
 
     auto const order = [](uint32& low, uint32& high) { if (low > high) std::swap(low, high); };
     order(tuning.Pulls.NextPullMinMs, tuning.Pulls.NextPullMaxMs);
+    order(tuning.Pulls.ArriveMinMs, tuning.Pulls.ArriveMaxMs);
+    tuning.Pulls.GauntletSupplies = std::max<uint32>(1, tuning.Pulls.GauntletSupplies);
     order(tuning.Pulls.OwnerEngageMinMs, tuning.Pulls.OwnerEngageMaxMs);
     order(tuning.Pulls.PartyOwnerEngageMinMs, tuning.Pulls.PartyOwnerEngageMaxMs);
     order(tuning.Pulls.OwnerPullsMinMs, tuning.Pulls.OwnerPullsMaxMs);

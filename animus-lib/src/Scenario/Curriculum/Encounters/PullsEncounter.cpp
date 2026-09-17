@@ -27,6 +27,7 @@
 #include "Player.h"
 #include "Random.h"
 #include "SeatView.h"
+#include "SpellAuraEffects.h"
 #include "Supplies.h"
 #include "Containers.h"
 #include <algorithm>
@@ -38,6 +39,12 @@ namespace
     constexpr float PULL_TIME_SCALE_MS = 60000.0f;      // observation and fast-pull scale
     constexpr float QUIET_TIME_SCALE_MS = 20000.0f;
     constexpr float NEXT_PULL_SCALE_MS = 20000.0f;
+    constexpr float ARRIVAL_SCALE_MS = 30000.0f;
+    constexpr float READY_LOW_HEALTH = 0.5f;            // a pull engaged below this health or mana was started low
+    constexpr float READY_LOW_MANA = 0.3f;
+    constexpr uint8 HIGHER_LEVEL_STEP = 10;             // a higher-level pull is up to one level more per this many
+    constexpr int32 MEAL_LEFT_SLACK_MS = 500;           // a meal ending with more than a decision and this left was cut
+    constexpr float MEAL_FULL = 0.95f;                  // ... unless what it restores was already this full
 
     /// A single pack's rungs, climbed per class/role (DifficultyLadder): more creatures, then more casters, then an
     /// elite, then a level more. Every rung has a spellcaster (OpponentPool::RandomCaster), so there is always a cast
@@ -79,6 +86,28 @@ namespace
         });
     }
 
+    float HealthFraction(Player const* bot)
+    {
+        return float(bot->GetHealth()) / float(std::max<uint32>(1, bot->GetMaxHealth()));
+    }
+
+    /// The mana fraction; 1 for a seat without mana.
+    float ManaFraction(Player const* bot)
+    {
+        uint32 const maxMana = bot->GetMaxPower(POWER_MANA);
+        return maxMana ? float(bot->GetPower(POWER_MANA)) / float(maxMana) : 1.0f;
+    }
+
+    /// The remaining time of the seat's aura of `type` (food: MOD_REGEN, drink: MOD_POWER_REGEN); -1 without one.
+    int32 RegenLeftMs(Player const* bot, AuraType type)
+    {
+        Unit::AuraEffectList const& effects = bot->GetAuraEffectsByType(type);
+        int32 left = -1;
+        for (AuraEffect const* effect : effects)
+            left = std::max(left, effect->GetBase()->GetDuration());
+        return left;
+    }
+
     /// The episode's time limit is reached.
     bool TimeIsUp(Animus::Env const& env)
     {
@@ -105,10 +134,13 @@ bool Animus::Curriculum::PullsEncounter::AnyGauntlet() const
 
 std::vector<Animus::Curriculum::RewardTerm> Animus::Curriculum::PullsEncounter::RewardTerms() const
 {
-    return { RewardTerm::StepCost, RewardTerm::DamageDealt, RewardTerm::DamageTaken, RewardTerm::Casting,
-        RewardTerm::Approach, RewardTerm::StealthOpener, RewardTerm::StealthUtility, RewardTerm::Interrupt,
-        RewardTerm::Kill, RewardTerm::Clear, RewardTerm::HealthKept, RewardTerm::Death, RewardTerm::Timeout,
-        RewardTerm::Stall, RewardTerm::Spacing };
+    std::vector<RewardTerm> terms = { RewardTerm::StepCost, RewardTerm::DamageDealt, RewardTerm::DamageTaken,
+        RewardTerm::Casting, RewardTerm::Approach, RewardTerm::StealthOpener, RewardTerm::StealthUtility,
+        RewardTerm::Interrupt, RewardTerm::Kill, RewardTerm::Clear, RewardTerm::HealthKept, RewardTerm::Death,
+        RewardTerm::Timeout, RewardTerm::Stall, RewardTerm::Spacing };
+    if (AnyGauntlet())
+        terms.push_back(RewardTerm::Readiness);
+    return terms;
 }
 
 bool Animus::Curriculum::PullsEncounter::SinglePack(Env const& env) const
@@ -155,6 +187,39 @@ void Animus::Curriculum::PullsEncounter::AddEpisodeInfo(EpisodeInfoTable& table)
         {
             return float(_scenario.Data(env).Seats[seat].Combat.Deaths);
         });
+
+        // Recovery: how ready the seat was for each pull it engaged, and how it rested between them.
+        table.Add("engage_health", [this](Env const& env, uint32 seat)
+        {
+            SeatPull const& pull = _envs[env.Index].Seats[seat];
+            return pull.PullsEngaged ? pull.EngageHealthSum / float(pull.PullsEngaged) : 1.0f;
+        });
+        table.Add("engage_mana", [this](Env const& env, uint32 seat)
+        {
+            SeatPull const& pull = _envs[env.Index].Seats[seat];
+            return pull.PullsEngaged ? pull.EngageManaSum / float(pull.PullsEngaged) : 1.0f;
+        });
+        table.Add("pulls_started_low", [this](Env const& env, uint32 seat)
+        {
+            return float(_envs[env.Index].Seats[seat].PullsStartedLow);
+        });
+        table.Add("pulls_arrived", [this](Env const& env, uint32) { return float(_envs[env.Index].PullsArrived); });
+        table.Add("rest_seconds", [this](Env const& env, uint32 seat)
+        {
+            return float(_envs[env.Index].Seats[seat].RestMs) / 1000.0f;
+        });
+        table.Add("eat_failed", [this](Env const& env, uint32 seat)
+        {
+            return float(_envs[env.Index].Seats[seat].FoodFailed);
+        });
+        table.Add("drink_failed", [this](Env const& env, uint32 seat)
+        {
+            return float(_envs[env.Index].Seats[seat].DrinkFailed);
+        });
+        table.Add("meals_cut_short", [this](Env const& env, uint32 seat)
+        {
+            return float(_envs[env.Index].Seats[seat].MealsCutShort);
+        });
     }
 
     if (_scenario.Stage().AnyArena([](ArenaDefinition const& arena) { return arena.Owner; }))
@@ -200,7 +265,7 @@ bool Animus::Curriculum::PullsEncounter::Build(Env& env, Map* map, uint8 /*level
             ConsumablePool const& consumables = ConsumablePool::Instance();
             supplies.FoodItem = consumables.Food(seat.Level);
             supplies.DrinkItem = bot->GetMaxPower(POWER_MANA) ? consumables.Drink(seat.Level) : 0;
-            StockConsumables(bot, supplies.FoodItem, supplies.DrinkItem);
+            StockConsumables(bot, supplies.FoodItem, supplies.DrinkItem, Supplies(env));
         }
     }
 
@@ -279,7 +344,9 @@ bool Animus::Curriculum::PullsEncounter::SpawnPull(Env& env, Map* map)
     {
         if (Gauntlet(env) && roll_chance_i(tuning.HigherLevelChance))
         {
-            level = uint8(std::min<uint32>(HIGHEST_OPPONENT_LEVEL, botLevel + urand(1, 3)));
+            // +3 is a different fight at level 5 than at 70: one level more per HIGHER_LEVEL_STEP, up to three.
+            uint32 const most = std::clamp<uint32>(botLevel / HIGHER_LEVEL_STEP, 1, 3);
+            level = uint8(std::min<uint32>(HIGHEST_OPPONENT_LEVEL, botLevel + urand(1, most)));
             pulls.EliteOrHigher = true;
         }
 
@@ -320,11 +387,24 @@ bool Animus::Curriculum::PullsEncounter::SpawnPull(Env& env, Map* map)
     pulls.PullKills = 0;
     pulls.PullStartMs = env.EpisodeElapsedMs;
     pulls.PullEngaged = false;
+    pulls.Arrived = false;
+    if (SoloGauntlet(env))
+    {
+        uint32 const wait = urand(tuning.ArriveMinMs, tuning.ArriveMaxMs);
+        uint32 const shrink = std::min(wait, tuning.ArriveShrinkMs * pulls.PullsCleared);
+        pulls.ArriveMs = env.EpisodeElapsedMs + std::max(tuning.ArriveFloorMs, wait - shrink);
+    }
+
     for (uint32 seat = 0; seat < _scenario.SeatCount(); ++seat)
     {
         data.Seats[seat].TargetSlot = 0;
         data.Seats[seat].Combat.LastDistance = -1.0f;
         pulls.Seats[seat].PullDamageTaken = 0;
+        if (Player* bot = env.FindBot(seat))
+        {
+            pulls.Seats[seat].ReadyHealth = HealthFraction(bot);
+            pulls.Seats[seat].ReadyMana = ManaFraction(bot);
+        }
     }
 
     return true;
@@ -361,7 +441,11 @@ void Animus::Curriculum::PullsEncounter::Update(Env& env)
     if (hasOwner)
         Recover(env);
 
-    if (!Gauntlet(env) || HasCreatures(env) || env.EpisodeElapsedMs < _envs[env.Index].NextPullMs)
+    EnvPulls const& pulls = _envs[env.Index];
+    if (SoloGauntlet(env) && HasCreatures(env) && !pulls.PullEngaged && env.EpisodeElapsedMs >= pulls.ArriveMs)
+        SendPull(env);
+
+    if (!Gauntlet(env) || HasCreatures(env) || env.EpisodeElapsedMs < pulls.NextPullMs)
         return;
 
     // The next pull once the break is over, if anyone is left to fight it.
@@ -376,13 +460,70 @@ void Animus::Curriculum::PullsEncounter::Update(Env& env)
             SpawnPull(env, map);
 }
 
+void Animus::Curriculum::PullsEncounter::SendPull(Env& env)
+{
+    EnvPulls& pulls = _envs[env.Index];
+    Player* bot = env.FindBot(0);
+    if (!bot || !bot->IsAlive())
+        return;
+
+    if (!pulls.Arrived)
+    {
+        pulls.Arrived = true;
+        ++pulls.PullsArrived;
+    }
+
+    // Every decision until it is engaged: a creature that can attack the seat does; one that cannot yet (the seat is
+    // stealthed, or out of its sight) walks to where the seat is.
+    for (uint32 slot = 0; slot < env.Targets.size(); ++slot)
+    {
+        Creature* member = env.FindTarget(slot);
+        if (!member || !member->IsAlive() || member->IsInCombat() || !member->IsAIEnabled)
+            continue;
+
+        if (member->CanCreatureAttack(bot) && member->CanSeeOrDetect(bot))
+            member->AI()->AttackStart(bot);
+        else if (member->movespline->Finalized())
+            member->GetMotionMaster()->MovePoint(0, bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ());
+    }
+}
+
+void Animus::Curriculum::PullsEncounter::TrackRest(uint32 decisionMs, SeatPull& pull, Player const* bot)
+{
+    int32 const foodLeft = RegenLeftMs(bot, SPELL_AURA_MOD_REGEN);
+    int32 const drinkLeft = RegenLeftMs(bot, SPELL_AURA_MOD_POWER_REGEN);
+    if (foodLeft >= 0 || drinkLeft >= 0)
+        pull.RestMs += decisionMs;
+
+    // A meal that ended with time left, while what it restores still wasn't full: stood up, moved, or was pulled.
+    int32 const slack = int32(decisionMs) + MEAL_LEFT_SLACK_MS;
+    if (foodLeft < 0 && pull.FoodLeftMs > slack && pull.ReadyHealth < MEAL_FULL)
+        ++pull.MealsCutShort;
+    if (drinkLeft < 0 && pull.DrinkLeftMs > slack && pull.ReadyMana < MEAL_FULL)
+        ++pull.MealsCutShort;
+
+    pull.FoodLeftMs = foodLeft;
+    pull.DrinkLeftMs = drinkLeft;
+}
+
+uint32 Animus::Curriculum::PullsEncounter::Supplies(Env const& env) const
+{
+    return SoloGauntlet(env) ? _scenario.Tuning().Pulls.GauntletSupplies : CONSUMABLE_COUNT;
+}
+
 void Animus::Curriculum::PullsEncounter::EndPull(Env& env, EnvPulls& pulls)
 {
+    CurriculumTuning::PullTuning const& tuning = _scenario.Tuning().Pulls;
     pulls.PullKills = 0;
     pulls.PullCleared = false;
     pulls.QuietSinceMs = env.EpisodeElapsedMs;
-    pulls.NextPullMs = env.EpisodeElapsedMs
-        + urand(_scenario.Tuning().Pulls.NextPullMinMs, _scenario.Tuning().Pulls.NextPullMaxMs);
+
+    // Alone, each pull cleared shortens the break before the next (the pull being cleared is counted by now).
+    uint32 breakMs = urand(tuning.NextPullMinMs, tuning.NextPullMaxMs);
+    if (SoloGauntlet(env))
+        breakMs = std::max(std::min(breakMs, tuning.NextPullFloorMs),
+            breakMs - std::min(breakMs, tuning.NextPullShrinkMs * pulls.PullsCleared));
+    pulls.NextPullMs = env.EpisodeElapsedMs + breakMs;
 
     EnvState& data = _scenario.Data(env);
     for (uint32 seat = 0; seat < _scenario.SeatCount(); ++seat)
@@ -484,6 +625,8 @@ void Animus::Curriculum::PullsEncounter::OnSeatAction(Env& env, uint32 seat, Sea
     pull.SustainCasts += result.SustainCasts;
     pull.FoodUsed += result.FoodUsed;
     pull.DrinkUsed += result.DrinkUsed;
+    pull.FoodFailed += result.FoodFailed;
+    pull.DrinkFailed += result.DrinkFailed;
 
     if (!result.PendingInterrupt.IsEmpty())
         pull.PendingInterrupt = result.PendingInterrupt;
@@ -499,6 +642,14 @@ void Animus::Curriculum::PullsEncounter::View(Env const& env, uint32 seat, SeatV
     view.ElitePull = pulls.EliteOrHigher;
     view.FoodItem = pulls.Seats[seat].FoodItem;
     view.DrinkItem = pulls.Seats[seat].DrinkItem;
+    view.GauntletSupplies = Supplies(env);
+
+    bool const pullActive = HasCreatures(env);
+    view.PullArrival = SoloGauntlet(env) && pullActive && !pulls.PullEngaged && !pulls.Arrived
+        ? std::min(1.0f, float(pulls.ArriveMs - std::min(pulls.ArriveMs, env.EpisodeElapsedMs)) / ARRIVAL_SCALE_MS)
+        : 0.0f;
+    uint32 const nextPullMs = pulls.NextPullMs - std::min(pulls.NextPullMs, env.EpisodeElapsedMs);
+    view.NextPull = Gauntlet(env) && !pullActive ? std::min(1.0f, float(nextPullMs) / NEXT_PULL_SCALE_MS) : 0.0f;
 }
 
 void Animus::Curriculum::PullsEncounter::BeforeRewards(Env& env)
@@ -566,6 +717,33 @@ void Animus::Curriculum::PullsEncounter::Reward(Env& env, uint32 seatIndex, Play
     {
         pulls.PullEngaged = true;
         pulls.PullEngageMs = env.EpisodeElapsedMs;
+    }
+
+    // Recovery between pulls. Health and mana are kept from the decision before (a pull's first blow may land before
+    // the seat's next decision): a pull engaged this decision pays readiness from them, and a meal that ended is
+    // judged by them.
+    if (Gauntlet(env) && bot->IsAlive())
+    {
+        TrackRest(_scenario.DecisionMs(), pull, bot);
+
+        if (pulls.PullEngaged && pulls.PullEngageMs == env.EpisodeElapsedMs && pullHealth > 0.0f)
+        {
+            bool const usesMana = bot->GetMaxPower(POWER_MANA) > 0;
+            float const ready = usesMana ? std::min(pull.ReadyHealth, pull.ReadyMana) : pull.ReadyHealth;
+            ++pull.PullsEngaged;
+            pull.EngageHealthSum += pull.ReadyHealth;
+            pull.EngageManaSum += pull.ReadyMana;
+            if (pull.ReadyHealth < READY_LOW_HEALTH || (usesMana && pull.ReadyMana < READY_LOW_MANA))
+                ++pull.PullsStartedLow;
+            if (SoloGauntlet(env))
+                ledger.Add(RewardTerm::Readiness, tuning.SoloGauntletReadiness * ready);
+        }
+
+        if (!pulls.PullEngaged || pulls.PullEngageMs != env.EpisodeElapsedMs)
+        {
+            pull.ReadyHealth = HealthFraction(bot);
+            pull.ReadyMana = ManaFraction(bot);
+        }
     }
 
     if (pullHealth > 0.0f)
@@ -709,11 +887,17 @@ void Animus::Curriculum::PullsEncounter::GauntletAloneTerms(Env& env, SeatState&
     if (!bot->IsAlive())
         return;
 
-    // Lasting to the end is the gauntlet's win: counted as the kill (clean_kill is then a gauntlet survived).
-    if (!tally.Killed && !tally.Died && TimeIsUp(env))
+    // Lasting to the end with Pulls.SoloGauntletWinPulls cleared is the gauntlet's win: counted as the kill
+    // (clean_kill is then a gauntlet endured). Lasting on fewer is the clock running out.
+    if (!tally.Killed && !tally.Died && !tally.TimedOut && TimeIsUp(env))
     {
-        tally.Killed = true;
-        tally.KillTimeMs = env.EpisodeElapsedMs;
+        if (pulls.PullsCleared >= tuning.SoloGauntletWinPulls)
+        {
+            tally.Killed = true;
+            tally.KillTimeMs = env.EpisodeElapsedMs;
+        }
+        else
+            tally.TimedOut = true;
     }
 
     if (!HasCreatures(env))

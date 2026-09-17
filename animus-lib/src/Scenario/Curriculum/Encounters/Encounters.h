@@ -142,6 +142,19 @@ namespace Animus::Curriculum
             uint32 FoodUsed = 0;
             uint32 DrinkUsed = 0;
             uint32 SustainCasts = 0;
+            // Recovery between pulls (solo gauntlet).
+            float ReadyHealth = 1.0f;           // health fraction the decision before (kept through an engage) ...
+            float ReadyMana = 1.0f;             // ... and mana fraction (1 without mana)
+            float EngageHealthSum = 0.0f;       // over the pulls engaged
+            float EngageManaSum = 0.0f;
+            uint32 PullsEngaged = 0;
+            uint32 PullsStartedLow = 0;         // engaged below half health or 30% mana
+            uint32 RestMs = 0;                  // eating or drinking
+            uint32 FoodFailed = 0;
+            uint32 DrinkFailed = 0;
+            uint32 MealsCutShort = 0;           // food or drink ended early with health or mana still to restore
+            int32 FoodLeftMs = -1;              // the food aura's remaining time last decision; -1 without one ...
+            int32 DrinkLeftMs = -1;             // ... and the drink's
         };
 
         struct EnvPulls
@@ -158,6 +171,9 @@ namespace Animus::Curriculum
             uint32 PullsCleared = 0;
             uint32 QuietSinceMs = 0;            // episode time the last pull ended
             uint32 NextPullMs = 0;              // spawn the next pull at this episode time
+            uint32 ArriveMs = 0;                // solo gauntlet: an unengaged pull comes to the seat at this time
+            bool Arrived = false;               // ... and has been sent
+            uint32 PullsArrived = 0;            // pulls that came to the seat before it engaged them
             bool EliteOrHigher = false;
             uint32 Rung = 0;                    // single pack: its ladder rung ...
             uint16 RungLayout = 0;              // ... for this class/role
@@ -182,6 +198,12 @@ namespace Animus::Curriculum
 
         /// A solo gauntlet's per-decision terms: its survival counted as the kill, stall and spacing.
         void GauntletAloneTerms(Env& env, SeatState& seat, Player* bot, RewardLedger& ledger);
+        /// A solo gauntlet's pull nobody engaged in time walks over to the seat.
+        void SendPull(Env& env);
+        /// Food and drink stocked, each: Pulls.GauntletSupplies alone, else CONSUMABLE_COUNT.
+        [[nodiscard]] uint32 Supplies(Env const& env) const;
+        /// Eating and drinking this decision: time spent resting, meals ended with something left to restore.
+        static void TrackRest(uint32 decisionMs, SeatPull& pull, Player const* bot);
         /// Whether the env's episode is one pack on its own (no owner): won on the clear, lost on a death or the clock.
         [[nodiscard]] bool SinglePack(Env const& env) const;
         /// Whether any arena of the stage is: its supplies, episode info columns.

@@ -80,11 +80,12 @@ namespace
             .Extends = "stage2_pack",
             .Summary = "pull after pull with short breaks: heals, food and drink",
             .Blocks = { Core, Duel, Pet, Pack, Gauntlet },
-            // 300 s: pull after pull is the point. At the host's 60 s a break of 8-20 s before each pull left two or
-            // three of them, with nothing to recover for; five minutes hold six to ten, and the solo gauntlet is won
-            // by lasting to the end (PullTuning::SoloGauntlet*).
+            // 450 s: pull after pull is the point. At the host's 60 s a break of 8-20 s before each pull left two or
+            // three of them, with nothing to recover for. Pulls come to the seat when it waits too long and come
+            // sooner as it clears them, so seven and a half minutes hold eight or more, and the solo gauntlet is won
+            // by lasting to the end with Pulls.SoloGauntletWinPulls cleared (PullTuning::SoloGauntlet*).
             .Arenas = { { .Name = "gauntlet", .Against = Opposition::Pulls, .Schedule = PullSchedule::Gauntlet,
-                .EpisodeSeconds = 300 } },
+                .EpisodeSeconds = 450 } },
         });
 
         stages.push_back({
@@ -150,7 +151,7 @@ namespace
                 { .Name = "pvp_scripted", .Weight = 10, .Against = Opposition::ScriptedPlayer, .Pvp = true,
                     .EpisodeSeconds = 60 },
                 { .Name = "gauntlet", .Weight = 10, .Against = Opposition::Pulls, .Schedule = PullSchedule::Gauntlet,
-                    .EpisodeSeconds = 300 },
+                    .EpisodeSeconds = 450 },
                 { .Name = "duel", .Weight = 5, .Against = Opposition::Creature, .EpisodeSeconds = 60 },
                 { .Name = "ambush", .Weight = 15, .Against = Opposition::Pulls, .Schedule = PullSchedule::Gauntlet,
                     .Owner = true, .EpisodeSeconds = 300, .Ambushers = 2 },

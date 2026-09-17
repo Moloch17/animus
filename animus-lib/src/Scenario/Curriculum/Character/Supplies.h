@@ -116,8 +116,8 @@ namespace Animus::Curriculum
     /// Player::StoreNewItemInBestSlots, a full bag is not logged as an error.
     bool StoreInBags(Player* bot, uint32 itemId, uint32 count);
 
-    /// Top the bot's food and drink up to CONSUMABLE_COUNT each; 0 skips one.
-    void StockConsumables(Player* bot, uint32 food, uint32 drink);
+    /// Top the bot's food and drink up to `count` each; 0 skips one.
+    void StockConsumables(Player* bot, uint32 food, uint32 drink, uint32 count = CONSUMABLE_COUNT);
 
     /// Put the supplies in the bot's bags (potions and bandages CONSUMABLE_COUNT each, one healthstone and one
     /// soulstone), teach it the First Aid its bandage needs, and drink its flask or elixir.
