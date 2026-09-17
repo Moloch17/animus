@@ -112,6 +112,9 @@ namespace Animus::Curriculum
             /// single action), fights the same policy sampled won.
             float Stall = 0.05f;
             uint32 StallGraceMs = 15000;        // summoning a pet, buffing and sneaking up in stealth fit in this
+            /// Preparing is not stalling: the grace grows by the time the seat spent starting buffs, forms, stances,
+            /// stealth and pet summons out of combat (CombatTally::PreparationMs), up to this much.
+            uint32 PreparationRefundMaxMs = 30000;
             /// Creature duel, ranged specs: per second the opponent stands in melee range hitting the bot. The approach
             /// shaping only pays for closing in, so nothing told a hunter, mage or warlock to keep the range it
             /// fights best at (stage1_duel at 20M: 88 of 96 hunter kills ended within 5 yd).
@@ -231,6 +234,7 @@ namespace Animus::Curriculum
             uint32 OvertimeGraceMs = 60000;
             float Stall = 0.05f;                // pack: per second not engaged once StallGraceMs are gone
             uint32 StallGraceMs = 15000;
+            uint32 PreparationRefundMaxMs = 30000;  // pack: as the duel's
             float Spacing = 0.03f;              // pack: per second a ranged spec is hit in melee reach
             float OwnerClearScale = 2.0f;       // owner stages: kills and clears count this many times
         } Pulls;
@@ -383,6 +387,7 @@ namespace Animus::Curriculum
             f("Duel.Timeout", tuning.Duel.Timeout);
             f("Duel.Stall", tuning.Duel.Stall);
             f("Duel.StallGraceMs", tuning.Duel.StallGraceMs);
+            f("Duel.PreparationRefundMaxMs", tuning.Duel.PreparationRefundMaxMs);
             f("Duel.Spacing", tuning.Duel.Spacing);
             f("Duel.MeleeRange", tuning.Duel.MeleeRange);
             f("Duel.RangedRange", tuning.Duel.RangedRange);
@@ -446,6 +451,7 @@ namespace Animus::Curriculum
             f("Pulls.OvertimeGraceMs", tuning.Pulls.OvertimeGraceMs);
             f("Pulls.Stall", tuning.Pulls.Stall);
             f("Pulls.StallGraceMs", tuning.Pulls.StallGraceMs);
+            f("Pulls.PreparationRefundMaxMs", tuning.Pulls.PreparationRefundMaxMs);
             f("Pulls.Spacing", tuning.Pulls.Spacing);
             f("Pulls.OwnerClearScale", tuning.Pulls.OwnerClearScale);
 
