@@ -281,6 +281,7 @@ std::string Animus::Curriculum::PetBlock::ActionName(Layout const& /*layout*/, u
 {
     static constexpr std::array<char const*, ACTION_COUNT - ACTION_PASSIVE> ORDERS =
         { "pet_passive", "pet_defensive", "pet_aggressive", "pet_follow", "pet_stay" };
+    static_assert(ORDERS.back() != nullptr, "every pet order needs a name");
 
     // Ability slots hold whatever the current pet has, most valuable kind first (Abilities).
     if (local < ACTION_PASSIVE)

@@ -989,13 +989,6 @@ void Animus::Curriculum::PullsEncounter::GauntletAloneTerms(Env& env, SeatState&
     if (!bot->IsAlive())
         return;
 
-    // A planned run is won by clearing its last pull alive, whenever that happens.
-    if (Sequence(env) && !tally.Killed && !tally.Died && pulls.PullsCleared >= SEQUENCE_PULLS.size())
-    {
-        tally.Killed = true;
-        tally.KillTimeMs = env.EpisodeElapsedMs;
-    }
-
     // Lasting to the end with Pulls.SoloGauntletWinPulls cleared is the gauntlet's win: counted as the kill
     // (clean_kill is then a gauntlet endured). Lasting on fewer is the clock running out.
     if (!tally.Killed && !tally.Died && !tally.TimedOut && TimeIsUp(env))
@@ -1197,6 +1190,23 @@ void Animus::Curriculum::PullsEncounter::AfterRewards(Env& env)
     Despawn(env);
     ++pulls.PullsCleared;
     EndPull(env, pulls);
+
+    // A planned run's last pull: the win is recorded here, not at the next decision's reward. IsTerminal ends the
+    // episode as soon as the run is finished, so a seat waiting for its next reward would never be counted a winner.
+    if (Sequence(env) && pulls.PullsCleared >= SEQUENCE_PULLS.size())
+    {
+        EnvState& data = _scenario.Data(env);
+        for (uint32 seat = 0; seat < data.ActiveSeats; ++seat)
+        {
+            Player* bot = _scenario.SeatBot(env, seat);
+            CombatTally& tally = data.Seats[seat].Combat;
+            if (bot && bot->IsAlive() && !tally.Killed && !tally.Died)
+            {
+                tally.Killed = true;
+                tally.KillTimeMs = env.EpisodeElapsedMs;
+            }
+        }
+    }
 }
 
 void Animus::Curriculum::PullsEncounter::WriteState(Env const& env, float* state) const

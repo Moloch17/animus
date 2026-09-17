@@ -197,8 +197,9 @@ std::string Animus::Curriculum::DuelBlock::ActionName(Layout const& /*layout*/, 
     {
         "move_to_target", "move_behind", "move_to_range", "back_off", "stop", "start_attack", "pet_attack",
         "stop_casting", "cancel_form", "health_potion", "mana_potion", "healthstone", "bandage", "soulstone_self",
-        "self_resurrect", "break_line_of_sight"
+        "self_resurrect", "break_line_of_sight", "keep_range"
     };
+    static_assert(NAMES.size() == ACTION_COUNT_WITHOUT_STABLE, "every duel action needs a name");
 
     if (local < NAMES.size())
         return NAMES[local];
