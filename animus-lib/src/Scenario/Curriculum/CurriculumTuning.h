@@ -156,6 +156,15 @@ namespace Animus::Curriculum
             float Cancel = 0.05f;
         } Casting;
 
+        /// The learner's goals (SeatGoal), in every stage that its policy chooses them for.
+        struct GoalTuning
+        {
+            /// Per decision whose actions matched the seat's goal (StageScenario::GoalHeld). Small on purpose: it is
+            /// there to keep the goals apart -- without it nothing stops every goal collapsing into one -- not to pay
+            /// for play the stage's own terms already price.
+            float Match = 0.01f;
+        } Goals;
+
         /// Looking after itself and its friends, in every stage.
         struct SupportTuning
         {
@@ -250,6 +259,21 @@ namespace Animus::Curriculum
             /// so dying never ends it more cheaply than the timeout would.
             float Overtime = 0.1f;              // pack: per second of a fight past OvertimeGraceMs since it was engaged
             uint32 OvertimeGraceMs = 60000;
+            /// Pack: crowd control priced as the damage it prevents, in the seat's own maximum healths, so it is in
+            /// the currency DamageTaken is already charged in and the two weights are comparable. The divisor is
+            /// *current* health, floored at ControlHealthFloor of the maximum: preventing a hit matters more the less
+            /// health there is to lose, which is what makes control a survival tool rather than a damage discount.
+            /// SinglePackControl 0 measures without paying -- control_prevented still reports -- so the weight can be
+            /// set from what a run actually saves instead of guessed, and turning it on is a config change.
+            float SinglePackControl = 0.0f;
+            float SinglePackControlMax = 1.0f;  // ... at most this per pull, a guard rather than a shaping knob
+            float ControlHealthFloor = 0.2f;
+            float ControlFallbackDps = 0.02f;   // maximum healths per second, for an enemy that never got to act
+            uint32 ControlRateMinMs = 3000;     // free-to-act time before an enemy's own measured rate is trusted
+            /// Pack: control time extends the overtime grace, up to this much, so holding an add is not charged as
+            /// dragging the fight out. 0 leaves the grace alone. Bounded on purpose: Overtime exists to stop kiting
+            /// the clock, and an unbounded pause would hand that back.
+            uint32 ControlGraceMaxMs = 0;
             float Stall = 0.05f;                // pack: per second not engaged once StallGraceMs are gone
             uint32 StallGraceMs = 15000;
             uint32 PreparationRefundMaxMs = 30000;  // pack: as the duel's
@@ -287,6 +311,12 @@ namespace Animus::Curriculum
             uint32 ArriveFloorMs = 10000;
             uint32 NextPullShrinkMs = 1000;
             uint32 NextPullFloorMs = 4000;
+            /// Gauntlets (stages 3-5, 8): what the per-hit terms -- damage dealt, damage taken, kills, approach --
+            /// are multiplied by. A plan pays at the end of a pull or an episode (the clear, surviving, readiness,
+            /// control), and dense terms paid every decision drown those out: a seat that opens on the nearest enemy
+            /// and never stops earns most of what a careful one does, minutes sooner. Below 1 the outcome is what the
+            /// stage is about; 1 leaves the single pack's balance alone.
+            float GauntletDenseScale = 0.5f;
             float OwnerClearScale = 2.0f;       // owner stages: kills and clears count this many times
             /// Owner arenas keep what the solo gauntlet teaches: readiness paid when a pull is engaged (the lower of
             /// health and mana), crowd control that keeps an add out of the fight (per enemy-second, capped per pull),
@@ -482,6 +512,8 @@ namespace Animus::Curriculum
             f("Actions.RepeatWindowMs", tuning.Actions.RepeatWindowMs);
             f("Actions.RepeatFree", tuning.Actions.RepeatFree);
 
+            f("Goals.Match", tuning.Goals.Match);
+
             f("Support.SelfHealing", tuning.Support.SelfHealing);
             f("Support.BuffCoverage", tuning.Support.BuffCoverage);
 
@@ -520,6 +552,12 @@ namespace Animus::Curriculum
             f("Pulls.Timeout", tuning.Pulls.Timeout);
             f("Pulls.Overtime", tuning.Pulls.Overtime);
             f("Pulls.OvertimeGraceMs", tuning.Pulls.OvertimeGraceMs);
+            f("Pulls.SinglePackControl", tuning.Pulls.SinglePackControl);
+            f("Pulls.SinglePackControlMax", tuning.Pulls.SinglePackControlMax);
+            f("Pulls.ControlHealthFloor", tuning.Pulls.ControlHealthFloor);
+            f("Pulls.ControlFallbackDps", tuning.Pulls.ControlFallbackDps);
+            f("Pulls.ControlRateMinMs", tuning.Pulls.ControlRateMinMs);
+            f("Pulls.ControlGraceMaxMs", tuning.Pulls.ControlGraceMaxMs);
             f("Pulls.Stall", tuning.Pulls.Stall);
             f("Pulls.StallGraceMs", tuning.Pulls.StallGraceMs);
             f("Pulls.PreparationRefundMaxMs", tuning.Pulls.PreparationRefundMaxMs);
@@ -539,6 +577,7 @@ namespace Animus::Curriculum
             f("Pulls.ArriveFloorMs", tuning.Pulls.ArriveFloorMs);
             f("Pulls.NextPullShrinkMs", tuning.Pulls.NextPullShrinkMs);
             f("Pulls.NextPullFloorMs", tuning.Pulls.NextPullFloorMs);
+            f("Pulls.GauntletDenseScale", tuning.Pulls.GauntletDenseScale);
             f("Pulls.OwnerClearScale", tuning.Pulls.OwnerClearScale);
             f("Pulls.OwnerReadiness", tuning.Pulls.OwnerReadiness);
             f("Pulls.OwnerControl", tuning.Pulls.OwnerControl);

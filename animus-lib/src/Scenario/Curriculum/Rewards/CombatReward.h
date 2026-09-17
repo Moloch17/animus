@@ -58,6 +58,12 @@ namespace Animus::Curriculum
         /// each new target of one that kept it.
         void Stealth(CombatTally& tally, float opener, float utility, RewardLedger& ledger);
 
+        /// How the seat is fighting `target`, measured only: time in the fight (FightMs, which every style share is
+        /// divided by), time inside melee reach, time the target spent on the bot's pet, and the roots and snares the
+        /// bot or its pet and totems hold it with. The caller decides when a fight is on; a null target still counts
+        /// the time. Counted for whatever the seat is fighting, so a pack's target counts as a duel's opponent does.
+        void Style(Player const* bot, Unit const* target, uint32 decisionMs, CombatTally& tally);
+
         /// A seat's reward against one opponent (a creature or a player): damage dealt as a fraction of its health,
         /// damage taken, casting, approach, stealth openers, the kill (faster and healthier pays more), death.
         void OneOnOne(StageScenario& scenario, Env const& env, uint32 seat, Player* bot, Unit* opponent,

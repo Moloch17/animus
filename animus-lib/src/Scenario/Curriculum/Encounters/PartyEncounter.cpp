@@ -142,7 +142,8 @@ void Animus::Curriculum::PartyEncounter::View(Env const& env, uint32 seatIndex, 
             continue;
 
         Layout const& other = *data.Seats[teammateSeat].L;
-        view.Teammates[slot] = { env.FindBot(teammateSeat), other.PlayRole(), other.Profile->Class };
+        view.Teammates[slot] = { env.FindBot(teammateSeat), data.Seats[teammateSeat].Goal, other.PlayRole(),
+            other.Profile->Class };
     }
 
     view.Tank = Tank(env);

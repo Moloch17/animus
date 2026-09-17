@@ -121,6 +121,7 @@ namespace Animus::Curriculum
         bool Setup(Env& env) override;
         void Reset(Env& env) override;
         void ApplyActions(Env& env, int32 const* actions) override;
+        void ApplyGoals(Env& env, int32 const* goals) override;
         void Observe(Env& env, float* obs, float* state, uint8* mask) override;
         void AgentLayouts(Env const& env, uint16* layout) const override;
         void AgentPresence(Env const& env, uint8* present) const override;
@@ -243,6 +244,10 @@ namespace Animus::Curriculum
         void Press(Env const& env, SeatState& seat, Player* bot, uint32 action) const;
         void ObserveSeat(Env& env, uint32 seat, float* obs, uint8* mask);
         [[nodiscard]] float SeatReward(Env& env, uint32 seat);
+        /// Whether the seat's decision matched the goal it is pursuing (SeatGoal): damage for Fight, an enemy other
+        /// than its target held for Control, healing or resting itself for Recover, healing or shielding the owner or
+        /// a teammate for Protect, its spec's range for Position, a buff, summon or stealth out of combat for Prepare.
+        [[nodiscard]] bool GoalHeld(Env const& env, uint32 seatIndex, Player* bot) const;
         /// Before a seat's reward: what its absorbs on itself and its friends soaked since the last one (into the
         /// step's protection stats), and whether any friend is low.
         void TrackSupport(Env& env, uint32 seatIndex, Player* bot);

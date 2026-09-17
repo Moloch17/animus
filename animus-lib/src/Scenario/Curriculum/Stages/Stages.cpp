@@ -208,6 +208,22 @@ namespace
             .MinLevel = 20,
         });
 
+        // A planned run: the same eight pulls in the same order every episode, ending on an elite pack two levels
+        // above. Nothing about the fights is left to learn -- stage 3 taught them -- so what is left is the plan:
+        // what to spend on the opener, what to keep for the last pull, when the breather is a rest and when it is a
+        // chance to get ahead. Won by clearing the last pull alive; the clock running out is a loss however far it
+        // got. Trained by name, after stage 3.
+        stages.push_back({
+            .Name = "stage12_endurance",
+            .Suffix = "_endurance",
+            .Extends = "stage3_gauntlet",
+            .Summary = "a known run of eight pulls, won by finishing it",
+            .Blocks = { Core, Duel, Pet, Pack, Gauntlet, Support },
+            .Arenas = { { .Name = "endurance", .Against = Opposition::Pulls, .Schedule = PullSchedule::Sequence,
+                .EpisodeSeconds = 900 } },
+            .InDefaultQueue = false,
+        });
+
         // A pilot of arena mixing and merging, not part of the curriculum: the duel and the scripted enemy player in
         // one stage, merging the two stages that trained them (each teaches its arena). Trained only when named
         // (forge start mix_duel_pvp).
@@ -242,7 +258,8 @@ namespace
             return "a pull schedule goes with pulls, and only with pulls";
         if (pulls && !stage.Has(BlockId::Pack))
             return "pulls need the pack block";
-        if (arena.Schedule == PullSchedule::Gauntlet && !stage.Has(BlockId::Gauntlet))
+        if ((arena.Schedule == PullSchedule::Gauntlet || arena.Schedule == PullSchedule::Sequence)
+            && !stage.Has(BlockId::Gauntlet))
             return "the gauntlet schedule needs the gauntlet block";
         if (arena.Owner && (!(pulls || ambushOnly) || !stage.Has(BlockId::Companion)))
             return "an owner needs pulls or an ambush, and the companion block";

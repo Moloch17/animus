@@ -68,6 +68,21 @@ namespace
         { 2, 1, 1, 1 },     // 4 with an elite, a level above
     }};
 
+    /// A planned run's pulls (PullSchedule::Sequence), in order: the same fights every episode, ending on a pack
+    /// that cannot be walked into without something saved for it. A seat that spends everything on the first pull
+    /// arrives at the last one with nothing, which is the whole point of the stage.
+    constexpr std::array<PackRung, 8> SEQUENCE_PULLS =
+    {{
+        { 1, 1, 0, 0 },     // 2: an opener
+        { 1, 2, 0, 0 },     // 3
+        { 2, 2, 0, 0 },     // 4, two of them casters
+        { 1, 1, 0, 0 },     // 2: a breather, if it is used as one
+        { 1, 3, 0, 0 },     // 4
+        { 1, 1, 1, 0 },     // 3 with an elite
+        { 2, 1, 1, 1 },     // 4 with an elite, a level above
+        { 1, 1, 1, 2 },     // the last stand: an elite pack two levels above
+    }};
+
     /// The pull's creatures leave; enemy players in the slots (ambushers) stay.
     void Despawn(Animus::Env& env)
     {
@@ -129,7 +144,7 @@ bool Animus::Curriculum::PullsEncounter::AnyGauntlet() const
 {
     return _scenario.Stage().AnyArena([](ArenaDefinition const& arena)
     {
-        return arena.Schedule == PullSchedule::Gauntlet;
+        return arena.Schedule == PullSchedule::Gauntlet || arena.Schedule == PullSchedule::Sequence;
     });
 }
 
@@ -140,10 +155,10 @@ std::vector<Animus::Curriculum::RewardTerm> Animus::Curriculum::PullsEncounter::
         RewardTerm::Interrupt, RewardTerm::Kill, RewardTerm::Clear, RewardTerm::HealthKept, RewardTerm::Death,
         RewardTerm::Timeout, RewardTerm::Stall, RewardTerm::Spacing };
     if (AnyGauntlet())
-    {
         terms.push_back(RewardTerm::Readiness);
-        terms.push_back(RewardTerm::Control);
-    }
+
+    // Control is paid for a single pack too (Pulls.SinglePackControl), so every pulls stage carries the term.
+    terms.push_back(RewardTerm::Control);
     return terms;
 }
 
@@ -162,6 +177,17 @@ void Animus::Curriculum::PullsEncounter::AddEpisodeInfo(EpisodeInfoTable& table)
     });
     table.Add("pack_size", [this](Env const& env, uint32) { return float(_envs[env.Index].PackSize); });
     table.Add("linked", [this](Env const& env, uint32) { return _envs[env.Index].Linked ? 1.0f : 0.0f; });
+
+    // Crowd control: enemy-time held out of the fight, and what that time saved in the seat's own maximum healths.
+    // Both are reported whether or not control is paid for, so a run says what control would have been worth.
+    table.Add("control_seconds", [this](Env const& env, uint32 seat)
+    {
+        return float(_envs[env.Index].Seats[seat].ControlMs) / 1000.0f;
+    });
+    table.Add("control_prevented", [this](Env const& env, uint32 seat)
+    {
+        return _envs[env.Index].Seats[seat].ControlPrevented;
+    });
 
     // The single pack's rung, as the creature duel's tier (a stage with both reports the duel's).
     auto const singlePack = [](ArenaDefinition const& arena)
@@ -228,10 +254,6 @@ void Animus::Curriculum::PullsEncounter::AddEpisodeInfo(EpisodeInfoTable& table)
         {
             SeatPull const& pull = _envs[env.Index].Seats[seat];
             return pull.PullsEngaged ? pull.BuffCoverageSum / float(pull.PullsEngaged) : 0.0f;
-        });
-        table.Add("control_seconds", [this](Env const& env, uint32 seat)
-        {
-            return float(_envs[env.Index].Seats[seat].ControlMs) / 1000.0f;
         });
     }
 
@@ -315,6 +337,24 @@ bool Animus::Curriculum::PullsEncounter::SpawnPull(Env& env, Map* map)
             if (uint32 const entry = elite ? elite : pool.RandomPackMember(poolLevel))
                 entries.push_back(entry);
         }
+    }
+
+    // A planned run: the same pull for the same position, every episode.
+    if (entries.empty() && Sequence(env))
+    {
+        PackRung const& planned = SEQUENCE_PULLS[std::min<std::size_t>(pulls.PullsCleared, SEQUENCE_PULLS.size() - 1)];
+        level = uint8(std::min<uint32>(HIGHEST_OPPONENT_LEVEL, botLevel + planned.Levels));
+        uint8 const poolLevel = uint8(std::min<uint32>(level, DEFAULT_MAX_LEVEL));
+        pulls.EliteOrHigher = planned.Elites || planned.Levels;
+        for (uint32 i = 0; i < planned.Casters; ++i)
+            if (uint32 const entry = pool.RandomCaster(poolLevel))
+                entries.push_back(entry);
+        for (uint32 i = 0; i < planned.Elites; ++i)
+            if (uint32 const entry = pool.RandomElite(poolLevel))
+                entries.push_back(entry);
+        for (uint32 i = 0; i < planned.Others; ++i)
+            if (uint32 const entry = pool.RandomPackMember(poolLevel))
+                entries.push_back(entry);
     }
 
     // A single pack is its class/role's rung on the ladder.
@@ -414,6 +454,10 @@ bool Animus::Curriculum::PullsEncounter::SpawnPull(Env& env, Map* map)
         data.Seats[seat].Combat.LastDistance = -1.0f;
         pulls.Seats[seat].PullDamageTaken = 0;
         pulls.Seats[seat].PullControlPaid = 0.0f;
+        // Each pull brings its own creatures into the same slots: what the last one's did says nothing about these.
+        pulls.Seats[seat].SlotDamage.fill(0);
+        pulls.Seats[seat].SlotFreeMs.fill(0);
+        pulls.Seats[seat].ControlledMs = 0;
         if (Player* bot = env.FindBot(seat))
         {
             pulls.Seats[seat].ReadyHealth = HealthFraction(bot);
@@ -465,6 +509,10 @@ void Animus::Curriculum::PullsEncounter::Update(Env& env)
         SendPull(env);
 
     if (!Gauntlet(env) || HasCreatures(env) || env.EpisodeElapsedMs < pulls.NextPullMs)
+        return;
+
+    // A planned run ends when its last pull has been cleared: nothing more spawns.
+    if (Sequence(env) && pulls.PullsCleared >= SEQUENCE_PULLS.size())
         return;
 
     // The next pull once the break is over, if anyone is left to fight it.
@@ -772,19 +820,33 @@ void Animus::Curriculum::PullsEncounter::Reward(Env& env, uint32 seatIndex, Play
         }
     }
 
+    // A gauntlet is about lasting through many fights, so what is paid every decision counts for less there: the
+    // clear, surviving, readiness and control are what a plan earns (Pulls.GauntletDenseScale).
+    float const dense = Gauntlet(env) ? tuning.GauntletDenseScale : 1.0f;
+
     if (pullHealth > 0.0f)
-        ledger.Add(RewardTerm::DamageDealt, tuning.DamageDealt * float(step.Damage) / pullHealth);
+        ledger.Add(RewardTerm::DamageDealt, dense * tuning.DamageDealt * float(step.Damage) / pullHealth);
 
     tally.DamageTaken += step.DamageTaken;
     pull.PullDamageTaken += step.DamageTaken;
     ledger.Add(RewardTerm::DamageTaken,
-        -(Gauntlet(env) ? tuning.GauntletDamageTaken : tuning.DamageTaken) * seat.LastStepDamageTaken);
+        -dense * (Gauntlet(env) ? tuning.GauntletDamageTaken : tuning.DamageTaken) * seat.LastStepDamageTaken);
 
     CombatReward::Casting(bot, step, tally, _scenario.Tuning().Casting, ledger);
     CombatReward::Approach(bot, nearest && bot->IsAlive() ? nearest : nullptr,
-        CombatReward::DesiredRange(seat, _scenario.Tuning().Duel), tuning.Approach, tally, ledger);
+        CombatReward::DesiredRange(seat, _scenario.Tuning().Duel), dense * tuning.Approach, tally, ledger);
 
     CombatReward::Stealth(tally, tuning.StealthOpener, tuning.StealthUtility, ledger);
+
+    // How the seat is fighting its current target, measured as a duel measures it. CombatReward::OneOnOne is not
+    // called here and it held the whole style tally, so without this a pack's roots and snares read zero and every
+    // share divided by FightMs -- in_melee_share, target_on_pet_share, the two control shares -- reads 0 out of 0.
+    // A target that just died still counts the time: the fight goes on, there is simply nothing to hold.
+    if (pulls.PullEngaged && bot->IsAlive())
+    {
+        Unit* target = env.FindTargetUnit(seat.TargetSlot);
+        CombatReward::Style(bot, target && target->IsAlive() ? target : nullptr, _scenario.DecisionMs(), tally);
+    }
 
     // An interrupt counts when the enemy it was cast at had its cast cut short since: a cast that finished on its own,
     // or an enemy that died, is not one.
@@ -807,7 +869,7 @@ void Animus::Curriculum::PullsEncounter::Reward(Env& env, uint32 seatIndex, Play
     // learned to fight less to avoid the penalties.
     float const clearScale = _scenario.Arena(env).Owner ? tuning.OwnerClearScale : 1.0f;
     if (pulls.NewKills)
-        ledger.Add(RewardTerm::Kill, tuning.Kill * clearScale * float(pulls.NewKills));
+        ledger.Add(RewardTerm::Kill, dense * tuning.Kill * clearScale * float(pulls.NewKills));
 
     if (pulls.PullCleared)
     {
@@ -882,7 +944,14 @@ void Animus::Curriculum::PullsEncounter::Reward(Env& env, uint32 seatIndex, Play
         if (!pulls.PullEngaged && env.EpisodeElapsedMs > graceMs)
             ledger.Add(RewardTerm::Stall, -tuning.Stall * seconds);
 
-        if (pulls.PullEngaged && env.EpisodeElapsedMs > pulls.PullEngageMs + tuning.OvertimeGraceMs)
+        if (pulls.PullEngaged)
+            ControlPreventedTerm(env, seat, pull, bot, step, ledger);
+
+        // Time spent holding an add extends the grace, up to Pulls.ControlGraceMaxMs: control lengthens a fight on
+        // purpose, and charging it as dragging one out is what left crowd control paying less than it cost.
+        uint32 const overtimeGraceMs = tuning.OvertimeGraceMs
+            + std::min(pull.ControlledMs, tuning.ControlGraceMaxMs);
+        if (pulls.PullEngaged && env.EpisodeElapsedMs > pulls.PullEngageMs + overtimeGraceMs)
             ledger.Add(RewardTerm::Timeout, -tuning.Overtime * seconds);
 
         if (seat.L && seat.L->Profile->Specs[seat.Spec].Range != RangeBand::Melee)
@@ -920,11 +989,19 @@ void Animus::Curriculum::PullsEncounter::GauntletAloneTerms(Env& env, SeatState&
     if (!bot->IsAlive())
         return;
 
+    // A planned run is won by clearing its last pull alive, whenever that happens.
+    if (Sequence(env) && !tally.Killed && !tally.Died && pulls.PullsCleared >= SEQUENCE_PULLS.size())
+    {
+        tally.Killed = true;
+        tally.KillTimeMs = env.EpisodeElapsedMs;
+    }
+
     // Lasting to the end with Pulls.SoloGauntletWinPulls cleared is the gauntlet's win: counted as the kill
     // (clean_kill is then a gauntlet endured). Lasting on fewer is the clock running out.
     if (!tally.Killed && !tally.Died && !tally.TimedOut && TimeIsUp(env))
     {
-        if (pulls.PullsCleared >= tuning.SoloGauntletWinPulls)
+        // A planned run is won by finishing it, not by lasting: its clock running out is a loss however far it got.
+        if (!Sequence(env) && pulls.PullsCleared >= tuning.SoloGauntletWinPulls)
         {
             tally.Killed = true;
             tally.KillTimeMs = env.EpisodeElapsedMs;
@@ -1006,10 +1083,7 @@ void Animus::Curriculum::PullsEncounter::ControlTerm(Env& env, SeatState const& 
         if (enemy->IsPlayer() || enemy == target)
             continue;
 
-        Unit const* victim = enemy->GetVictim();
-        bool const rootedAway = enemy->HasUnitState(UNIT_STATE_ROOT) && !enemy->IsNonMeleeSpellCast(false)
-            && (!victim || !enemy->IsWithinMeleeRange(victim));
-        if (enemy->HasUnitState(UNIT_STATE_CONTROLLED) || enemy->HasAuraType(SPELL_AURA_TRANSFORM) || rootedAway)
+        if (Controlled(enemy))
             ++controlled;
     }
 
@@ -1018,6 +1092,89 @@ void Animus::Curriculum::PullsEncounter::ControlTerm(Env& env, SeatState const& 
 
     pull.ControlMs += controlled * _scenario.DecisionMs();
     float const pay = std::min(perSecond * seconds * float(controlled), std::max(0.0f, perPull - pull.PullControlPaid));
+    if (pay > 0.0f)
+    {
+        pull.PullControlPaid += pay;
+        ledger.Add(RewardTerm::Control, pay);
+    }
+}
+
+bool Animus::Curriculum::PullsEncounter::Controlled(Unit const* enemy)
+{
+    Unit const* victim = enemy->GetVictim();
+    bool const rootedAway = enemy->HasUnitState(UNIT_STATE_ROOT) && !enemy->IsNonMeleeSpellCast(false)
+        && (!victim || !enemy->IsWithinMeleeRange(victim));
+    return enemy->HasUnitState(UNIT_STATE_CONTROLLED) || enemy->HasAuraType(SPELL_AURA_TRANSFORM) || rootedAway;
+}
+
+void Animus::Curriculum::PullsEncounter::ControlPreventedTerm(Env& env, SeatState const& seat, SeatPull& pull,
+    Player const* bot, AgentStats const& step, RewardLedger& ledger)
+{
+    CurriculumTuning::PullTuning const& tuning = _scenario.Tuning().Pulls;
+    uint32 const decisionMs = _scenario.DecisionMs();
+    float const maxHealth = float(std::max<uint32>(1, bot->GetMaxHealth()));
+    Unit const* target = env.FindTargetUnit(seat.TargetSlot);
+
+    // What each enemy dealt while it was free to act, so its own rate can be read back when it is held. An enemy
+    // that is controlled is neither dealing damage nor earning free time: only what it does when loose counts.
+    uint32 alive = 0;
+    uint32 held = 0;
+    float measured = 0.0f;              // damage per ms over the slots with enough free time to trust
+    uint32 measuredSlots = 0;
+    for (std::size_t slot = 0; slot < env.Targets.size() && slot < MAX_TARGETS; ++slot)
+    {
+        Unit* enemy = env.FindTargetUnit(uint32(slot));
+        if (!enemy || !enemy->IsAlive() || enemy->IsPlayer())
+            continue;
+
+        ++alive;
+        pull.SlotDamage[slot] += step.DamageTakenBy[slot];
+        if (!Controlled(enemy))
+        {
+            pull.SlotFreeMs[slot] += decisionMs;
+            if (pull.SlotFreeMs[slot] >= tuning.ControlRateMinMs)
+            {
+                measured += float(pull.SlotDamage[slot]) / float(pull.SlotFreeMs[slot]);
+                ++measuredSlots;
+            }
+        }
+        else if (enemy != target)
+            ++held;
+    }
+
+    if (!held || alive < 2)
+        return;
+
+    // A held enemy is credited its own rate once it has been loose long enough to have one, else the pull's mean,
+    // else the configured fallback: a pack sapped before it ever swings still prevented something.
+    float const fallback = measuredSlots ? measured / float(measuredSlots)
+        : tuning.ControlFallbackDps * maxHealth / 1000.0f;
+    float prevented = 0.0f;
+    for (std::size_t slot = 0; slot < env.Targets.size() && slot < MAX_TARGETS; ++slot)
+    {
+        Unit* enemy = env.FindTargetUnit(uint32(slot));
+        if (!enemy || !enemy->IsAlive() || enemy->IsPlayer() || enemy == target || !Controlled(enemy))
+            continue;
+
+        float const rate = pull.SlotFreeMs[slot] >= tuning.ControlRateMinMs
+            ? float(pull.SlotDamage[slot]) / float(pull.SlotFreeMs[slot]) : fallback;
+        prevented += rate * float(decisionMs);
+    }
+
+    // Over health now, not maximum health: the same hit prevented is worth more the less there is left to lose, which
+    // is what makes control a survival tool. Floored so it cannot run away as the seat nears death.
+    float const floor = std::max(1.0f, tuning.ControlHealthFloor * maxHealth);
+    float const health = std::max(floor, float(bot->GetHealth()));
+    float const value = prevented / health;
+
+    // ControlMs is enemy-time, as the gauntlet's ControlTerm counts it, so control_seconds means the same thing in
+    // both; ControlledMs is the wall time behind it, which is what the overtime grace is allowed to grow by.
+    pull.ControlMs += held * decisionMs;
+    pull.ControlledMs += decisionMs;
+    pull.ControlPrevented += prevented / maxHealth;
+
+    float const pay = std::min(tuning.SinglePackControl * value,
+        std::max(0.0f, tuning.SinglePackControlMax - pull.PullControlPaid));
     if (pay > 0.0f)
     {
         pull.PullControlPaid += pay;
@@ -1064,6 +1221,8 @@ bool Animus::Curriculum::PullsEncounter::IsTerminal(Env const& env) const
         return false;
 
     bool const dead = _scenario.DeadForGood(env, 0);
+    if (Sequence(env))
+        return dead || _envs[env.Index].PullsCleared >= SEQUENCE_PULLS.size();
     if (Gauntlet(env))
         return dead;
 

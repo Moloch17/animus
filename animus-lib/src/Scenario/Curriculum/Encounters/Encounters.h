@@ -22,6 +22,7 @@
 #include "BotSlot.h"
 #include "DifficultyLadder.h"
 #include "Encounter.h"
+#include "Env.h"
 #include "ObjectGuid.h"
 #include "RewardLedger.h"
 #include "ScriptedPlayer.h"
@@ -158,6 +159,17 @@ namespace Animus::Curriculum
             int32 DrinkLeftMs = -1;             // ... and the drink's
             uint32 ControlMs = 0;               // enemy-time kept out of the fight by crowd control (solo gauntlet)
             float PullControlPaid = 0.0f;       // ... and the control reward paid for the current pull
+            /// Crowd control priced as the damage it prevents (single pack). What holding an enemy out of the fight
+            /// saves is that enemy's own damage rate, measured over the time it was alive and free to act; an enemy
+            /// that has not been free for Pulls.ControlRateMinMs yet is estimated from the pull's measured mean, and
+            /// a pull with nothing measured from Pulls.ControlFallbackDps -- so a pre-pull Sap, which never lets its
+            /// target swing at all, is still paid for what it prevents.
+            std::array<uint64, MAX_TARGETS> SlotDamage{};   // damage each enemy slot dealt this seat, this pull ...
+            std::array<uint32, MAX_TARGETS> SlotFreeMs{};   // ... and how long it was alive and free to act
+            /// Wall time of the pull with at least one add held, which is what extends the overtime grace. Enemy-time
+            /// (ControlMs) would let two adds held at once buy twice the grace for the same delay.
+            uint32 ControlledMs = 0;
+            float ControlPrevented = 0.0f;      // damage prevented this episode, in the seat's maximum healths
         };
 
         struct EnvPulls
@@ -191,13 +203,21 @@ namespace Animus::Curriculum
         /// Whether the env's episode is pull after pull (else a single pack).
         [[nodiscard]] bool Gauntlet(Env const& env) const
         {
-            return _scenario.Arena(env).Schedule == PullSchedule::Gauntlet;
+            PullSchedule const schedule = _scenario.Arena(env).Schedule;
+            return schedule == PullSchedule::Gauntlet || schedule == PullSchedule::Sequence;
         }
 
         /// Pull after pull with no owner: won by lasting (PullTuning::SoloGauntlet*).
         [[nodiscard]] bool SoloGauntlet(Env const& env) const
         {
             return Gauntlet(env) && !_scenario.Arena(env).Owner;
+        }
+
+        /// A known run of pulls in a fixed order (PullSchedule::Sequence): the same fights, in the same order, every
+        /// episode, so what is left to learn is the plan -- what to spend early, what to save for the end.
+        [[nodiscard]] bool Sequence(Env const& env) const
+        {
+            return _scenario.Arena(env).Schedule == PullSchedule::Sequence;
         }
 
         /// A solo gauntlet's per-decision terms: its survival counted as the kill, stall, spacing and control.
@@ -208,6 +228,15 @@ namespace Animus::Curriculum
         /// member is alive: `perSecond` per enemy-second, up to `perPull` a pull.
         void ControlTerm(Env& env, SeatState const& seat, SeatPull& pull, float perSecond, float perPull,
             RewardLedger& ledger);
+        /// Whether an enemy is held out of the fight: stunned, incapacitated, asleep, polymorphed, feared, or rooted
+        /// out of melee reach of what it was fighting and not casting at it.
+        [[nodiscard]] static bool Controlled(Unit const* enemy);
+        /// A single pack's control, priced as the damage it prevents rather than as time held. Tracks what each enemy
+        /// slot deals while it is free to act, credits every held add its own rate over the decision, and pays
+        /// Pulls.SinglePackControl times that -- in maximum healths, over health now, so control is worth more the
+        /// less health there is to lose. Also accumulates the wall time held, which extends the overtime grace.
+        void ControlPreventedTerm(Env& env, SeatState const& seat, SeatPull& pull, Player const* bot,
+            AgentStats const& step, RewardLedger& ledger);
         /// A solo gauntlet's pull nobody engaged in time walks over to the seat.
         void SendPull(Env& env);
         /// Food and drink stocked, each: Pulls.GauntletSupplies alone, else CONSUMABLE_COUNT.

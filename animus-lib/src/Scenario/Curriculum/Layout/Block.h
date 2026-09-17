@@ -85,6 +85,27 @@ namespace Animus::Curriculum
     constexpr uint32 FRIEND_TEAMMATE_FIRST = 2;
     /// Rank tiers of a heal with ranks: the highest known, about two thirds up the known ranks, about a third up.
     constexpr uint32 RANK_TIERS = 3;
+
+    /// What a seat is trying to do over the next few seconds. The learner's goal head picks one every
+    /// mappo.goal_every_decisions and keeps it until the next choice (MappoConfig), and sends it with the actions;
+    /// the sim scores whether the seat's decisions match it (StageScenario::GoalHeld), pays Goals.Match for the ones
+    /// that do, reports how each goal was used, and shows a party its teammates' goals. A goal is a statement of
+    /// intent, not an order: nothing is masked by it.
+    enum class SeatGoal : uint8
+    {
+        Fight,          // damage the enemy it is fighting
+        Control,        // hold the other enemies out of the fight
+        Recover,        // heal, eat or drink itself back up
+        Protect,        // keep the owner or a teammate alive
+        Position,       // get to where its spec fights from
+        Prepare,        // buffs, summons and stealth before the fight
+        Count
+    };
+
+    constexpr uint32 GOAL_COUNT = uint32(SeatGoal::Count);
+    constexpr int32 NO_GOAL = -1;
+
+    [[nodiscard]] std::string_view GoalName(SeatGoal goal);
     /// The episode clock's scale: the longest arena's episode, so it rises through every episode instead of
     /// saturating. Elapsed time, not the fraction of an episode's own limit: a companion has no limit, and the
     /// critic already sees the fraction (StageScenario::STATE_EPISODE_TIME).

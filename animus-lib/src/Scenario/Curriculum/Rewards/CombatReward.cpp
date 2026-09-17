@@ -91,6 +91,7 @@ std::string_view Animus::Curriculum::RewardTermName(RewardTerm term)
         case RewardTerm::Readiness:             return "readiness";
         case RewardTerm::Control:               return "control";
         case RewardTerm::SelfHealing:           return "self_healing";
+        case RewardTerm::GoalMatch:             return "goal_match";
         case RewardTerm::Repeat:                return "repeat";
         case RewardTerm::Count:                 break;
     }
@@ -166,6 +167,40 @@ void Animus::Curriculum::CombatReward::Approach(Player* bot, Unit* target, float
     tally.LastDistance = excess;
 }
 
+void Animus::Curriculum::CombatReward::Style(Player const* bot, Unit const* target, uint32 decisionMs,
+    CombatTally& tally)
+{
+    // Style, measured only: where the bot fights from, and whether its pet holds what it is fighting. A hunter's
+    // shots cannot be used inside melee reach, so its time there is time it played melee.
+    //
+    // FightMs is the divisor of every share below, so a caller that never reaches here leaves in_melee_share,
+    // target_on_pet_share and the two control shares reading 0 out of 0.
+    tally.FightMs += decisionMs;
+    if (target)
+    {
+        if (bot->IsWithinMeleeRange(target))
+            tally.InMeleeMs += decisionMs;
+        if (Unit const* victim = target->GetVictim(); victim && victim != bot
+            && victim->GetCharmerOrOwnerGUID() == bot->GetGUID())
+            tally.OnPetMs += decisionMs;
+    }
+
+    // Whether the bot keeps what it is fighting in place or slowed: roots (Frost Nova, Entangling Roots) and snares
+    // (Concussive Shot, Wing Clip, Frost Shock, Earthbind), its own or its pet's and totems'.
+    bool const rooted = target && HasAuraFrom(target, SPELL_AURA_MOD_ROOT, bot);
+    bool const snared = target && HasAuraFrom(target, SPELL_AURA_MOD_DECREASE_SPEED, bot);
+    if (rooted)
+        tally.RootedMs += decisionMs;
+    if (snared)
+        tally.SnaredMs += decisionMs;
+    if (rooted && !tally.WasRooted)
+        ++tally.RootsApplied;
+    if (snared && !tally.WasSnared)
+        ++tally.SnaresApplied;
+    tally.WasRooted = rooted;
+    tally.WasSnared = snared;
+}
+
 void Animus::Curriculum::CombatReward::OneOnOne(StageScenario& scenario, Env const& env,
     uint32 seatIndex, Player* bot, Unit* opponent, RewardLedger& ledger)
 {
@@ -201,33 +236,8 @@ void Animus::Curriculum::CombatReward::OneOnOne(StageScenario& scenario, Env con
         tally.EngageMs = env.EpisodeElapsedMs;
     }
 
-    // Style, measured only: where the bot fights from, and whether its pet holds the opponent. A hunter's shots
-    // cannot be used inside melee reach, so its time there is time it played melee.
     if (tally.Engaged && bot->IsAlive() && opponent->IsAlive())
-    {
-        uint32 const decisionMs = scenario.DecisionMs();
-        tally.FightMs += decisionMs;
-        if (bot->IsWithinMeleeRange(opponent))
-            tally.InMeleeMs += decisionMs;
-        if (Unit const* victim = opponent->GetVictim(); victim && victim != bot
-            && victim->GetCharmerOrOwnerGUID() == bot->GetGUID())
-            tally.OnPetMs += decisionMs;
-
-        // Whether the bot keeps its opponent in place or slowed: roots (Frost Nova, Entangling Roots) and snares
-        // (Concussive Shot, Wing Clip, Frost Shock, Earthbind), its own or its pet's and totems'.
-        bool const rooted = HasAuraFrom(opponent, SPELL_AURA_MOD_ROOT, bot);
-        bool const snared = HasAuraFrom(opponent, SPELL_AURA_MOD_DECREASE_SPEED, bot);
-        if (rooted)
-            tally.RootedMs += decisionMs;
-        if (snared)
-            tally.SnaredMs += decisionMs;
-        if (rooted && !tally.WasRooted)
-            ++tally.RootsApplied;
-        if (snared && !tally.WasSnared)
-            ++tally.SnaresApplied;
-        tally.WasRooted = rooted;
-        tally.WasSnared = snared;
-    }
+        Style(bot, opponent, scenario.DecisionMs(), tally);
 
     // Feign death: a feign that leaves the opponent nothing to fight sends it home to evade at full health, within
     // a few seconds of the feign ending.

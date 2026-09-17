@@ -66,6 +66,7 @@ Animus::EnvPool::EnvPool(Scenario& scenario, StageSettings const& settings)
     EpisodeSeed.assign(envs, NO_EPISODE_SEED);
     _envSeed.assign(envs, NO_EPISODE_SEED);
     Actions.assign(agents, 0);
+    Goals.assign(agents, -1);     // Curriculum::NO_GOAL: no goal until a learner with a goal head sends one
     _reportInfoSum.assign(_spec.EpisodeInfoDim, 0.0);
 }
 
@@ -278,7 +279,12 @@ void Animus::EnvPool::ApplyActions()
     auto mark = std::chrono::steady_clock::now();
 
     for (Env& env : _envs)
+    {
+        if (!Goals.empty())
+            _scenario.ApplyGoals(env, &Goals[env.Index * _spec.AgentsPerEnv]);
+
         _scenario.ApplyActions(env, &Actions[env.Index * _spec.AgentsPerEnv]);
+    }
 
     _collect.ApplyNs = Since(mark);
 }
@@ -292,7 +298,21 @@ void Animus::EnvPool::RecordDamage(Unit const* attacker, Unit const* victim, uin
     // Damage an agent takes. The victim is the agent itself (pets absorb their own damage).
     auto const hit = _agents.find(victim->GetGUID());
     if (hit != _agents.end())
-        _envs[hit->second.Env].StepStats[hit->second.Agent].DamageTaken += damage;
+    {
+        Env& env = _envs[hit->second.Env];
+        AgentStats& stats = env.StepStats[hit->second.Agent];
+        stats.DamageTaken += damage;
+
+        // ... and which enemy slot dealt it, so crowd control can be paid what holding that enemy saves. A pet, totem
+        // or guardian counts for its owner's slot; an attacker in no slot lands in DamageTaken alone.
+        ObjectGuid const source = attacker->GetCharmerOrOwnerOrOwnGUID();
+        for (std::size_t slot = 0; slot < env.Targets.size() && slot < MAX_TARGETS; ++slot)
+            if (env.Targets[slot] == source)
+            {
+                stats.DamageTakenBy[slot] += damage;
+                break;
+            }
+    }
 
     // Damage an ally takes counts against every agent of its env.
     auto const ally = _allies.find(victim->GetGUID());

@@ -137,6 +137,7 @@ namespace Animus::Curriculum
         struct Teammate
         {
             Player* Bot = nullptr;
+            int32 Goal = NO_GOAL;                   // what it is pursuing (SeatGoal), as its policy last sent
             Role PlayRole = Role::Dps;
             uint8 Class = 0;
         };

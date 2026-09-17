@@ -38,6 +38,7 @@
 #include "Random.h"
 #include "SeatCharacter.h"
 #include "SeatEncoder.h"
+#include "CombatReward.h"
 #include "SpawnArea.h"
 #include "Spell.h"
 #include "SpellAuraEffects.h"
@@ -45,6 +46,7 @@
 #include "SpellInfo.h"
 #include "StageDefinition.h"
 #include <cmath>
+#include <numeric>
 #include "StringFormat.h"
 #include "Supplies.h"
 #include <boost/json/array.hpp>
@@ -68,6 +70,7 @@ namespace
     constexpr float REWARD_TUNING_MS = 50.0f;       // per-decision reward terms are tuned for this decision interval
     constexpr float MAX_COMBAT_TIME_MS = 60000.0f;
     constexpr float MAX_UNSEEN_TIME_MS = 20000.0f;
+    constexpr float GOAL_RANGE_SLACK_YARDS = 5.0f;  // a ranged spec holds its range to within this (SeatGoal::Position)
     constexpr float LOW_HEALTH_PCT = 35.0f;         // a friend below this is low (low_health_seconds)
     constexpr int32 ABSORB_EXPIRY_SLACK_MS = 500;   // an absorb gone with more than a decision and this left soaked it
 
@@ -329,13 +332,14 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
     }
 
     // Repeats and self-healing are paid in every stage, by the scenario rather than an encounter.
-    for (RewardTerm term : { RewardTerm::Repeat, RewardTerm::SelfHealing })
+    for (RewardTerm term : { RewardTerm::Repeat, RewardTerm::SelfHealing, RewardTerm::GoalMatch })
         _info.Add("reward_" + std::string(RewardTermName(term)), [this, term](Env const& env, uint32 seat)
         {
             return Data(env).Seats[seat].Rewards.Episode(term);
         });
 
     _spec.EpisodeInfoDim = _info.Size();
+    _spec.GoalCount = GOAL_COUNT;
 
     if (!settings.LayoutsDir.empty())
         WriteStageFiles(settings);
@@ -764,6 +768,29 @@ void Animus::Curriculum::StageScenario::AddCoreEpisodeInfo()
     {
         return float(seat(env, index).LowHealthMs) / 1000.0f;
     });
+
+    // Goals (SeatGoal): the share of decisions spent on each, how often the decisions matched the goal, and how often
+    // the goal changed. All zero for a policy without a goal head.
+    auto const goalDecisions = [seat](Env const& env, uint32 index)
+    {
+        SeatState const& state = seat(env, index);
+        return float(std::accumulate(state.GoalDecisions.begin(), state.GoalDecisions.end(), uint32(0)));
+    };
+    for (uint32 goal = 0; goal < GOAL_COUNT; ++goal)
+        _info.Add("goal_" + std::string(GoalName(SeatGoal(goal))) + "_share",
+            [seat, goalDecisions, goal](Env const& env, uint32 index)
+            {
+                float const total = goalDecisions(env, index);
+                return total ? float(seat(env, index).GoalDecisions[goal]) / total : 0.0f;
+            });
+    _info.Add("goal_match_share", [seat, goalDecisions](Env const& env, uint32 index)
+    {
+        SeatState const& state = seat(env, index);
+        float const total = goalDecisions(env, index);
+        return total ? float(std::accumulate(state.GoalMatches.begin(), state.GoalMatches.end(), uint32(0))) / total
+            : 0.0f;
+    });
+    _info.Add("goal_changes", [seat](Env const& env, uint32 index) { return float(seat(env, index).GoalChanges); });
 }
 
 void Animus::Curriculum::StageScenario::WriteStageFiles(StageSettings const& settings) const
@@ -1375,6 +1402,76 @@ void Animus::Curriculum::StageScenario::NotifyPullStarting(Env& env)
         encounter->OnPullStarting(env);
 }
 
+void Animus::Curriculum::StageScenario::ApplyGoals(Env& env, int32 const* goals)
+{
+    EnvState& data = Data(env);
+    for (uint32 seat = 0; seat < _seatCount; ++seat)
+    {
+        int32 const goal = goals[seat] >= 0 && goals[seat] < int32(GOAL_COUNT) ? goals[seat] : NO_GOAL;
+        SeatState& state = data.Seats[seat];
+        if (goal != state.Goal && state.Goal != NO_GOAL && goal != NO_GOAL)
+            ++state.GoalChanges;
+
+        state.Goal = goal;
+    }
+}
+
+bool Animus::Curriculum::StageScenario::GoalHeld(Env const& env, uint32 seatIndex, Player* bot) const
+{
+    SeatState const& seat = Data(env).Seats[seatIndex];
+    AgentStats const& step = env.StepStats[seatIndex];
+    if (!bot || !bot->IsAlive() || seat.Goal == NO_GOAL)
+        return false;
+
+    switch (SeatGoal(seat.Goal))
+    {
+        case SeatGoal::Fight:
+            return step.Damage > 0;
+        case SeatGoal::Control:
+        {
+            Unit const* target = env.FindTargetUnit(seat.TargetSlot);
+            for (uint32 slot = 0; slot < env.Targets.size(); ++slot)
+            {
+                Unit const* enemy = env.FindTargetUnit(slot);
+                if (enemy && enemy != target && enemy->IsAlive() && Encoding::IsCrowdControlled(enemy))
+                    return true;
+            }
+            return false;
+        }
+        case SeatGoal::Recover:
+            return step.SelfHealing > 0 || bot->HasAuraType(SPELL_AURA_MOD_REGEN)
+                || bot->HasAuraType(SPELL_AURA_MOD_POWER_REGEN);
+        case SeatGoal::Protect:
+        {
+            uint64 given = step.AllyHealing + step.SelfProtection;
+            for (uint64 healed : step.AgentHealingBy)
+                given += healed;
+            for (uint64 kept : step.AllyProtectionBy)
+                given += kept;
+            for (uint64 kept : step.AgentProtectionBy)
+                given += kept;
+            return given > step.SelfHealing + step.SelfProtection;
+        }
+        case SeatGoal::Position:
+        {
+            Unit const* target = env.FindTargetUnit(seat.TargetSlot);
+            if (!target || !target->IsAlive() || !seat.L)
+                return false;
+
+            float const wanted = Animus::Curriculum::CombatReward::DesiredRange(seat, _tuning.Duel);
+            float const distance = bot->GetDistance(target);
+            return wanted <= _tuning.Duel.MeleeRange ? bot->IsWithinMeleeRange(target)
+                : distance >= _tuning.Duel.MeleeRange && distance <= wanted + GOAL_RANGE_SLACK_YARDS;
+        }
+        case SeatGoal::Prepare:
+            return !bot->IsInCombat() && (seat.StepPreparationMs > 0 || bot->HasStealthAura());
+        case SeatGoal::Count:
+            break;
+    }
+
+    return false;
+}
+
 void Animus::Curriculum::StageScenario::ApplyActions(Env& env, int32 const* actions)
 {
     // Env upkeep first (linked pulls, the owner, the next pull, the scripted opponent), so the targets below are
@@ -1516,6 +1613,7 @@ void Animus::Curriculum::StageScenario::ApplySeatAction(Env& env, uint32 seatInd
     }
 
     seat.TargetSlot = view.TargetSlot;
+    seat.StepPreparationMs += result.PreparationMs;
     seat.FriendSlot = view.FriendSlot;
     seat.RankTier = view.RankTier;
     seat.HealsOnFull += result.HealsOnFull;
@@ -1785,6 +1883,19 @@ float Animus::Curriculum::StageScenario::SeatReward(Env& env, uint32 seatIndex)
 
     seat.Rewards.Add(RewardTerm::Repeat, -_tuning.Actions.Repeat * float(seat.StepRepeats));
     seat.StepRepeats = 0;
+
+    // The goal the learner is pursuing, and whether this decision went with it.
+    if (seat.Goal != NO_GOAL)
+    {
+        ++seat.GoalDecisions[std::size_t(seat.Goal)];
+        if (GoalHeld(env, seatIndex, bot))
+        {
+            ++seat.GoalMatches[std::size_t(seat.Goal)];
+            seat.Rewards.Add(RewardTerm::GoalMatch, _tuning.Goals.Match);
+        }
+    }
+
+    seat.StepPreparationMs = 0;
 
     // Looking after itself, in every stage: effective healing, and what its own absorbs and reductions kept off.
     if (bot)
