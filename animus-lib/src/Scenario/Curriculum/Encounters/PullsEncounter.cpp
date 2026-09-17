@@ -613,8 +613,10 @@ void Animus::Curriculum::PullsEncounter::Reward(Env& env, uint32 seatIndex, Play
         if (Gauntlet(env))
         {
             float const pullTime = float(env.EpisodeElapsedMs - engageMs);
-            ledger.Add(RewardTerm::Clear,
-                (tuning.Clear + tuning.FastPull * (1.0f - std::min(1.0f, pullTime / PULL_TIME_SCALE_MS))) * clearScale);
+            float const fast = 1.0f - std::min(1.0f, pullTime / PULL_TIME_SCALE_MS);
+            ledger.Add(RewardTerm::Clear, SoloGauntlet(env)
+                ? tuning.SoloGauntletClear + tuning.SoloGauntletFastPull * fast
+                : (tuning.Clear + tuning.FastPull * fast) * clearScale);
             pull.PullDamageTaken = 0;
         }
         else
@@ -629,7 +631,9 @@ void Animus::Curriculum::PullsEncounter::Reward(Env& env, uint32 seatIndex, Play
                 tuning.PackClear + tuning.FastClear * CombatReward::TimeLeftSince(env, engageMs));
         }
 
-        ledger.Add(RewardTerm::HealthKept, (SinglePack(env) ? tuning.PackHealthKept : tuning.HealthKept) * healthKept);
+        float const kept = SinglePack(env) ? tuning.PackHealthKept
+            : SoloGauntlet(env) ? tuning.SoloGauntletHealthKept : tuning.HealthKept;
+        ledger.Add(RewardTerm::HealthKept, kept * healthKept);
     }
 
     if (!tally.DeathCounted && !bot->IsAlive())
@@ -638,7 +642,8 @@ void Animus::Curriculum::PullsEncounter::Reward(Env& env, uint32 seatIndex, Play
         tally.Died = true;
         tally.DeathMs = env.EpisodeElapsedMs;
         ++tally.Deaths;
-        ledger.Add(RewardTerm::Death, -(Gauntlet(env) ? tuning.GauntletDeath : tuning.PackDeath));
+        ledger.Add(RewardTerm::Death, -(SoloGauntlet(env) ? tuning.SoloGauntletDeath
+            : Gauntlet(env) ? tuning.GauntletDeath : tuning.PackDeath));
 
         // A single pack lost in overtime: the rest of the overtime too, which timing out would have cost.
         if (SinglePack(env) && !tally.Killed && pulls.PullEngaged
@@ -646,6 +651,12 @@ void Animus::Curriculum::PullsEncounter::Reward(Env& env, uint32 seatIndex, Play
             && env.EpisodeLengthMs > env.EpisodeElapsedMs)
             ledger.Add(RewardTerm::Timeout,
                 -tuning.Overtime * float(env.EpisodeLengthMs - env.EpisodeElapsedMs) / 1000.0f);
+    }
+
+    if (SoloGauntlet(env))
+    {
+        GauntletAloneTerms(env, seat, bot, ledger);
+        return;
     }
 
     if (!SinglePack(env))
@@ -687,6 +698,44 @@ void Animus::Curriculum::PullsEncounter::Reward(Env& env, uint32 seatIndex, Play
     {
         pulls.RungRecorded = true;
         _ladder.Record(pulls.RungLayout, pulls.Rung, tally.Killed && !tally.Died, MaxRung());
+    }
+}
+
+void Animus::Curriculum::PullsEncounter::GauntletAloneTerms(Env& env, SeatState& seat, Player* bot, RewardLedger& ledger)
+{
+    EnvPulls const& pulls = _envs[env.Index];
+    CombatTally& tally = seat.Combat;
+    CurriculumTuning::PullTuning const& tuning = _scenario.Tuning().Pulls;
+    if (!bot->IsAlive())
+        return;
+
+    // Lasting to the end is the gauntlet's win: counted as the kill (clean_kill is then a gauntlet survived).
+    if (!tally.Killed && !tally.Died && TimeIsUp(env))
+    {
+        tally.Killed = true;
+        tally.KillTimeMs = env.EpisodeElapsedMs;
+    }
+
+    if (!HasCreatures(env))
+        return;
+
+    // A pull left standing is charged once its grace from the spawn is gone (not while eating or drinking, which is
+    // recovering for it), and a ranged spec hit in melee reach.
+    float const seconds = float(_scenario.DecisionMs()) / 1000.0f;
+    uint32 const graceMs = tuning.StallGraceMs + std::min(tally.PreparationMs, tuning.PreparationRefundMaxMs);
+    bool const resting = bot->HasAuraType(SPELL_AURA_MOD_REGEN) || bot->HasAuraType(SPELL_AURA_MOD_POWER_REGEN);
+    if (!pulls.PullEngaged && !resting && env.EpisodeElapsedMs > pulls.PullStartMs + graceMs)
+        ledger.Add(RewardTerm::Stall, -tuning.Stall * seconds);
+
+    if (seat.L && seat.L->Profile->Specs[seat.Spec].Range != RangeBand::Melee)
+    {
+        bool meleed = false;
+        for (uint32 slot = 0; slot < env.Targets.size() && !meleed; ++slot)
+            if (Unit* enemy = env.FindTargetUnit(slot); enemy && enemy->IsAlive())
+                meleed = enemy->GetVictim() == bot && enemy->IsWithinMeleeRange(bot);
+
+        if (meleed)
+            ledger.Add(RewardTerm::Spacing, -tuning.Spacing * seconds);
     }
 }
 

@@ -80,7 +80,11 @@ namespace
             .Extends = "stage2_pack",
             .Summary = "pull after pull with short breaks: heals, food and drink",
             .Blocks = { Core, Duel, Pet, Pack, Gauntlet },
-            .Arenas = { { .Name = "gauntlet", .Against = Opposition::Pulls, .Schedule = PullSchedule::Gauntlet } },
+            // 300 s: pull after pull is the point. At the host's 60 s a break of 8-20 s before each pull left two or
+            // three of them, with nothing to recover for; five minutes hold six to ten, and the solo gauntlet is won
+            // by lasting to the end (PullTuning::SoloGauntlet*).
+            .Arenas = { { .Name = "gauntlet", .Against = Opposition::Pulls, .Schedule = PullSchedule::Gauntlet,
+                .EpisodeSeconds = 300 } },
         });
 
         stages.push_back({

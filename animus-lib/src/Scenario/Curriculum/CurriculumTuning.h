@@ -236,6 +236,16 @@ namespace Animus::Curriculum
             uint32 StallGraceMs = 15000;
             uint32 PreparationRefundMaxMs = 30000;  // pack: as the duel's
             float Spacing = 0.03f;              // pack: per second a ranged spec is hit in melee reach
+            /// A gauntlet alone (no owner) is won by lasting: pull after pull until the episode ends, and a death ends
+            /// it with every pull left unfought. Clear 2 + FastPull 2 and HealthKept 2 had each pull worth up to 6
+            /// against a death at 5, so a seat could trade its life for a fast pull. As the single pack: the clear
+            /// outweighs finishing it fast or untouched, and a death costs two clears besides the pulls it forfeits.
+            /// Stall and Spacing apply to its pulls as to a single pack's (Stall from each pull's spawn). Owner stages
+            /// keep Clear, FastPull, HealthKept and GauntletDeath.
+            float SoloGauntletClear = 5.0f;
+            float SoloGauntletFastPull = 1.0f;  // times 1 - time since the pull engaged / 60 s
+            float SoloGauntletHealthKept = 0.5f;
+            float SoloGauntletDeath = 10.0f;
             float OwnerClearScale = 2.0f;       // owner stages: kills and clears count this many times
         } Pulls;
 
@@ -453,6 +463,10 @@ namespace Animus::Curriculum
             f("Pulls.StallGraceMs", tuning.Pulls.StallGraceMs);
             f("Pulls.PreparationRefundMaxMs", tuning.Pulls.PreparationRefundMaxMs);
             f("Pulls.Spacing", tuning.Pulls.Spacing);
+            f("Pulls.SoloGauntletClear", tuning.Pulls.SoloGauntletClear);
+            f("Pulls.SoloGauntletFastPull", tuning.Pulls.SoloGauntletFastPull);
+            f("Pulls.SoloGauntletHealthKept", tuning.Pulls.SoloGauntletHealthKept);
+            f("Pulls.SoloGauntletDeath", tuning.Pulls.SoloGauntletDeath);
             f("Pulls.OwnerClearScale", tuning.Pulls.OwnerClearScale);
 
             f("Owner.LevelSpread", tuning.Owner.LevelSpread);

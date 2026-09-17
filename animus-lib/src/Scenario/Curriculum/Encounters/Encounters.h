@@ -173,6 +173,15 @@ namespace Animus::Curriculum
         {
             return _scenario.Arena(env).Schedule == PullSchedule::Gauntlet;
         }
+
+        /// Pull after pull with no owner: won by lasting (PullTuning::SoloGauntlet*).
+        [[nodiscard]] bool SoloGauntlet(Env const& env) const
+        {
+            return Gauntlet(env) && !_scenario.Arena(env).Owner;
+        }
+
+        /// A solo gauntlet's per-decision terms: its survival counted as the kill, stall and spacing.
+        void GauntletAloneTerms(Env& env, SeatState& seat, Player* bot, RewardLedger& ledger);
         /// Whether the env's episode is one pack on its own (no owner): won on the clear, lost on a death or the clock.
         [[nodiscard]] bool SinglePack(Env const& env) const;
         /// Whether any arena of the stage is: its supplies, episode info columns.
