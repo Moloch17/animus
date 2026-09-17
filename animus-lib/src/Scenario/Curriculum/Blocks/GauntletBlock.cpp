@@ -20,6 +20,8 @@
 #include "EncoderSupport.h"
 #include "Layout.h"
 #include <algorithm>
+#include <array>
+#include <string>
 #include <boost/json/array.hpp>
 #include <boost/json/object.hpp>
 #include "MoveSpline.h"
@@ -150,4 +152,12 @@ void Animus::Curriculum::GauntletBlock::Rest(SeatView& view, SeatActionResult& r
         Apply(view, ACTION_EAT, result);
     else if (!watered && IsAllowed(view, ACTION_DRINK))
         Apply(view, ACTION_DRINK, result);
+}
+
+std::string Animus::Curriculum::GauntletBlock::ActionName(Layout const& /*layout*/, uint32 local) const
+{
+    static constexpr std::array<char const*, ACTION_COUNT> NAMES = { "eat", "drink", "rest_until_ready" };
+    static_assert(NAMES.size() == ACTION_COUNT, "every gauntlet action needs a name");
+
+    return local < NAMES.size() ? NAMES[local] : std::string();
 }

@@ -20,6 +20,8 @@
 #include "Creature.h"
 #include "EncoderSupport.h"
 #include "Layout.h"
+#include "StringFormat.h"
+#include <string>
 #include <boost/json/array.hpp>
 #include <boost/json/object.hpp>
 #include "Player.h"
@@ -115,4 +117,12 @@ void Animus::Curriculum::PackBlock::Apply(SeatView& view, uint32 local, SeatActi
 
     if (IsSlotAllowed(view, local))
         Encoding::SelectEnemy(view, local);
+}
+
+std::string Animus::Curriculum::PackBlock::ActionName(Layout const& /*layout*/, uint32 local) const
+{
+    if (local == ACTION_HOLD_INTERRUPT)
+        return "hold_interrupt";
+
+    return local < PACK_SLOTS ? Acore::StringFormat("target_slot_{}", local) : std::string();
 }
