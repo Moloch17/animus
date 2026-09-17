@@ -35,6 +35,8 @@ namespace
     };
 
     constexpr std::array<char const*, RANK_TIERS> TIER_NAMES = { "rank_high", "rank_mid", "rank_low" };
+    static_assert(FRIEND_NAMES.size() == FRIEND_SLOTS && TIER_NAMES.size() == RANK_TIERS,
+        "every support action needs a name: an unnamed one is a null char* the manifest turns into a string");
 
     bool IsAllowed(SeatView const& view, uint32 action)
     {

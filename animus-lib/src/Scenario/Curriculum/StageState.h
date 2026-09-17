@@ -219,6 +219,7 @@ namespace Animus::Curriculum
             GoalDecisions.fill(0);
             GoalMatches.fill(0);
             GoalChanges = 0;
+            StepPreparationMs = 0;
             FriendSlot = FRIEND_SELF;
             RankTier = 0;
             Absorbs.clear();

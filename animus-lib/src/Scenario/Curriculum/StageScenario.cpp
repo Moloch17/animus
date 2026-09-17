@@ -1443,14 +1443,16 @@ bool Animus::Curriculum::StageScenario::GoalHeld(Env const& env, uint32 seatInde
                 || bot->HasAuraType(SPELL_AURA_MOD_POWER_REGEN);
         case SeatGoal::Protect:
         {
-            uint64 given = step.AllyHealing + step.SelfProtection;
+            // Someone else kept alive: healing, absorbs and damage reductions on the owner or a teammate. What the
+            // seat did for itself is Recover's, not Protect's.
+            uint64 given = step.AllyHealing;
             for (uint64 healed : step.AgentHealingBy)
                 given += healed;
             for (uint64 kept : step.AllyProtectionBy)
                 given += kept;
             for (uint64 kept : step.AgentProtectionBy)
                 given += kept;
-            return given > step.SelfHealing + step.SelfProtection;
+            return given > 0;
         }
         case SeatGoal::Position:
         {
