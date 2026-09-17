@@ -1,8 +1,13 @@
 #
 # Included by modules/CMakeLists.txt (modules/<name>/<name>.cmake).
 #
-# mod-animus needs animus-lib, the code it shares with mod-animus-forge. When modules/mod-animus-lib is missing it is
-# cloned from ANIMUS_LIB_GIT_URL at ANIMUS_LIB_GIT_REF and built with this configure.
+# mod-animus needs animus-lib, the code it shares with mod-animus-forge. Its source is bundled in animus-lib/ (a git
+# subtree of https://github.com/Moloch17/animus-lib; tools/update-animus-lib.sh updates it), so this folder builds
+# offline. A modules/mod-animus-lib checkout, when present, is built instead of the bundle.
+#
+# Installing also creates etc/modules/mod_animus.conf from its .dist when there is none: AzerothCore reads a module's
+# settings from the .conf only, and without one every Animus key logs "Missing property" and keeps its default. An
+# existing .conf is never overwritten.
 #
 # Installs the exported models (models/*.amdl, each with its .json layout manifest, which a model does not load
 # without) into the data directory, where the worldserver finds them through Animus.ModelDir (default "animus",
@@ -13,11 +18,6 @@
 # directory -- point this at <DataDir>/animus instead:
 #
 #     cmake ... -DANIMUS_MODELS_INSTALL_DIR=/path/to/data/animus
-#
-
-set(ANIMUS_LIB_GIT_URL "https://github.com/Moloch17/animus-lib.git" CACHE STRING
-  "Where mod-animus and mod-animus-forge clone animus-lib from when modules/mod-animus-lib is missing")
-set(ANIMUS_LIB_GIT_REF "master" CACHE STRING "The animus-lib branch or tag to clone")
 
 ModuleNameToVariable(mod-animus ANIMUS_LINKAGE_VARIABLE)
 if(NOT "${${ANIMUS_LINKAGE_VARIABLE}}" MATCHES "static|dynamic")
@@ -36,22 +36,23 @@ install(
 
 message(STATUS "  mod-animus models install to ${ANIMUS_MODELS_INSTALL_DIR}")
 
-set(ANIMUS_LIB_CHECKOUT "${CMAKE_SOURCE_DIR}/modules/mod-animus-lib")
-if(NOT EXISTS "${ANIMUS_LIB_CHECKOUT}/cmake/AnimusLibDependency.cmake")
-  if(EXISTS "${ANIMUS_LIB_CHECKOUT}")
-    message(FATAL_ERROR "${ANIMUS_LIB_CHECKOUT} exists but is not animus-lib; remove it to have it cloned again")
-  endif()
-
-  find_package(Git REQUIRED)
-  message(STATUS "  mod-animus: cloning animus-lib ${ANIMUS_LIB_GIT_REF} from ${ANIMUS_LIB_GIT_URL}")
-  execute_process(
-    COMMAND "${GIT_EXECUTABLE}" clone --branch "${ANIMUS_LIB_GIT_REF}" "${ANIMUS_LIB_GIT_URL}" "${ANIMUS_LIB_CHECKOUT}"
-    RESULT_VARIABLE ANIMUS_LIB_CLONE_RESULT)
-  if(NOT ANIMUS_LIB_CLONE_RESULT EQUAL 0)
-    message(FATAL_ERROR "Could not clone animus-lib from ${ANIMUS_LIB_GIT_URL}; clone it into ${ANIMUS_LIB_CHECKOUT} "
-      "by hand")
-  endif()
+# Where the core installs module configs (CopyModuleConfig, src/cmake/macros/ConfigInstall.cmake).
+if(WIN32)
+  set(ANIMUS_MODULE_CONF_DIR "${CMAKE_INSTALL_PREFIX}/configs/modules")
+else()
+  set(ANIMUS_MODULE_CONF_DIR "${CONF_DIR}/modules")
 endif()
+install(CODE "
+  set(animusConf \"\$ENV{DESTDIR}${ANIMUS_MODULE_CONF_DIR}/mod_animus.conf\")
+  if(NOT EXISTS \"\${animusConf}\")
+    message(STATUS \"Creating: \${animusConf}\")
+    configure_file(\"${CMAKE_CURRENT_LIST_DIR}/conf/mod_animus.conf.dist\" \"\${animusConf}\" COPYONLY)
+  endif()")
 
-include("${ANIMUS_LIB_CHECKOUT}/cmake/AnimusLibDependency.cmake")
-AnimusLibRequire(mod-animus)
+set(ANIMUS_LIB_BUNDLE "${CMAKE_CURRENT_LIST_DIR}/animus-lib")
+if(EXISTS "${CMAKE_SOURCE_DIR}/modules/mod-animus-lib/cmake/AnimusLibDependency.cmake")
+  include("${CMAKE_SOURCE_DIR}/modules/mod-animus-lib/cmake/AnimusLibDependency.cmake")
+else()
+  include("${ANIMUS_LIB_BUNDLE}/cmake/AnimusLibDependency.cmake")
+endif()
+AnimusLibRequire(mod-animus "${ANIMUS_LIB_BUNDLE}")

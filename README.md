@@ -18,10 +18,14 @@ Both run the same scenario and encoding code as training, so a model sees and do
 
 ## Installing
 
-1. Put the module in a stock AzerothCore's `modules/`. Configuring clones animus-lib into `modules/mod-animus-lib` if
-   it is missing. Build both the same way: static (the default) or both dynamic.
-2. Rebuild and install the worldserver.
-3. Copy `conf/mod_animus.conf.dist` to your config directory as `mod_animus.conf`.
+1. Put the module in a stock AzerothCore's `modules/`. animus-lib comes with it (`animus-lib/`, the revision this
+   module was tested with), so nothing is fetched at build time. Build it static (the default); a dynamic build needs
+   the library as its own module (copy `animus-lib/` to `modules/mod-animus-lib`).
+2. Rebuild and install the worldserver (`docker compose build` works offline).
+3. Installing creates `mod_animus.conf` in the modules config directory from `conf/mod_animus.conf.dist` when there is
+   none, and never overwrites one; under Docker the container copies it to your config volume on its first start.
+   AzerothCore reads a module's settings from the `.conf` only: without it every `Animus.*` key logs "Missing
+   property" at startup.
 4. Put the exported models, each `.amdl` with its `.json` manifest beside it, in `Animus.ModelDir` (`animus`, relative
    to `DataDir`). Installing copies the ones in `models/` there: `stage1_duel`'s, one per class/role (confirmed at
    60M steps, trained with animus-lib 99cbe94). Companions play them with `Animus.Curriculum.Stage = stage1_duel`.
@@ -29,6 +33,12 @@ Both run the same scenario and encoding code as training, so a model sees and do
 Don't build it into the forge core; a forge build disables it. Where the models come from, and how `DataDir` and the
 install step line up, is in
 [manual 6.3 and 6.4](https://github.com/Moloch17/animus-forge/blob/master/docs/manual/06-animus.md#63-installing).
+
+## Updating animus-lib
+
+`tools/update-animus-lib.sh [ref]` pulls a revision of [animus-lib](https://github.com/Moloch17/animus-lib) into
+`animus-lib/` (a git subtree, default `master`) and commits it. A realm must build the manifests its models were
+trained with, so update it together with the models.
 
 ## Commands
 
