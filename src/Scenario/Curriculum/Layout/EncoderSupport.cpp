@@ -44,6 +44,7 @@ namespace
     };
 
     constexpr uint32 CALL_BEAST_GCD_MS = 1500;
+    constexpr uint32 PREPARATION_GCD_MS = 1500;
     constexpr float POSITION_SCALE = 40.0f;
 }
 
@@ -174,11 +175,17 @@ namespace Animus::Curriculum::Encoding
         SpellCastTargets targets = TargetsFor(info, bot, target);
         bool const stealthed = bot->HasStealthAura();
         bool const targetCasting = target && target->IsNonMeleeSpellCast(false);
+        uint32 const castMs = info->CalcCastTime(bot);
         Spell* spell = new Spell(bot, info, TRIGGERED_NONE);
         if (spell->prepare(&targets) != SPELL_CAST_OK)
             return false;
 
         ++result.SpellCasts;
+
+        // Getting ready before a fight: a buff, a form or stance, stealth, a pet summoned, something conjured. What it
+        // takes (its cast, or the global cooldown of an instant one) is refunded from the stall grace.
+        if (info->IsPositive() && !bot->IsInCombat())
+            result.PreparationMs = std::max(castMs, PREPARATION_GCD_MS);
 
         // A harmful spell from stealth. One that breaks it commits to the fight (Ambush, Garrote, Cheap Shot, Pounce,
         // an Aimed Shot out of Shadowmeld) and cannot be repeated without earning stealth back; one that keeps it (Sap,

@@ -496,6 +496,11 @@ void Animus::Curriculum::StageScenario::AddCoreEpisodeInfo()
     {
         return float(tally(env, index).StealthUtilityCasts);
     });
+    // Out-of-combat buffs, forms, stealth and summons, in the time they took (the stall grace's refund, uncapped).
+    _info.Add("preparation_seconds", [tally](Env const& env, uint32 index)
+    {
+        return float(tally(env, index).PreparationMs) / 1000.0f;
+    });
     // Pets: how much of the damage they dealt, whether one died, and how the seat commanded them.
     _info.Add("pet_damage_share", [](Env const& env, uint32 index)
     {
@@ -1443,6 +1448,7 @@ void Animus::Curriculum::StageScenario::ApplySeatAction(Env& env, uint32 seatInd
         ++seat.PetOrderCounts[std::size_t(result.PetOrderGiven)];
 
     CombatTally& tally = seat.Combat;
+    tally.PreparationMs += result.PreparationMs;
     if (result.StealthOpener)
     {
         tally.StepStealthOpener = true;

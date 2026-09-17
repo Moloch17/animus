@@ -157,6 +157,7 @@ namespace Animus::Curriculum
         ObjectGuid PendingInterrupt;                // an interrupt was cast at this casting enemy
         uint32 CallBeast = 0;                       // hunters: call this stable beast (the scenario creates the pet)
         uint32 ConsumablesUsed = 0;                 // potions, healthstones, bandages, soulstones
+        uint32 PreparationMs = 0;                   // a helpful spell started out of combat: its cast time or a GCD
         bool SelfResurrected = false;
         uint32 Revives = 0;                         // resurrection spells started on a dead ally
         uint32 PetAbilities = 0;                    // pet bar abilities the pet started

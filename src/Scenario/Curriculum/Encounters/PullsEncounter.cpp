@@ -657,7 +657,8 @@ void Animus::Curriculum::PullsEncounter::Reward(Env& env, uint32 seatIndex, Play
     if (bot->IsAlive() && !tally.Killed)
     {
         float const seconds = float(_scenario.DecisionMs()) / 1000.0f;
-        if (!pulls.PullEngaged && env.EpisodeElapsedMs > tuning.StallGraceMs)
+        uint32 const graceMs = tuning.StallGraceMs + std::min(tally.PreparationMs, tuning.PreparationRefundMaxMs);
+        if (!pulls.PullEngaged && env.EpisodeElapsedMs > graceMs)
             ledger.Add(RewardTerm::Stall, -tuning.Stall * seconds);
 
         if (pulls.PullEngaged && env.EpisodeElapsedMs > pulls.PullEngageMs + tuning.OvertimeGraceMs)

@@ -135,7 +135,9 @@ void Animus::Curriculum::CreatureEncounter::Reward(Env& env, uint32 seat, Player
 
         // The fight not started once the grace is gone: standing where it spawned is paid for as it happens, not
         // only when the clock runs out.
-        if (!tally.Engaged && bot->IsAlive() && env.EpisodeElapsedMs > tuning.StallGraceMs)
+        // Time spent preparing (buffs, forms, stealth, a pet) is added to the grace, up to PreparationRefundMaxMs.
+        uint32 const graceMs = tuning.StallGraceMs + std::min(tally.PreparationMs, tuning.PreparationRefundMaxMs);
+        if (!tally.Engaged && bot->IsAlive() && env.EpisodeElapsedMs > graceMs)
             ledger.Add(RewardTerm::Stall, -tuning.Stall * seconds);
 
         // A ranged spec with the opponent hitting it in melee.

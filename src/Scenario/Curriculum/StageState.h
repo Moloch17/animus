@@ -61,6 +61,7 @@ namespace Animus::Curriculum
         bool Engaged = false;                   // the fight has started: the bot or its opponent entered combat
         uint32 EngageMs = 0;                    // episode time it started; the fast kill bonus counts from here
         bool PetSummoned = false;
+        uint32 PreparationMs = 0;               // out of combat: buffs, forms, stealth and summons started (StallGrace)
         uint32 CastsCompleted = 0;
         uint32 CastsCancelled = 0;
         uint64 CastMsWasted = 0;
