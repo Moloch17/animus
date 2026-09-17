@@ -369,6 +369,14 @@ Animus.Curriculum.Pulls.StallGraceMs = 15000
 #   its cast time, at least a global cooldown), up to this much (ms)
 Animus.Curriculum.Pulls.PreparationRefundMaxMs = 30000
 Animus.Curriculum.Pulls.Spacing = 0.03
+#   solo gauntlet (pull after pull, no owner; won by lasting to the end): each pull cleared, instead of Clear ...
+Animus.Curriculum.Pulls.SoloGauntletClear = 5.0
+#   ... plus this times 1 - the pull's time since engaged / 60 s, instead of FastPull ...
+Animus.Curriculum.Pulls.SoloGauntletFastPull = 1.0
+#   ... and this times the health kept through the pull, instead of HealthKept
+Animus.Curriculum.Pulls.SoloGauntletHealthKept = 0.5
+#   solo gauntlet: a death, instead of GauntletDeath (it also forfeits every pull left)
+Animus.Curriculum.Pulls.SoloGauntletDeath = 10.0
 #   owner stages: kills and clears count this many times
 Animus.Curriculum.Pulls.OwnerClearScale = 2.0
 
