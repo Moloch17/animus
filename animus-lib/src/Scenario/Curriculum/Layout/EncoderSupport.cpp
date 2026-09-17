@@ -138,6 +138,8 @@ namespace Animus::Curriculum::Encoding
     bool IsSpellActionAllowed(SeatView const& view, Unit* target, ActionCatalog::Action const& def)
     {
         Player* bot = view.Bot;
+        if (def.Disabled)
+            return false;
 
         // Cheap rejections before the full cast check.
         SpellInfo const* info = KnownRank(view, def);

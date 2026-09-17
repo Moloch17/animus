@@ -378,6 +378,7 @@ Animus::Curriculum::ActionCatalog::ActionCatalog(uint8 playerClass, ClassKit con
         action.FirstRank = firstRank;
         action.NextSwing = info->HasAttribute(SPELL_ATTR0_ON_NEXT_SWING)
             || info->HasAttribute(SPELL_ATTR0_ON_NEXT_SWING_NO_DAMAGE);
+        action.Disabled = IsSelfControlSpell(info);
         return action;
     };
 
@@ -427,6 +428,43 @@ Animus::Curriculum::ActionCatalog::ActionCatalog(uint8 playerClass, ClassKit con
     for (std::vector<Action>* list : { &_actions, &_tactical, &_sustain, &_revives })
         for (uint32 index = 0; index < list->size(); ++index)
             (*list)[index].Index = index;
+}
+
+bool Animus::Curriculum::ActionCatalog::IsSelfControlSpell(SpellInfo const* info)
+{
+    if (!info || info->IsPassive())
+        return false;
+
+    bool control = false;
+    for (SpellEffectInfo const& effect : info->GetEffects())
+    {
+        if (!effect.Effect)
+            continue;
+
+        if (!effect.IsAura())
+            return false;
+
+        switch (effect.ApplyAuraName)
+        {
+            case SPELL_AURA_MOD_STUN:
+            case SPELL_AURA_MOD_CONFUSE:
+            case SPELL_AURA_MOD_FEAR:
+            case SPELL_AURA_MOD_ROOT:
+            case SPELL_AURA_MOD_SILENCE:
+            case SPELL_AURA_MOD_PACIFY_SILENCE:
+            case SPELL_AURA_TRANSFORM:
+                break;
+            default:
+                return false;
+        }
+
+        if (effect.TargetA.GetTarget() != TARGET_UNIT_CASTER || effect.TargetB.GetTarget())
+            return false;
+
+        control = true;
+    }
+
+    return control;
 }
 
 bool Animus::Curriculum::ActionCatalog::IsTacticalSpell(SpellInfo const* info)

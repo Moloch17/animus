@@ -71,6 +71,7 @@ namespace Animus::Curriculum
             /// after the lists are built; the brace initialisers above it are positional.
             uint32 Index = 0;
             Group From = Group::None;
+            bool Disabled = false;      // Spell: never allowed (IsSelfControlSpell)
         };
 
         ActionCatalog(uint8 playerClass, ClassKit const& kit, TalentBuilder const& talents);
@@ -99,6 +100,13 @@ namespace Animus::Curriculum
         [[nodiscard]] static bool IsCombatSpell(SpellInfo const* info);
         [[nodiscard]] static bool IsTacticalSpell(SpellInfo const* info);
         [[nodiscard]] static bool IsSustainSpell(SpellInfo const* info);
+
+        /// Whether the spell only puts a control effect (stun, confusion, fear, root, silence, pacify, transform) on its
+        /// caster. Grovel (7267, from the hidden GENERIC (DND) skill every character has) is one: IsTacticalSpell
+        /// took its stun for crowd control, so it is an action in every layout, and stage 3's policy learned to press
+        /// it about 15 times an episode. Such an action is never allowed; it keeps its slot so the layouts' shapes, and
+        /// every checkpoint and exported model, stay valid.
+        [[nodiscard]] static bool IsSelfControlSpell(SpellInfo const* info);
 
         /// Whether casting the spell on a casting target stops the cast (interrupt, stun, silence, ...).
         [[nodiscard]] static bool IsInterruptingSpell(SpellInfo const* info);
