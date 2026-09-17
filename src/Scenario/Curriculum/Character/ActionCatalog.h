@@ -101,8 +101,8 @@ namespace Animus::Curriculum
         [[nodiscard]] static bool IsTacticalSpell(SpellInfo const* info);
         [[nodiscard]] static bool IsSustainSpell(SpellInfo const* info);
 
-        /// Whether the spell only puts a control effect (stun, confusion, fear, root, silence, pacify, transform) on its
-        /// caster. Grovel (7267, from the hidden GENERIC (DND) skill every character has) is one: IsTacticalSpell
+        /// Whether the spell only puts a control effect (stun, confusion, fear, root, silence, pacify, transform)
+        /// on its caster. Grovel (7267, from the hidden GENERIC (DND) skill every character has) is one: IsTacticalSpell
         /// took its stun for crowd control, so it is an action in every layout, and stage 3's policy learned to press
         /// it about 15 times an episode. Such an action is never allowed; it keeps its slot so the layouts' shapes, and
         /// every checkpoint and exported model, stay valid.
