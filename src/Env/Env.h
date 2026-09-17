@@ -37,6 +37,10 @@ namespace Animus
     /// Most learned agents an env can have.
     constexpr std::size_t MAX_AGENTS = 8;
 
+    /// Most enemy slots an env attributes damage to (Env::Targets): a pack's four, and the enemy players of the
+    /// self-play and party arenas. Targets past this take damage as usual, they are just not attributed per slot.
+    constexpr std::size_t MAX_TARGETS = 8;
+
     /// Combat totals for one agent. Written only by the map thread that updates the agent's
     /// instance (damage hooks), read by the world thread after MapMgr::Update has joined.
     struct AgentStats
@@ -53,6 +57,10 @@ namespace Animus
         uint32 WhiteHits = 0;
         uint32 SpecialHits = 0;
         uint64 DamageTaken = 0;         // by the agent, from anything
+        // Of DamageTaken, what each enemy slot (Env::Targets) dealt, a pet's or totem's counted for its owner's slot.
+        // What crowd control prevents is read from here: an enemy's own damage rate is what holding it out of the
+        // fight saves. Damage from anything not in a target slot is in DamageTaken only.
+        std::array<uint64, MAX_TARGETS> DamageTakenBy{};
         uint64 AllyDamageTaken = 0;     // by the env's allies (Env::Allies), from anything
         uint64 AllyHealing = 0;         // effective healing the agent (or its pets) did on the env's allies
         std::array<uint64, MAX_ALLIES> AllyDamageTakenBy{};    // the same, per Env::Allies index
@@ -87,6 +95,8 @@ namespace Animus
             WhiteHits += other.WhiteHits;
             SpecialHits += other.SpecialHits;
             DamageTaken += other.DamageTaken;
+            for (std::size_t target = 0; target < MAX_TARGETS; ++target)
+                DamageTakenBy[target] += other.DamageTakenBy[target];
             AllyDamageTaken += other.AllyDamageTaken;
             AllyHealing += other.AllyHealing;
             for (std::size_t ally = 0; ally < MAX_ALLIES; ++ally)

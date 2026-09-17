@@ -52,6 +52,7 @@ namespace Animus::Curriculum
         None,
         SinglePack,     // one pack; the episode ends when it is cleared
         Gauntlet,       // pull after pull with a break between, until the episode ends
+        Sequence,       // a known run of pulls in a fixed order, the same every episode, won by clearing the last
     };
 
     /// Most arenas a stage can mix (the critic state has one column per arena).

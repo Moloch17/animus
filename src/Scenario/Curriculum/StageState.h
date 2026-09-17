@@ -134,6 +134,13 @@ namespace Animus::Curriculum
         bool InCombat = false;
         uint32 CombatStartMs = 0;               // episode time the bot entered its current combat
         uint32 TargetSlot = 0;                  // the selected enemy (pulls)
+        /// The goal the learner is pursuing for this seat (SeatGoal), NO_GOAL when its policy has no goal head, and
+        /// how the seat's decisions have matched it: decisions under a goal, matches, and goal changes.
+        int32 Goal = NO_GOAL;
+        std::array<uint32, GOAL_COUNT> GoalDecisions{};
+        std::array<uint32, GOAL_COUNT> GoalMatches{};
+        uint32 GoalChanges = 0;
+        uint32 StepPreparationMs = 0;           // buffs, summons and stealth started this decision (SeatGoal::Prepare)
         uint32 FriendSlot = FRIEND_SELF;        // the selected friend (support block)
         uint32 RankTier = 0;                    // the heals' rank tier (support block)
 
@@ -208,6 +215,10 @@ namespace Animus::Curriculum
             InCombat = false;
             CombatStartMs = 0;
             TargetSlot = 0;
+            Goal = NO_GOAL;
+            GoalDecisions.fill(0);
+            GoalMatches.fill(0);
+            GoalChanges = 0;
             FriendSlot = FRIEND_SELF;
             RankTier = 0;
             Absorbs.clear();

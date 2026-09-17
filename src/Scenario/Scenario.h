@@ -47,6 +47,7 @@ namespace Animus
         uint32 StateDim = 0;
         uint32 NumActions = 0;      // the largest layout's: every agent's mask row is padded to it
         uint32 EpisodeInfoDim = 0;  // per agent
+        uint32 GoalCount = 0;       // goals a policy may pursue (Curriculum::SeatGoal); 0 = the scenario has none
         uint32 LongestEpisodeSeconds = 0;   // when some episodes run longer than StageSettings::EpisodeSeconds
         std::vector<LayoutSpec> Layouts;    // empty = one layout named after the scenario, ObsDim x NumActions
     };
@@ -73,6 +74,11 @@ namespace Animus
         /// actions: [AgentsPerEnv] chosen action per agent. Masked actions may still arrive from a
         /// misbehaving client and must be ignored safely.
         virtual void ApplyActions(Env& env, int32 const* actions) = 0;
+
+        /// goals: [AgentsPerEnv] the goal each agent is pursuing (0..GoalCount-1, or Curriculum::NO_GOAL), sent with
+        /// the actions by a policy that has a goal head. Called before ApplyActions. A goal is scored, reported and
+        /// shown to teammates; it never masks an action, so a goal out of range is simply ignored.
+        virtual void ApplyGoals(Env& /*env*/, int32 const* /*goals*/) { }
 
         /// obs: [AgentsPerEnv * ObsDim], state: [StateDim], mask: [AgentsPerEnv * NumActions]. `mask` is null for an
         /// ended episode's final observation, which needs no actions: skip the (costly) cast checks then.

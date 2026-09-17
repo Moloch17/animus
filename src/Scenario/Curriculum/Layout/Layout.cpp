@@ -97,6 +97,22 @@ namespace
     }
 }
 
+std::string_view Animus::Curriculum::GoalName(SeatGoal goal)
+{
+    switch (goal)
+    {
+        case SeatGoal::Fight:    return "fight";
+        case SeatGoal::Control:  return "control";
+        case SeatGoal::Recover:  return "recover";
+        case SeatGoal::Protect:  return "protect";
+        case SeatGoal::Position: return "position";
+        case SeatGoal::Prepare:  return "prepare";
+        case SeatGoal::Count:    break;
+    }
+
+    return "unknown";
+}
+
 std::string_view Animus::Curriculum::BlockName(BlockId id)
 {
     switch (id)

@@ -159,6 +159,9 @@ namespace Animus
         std::vector<float> EpisodeInfo;         // per agent
         std::vector<uint32> EpisodeSeed;        // per env: seed index of the episode that just ended
         std::vector<int32> Actions;
+        /// The goal each agent is pursuing, in agent order, as the learner sent it (Curriculum::NO_GOAL for none).
+        /// A host fills it before ApplyActions; a policy without goals leaves it alone.
+        std::vector<int32> Goals;
 
     private:
         struct AgentSlot

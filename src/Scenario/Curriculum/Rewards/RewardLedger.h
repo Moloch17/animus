@@ -67,6 +67,7 @@ namespace Animus::Curriculum
         Readiness,
         Control,
         SelfHealing,
+        GoalMatch,
         Repeat,
         Count
     };

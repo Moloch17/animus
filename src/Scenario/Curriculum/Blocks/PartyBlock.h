@@ -23,7 +23,8 @@
 
 namespace Animus::Curriculum
 {
-    /// The other learned party members: PARTY_MEMBERS teammate slots (the owner has the companion block). Actions:
+    /// The other learned party members: PARTY_MEMBERS teammate slots, each with what it is doing and the goal it
+    /// says it is pursuing, so a party can divide the work (the owner has the companion block). Actions:
     /// follow the tank, assist and guard each teammate, then each revive on each teammate. Heals, shields and buffs on
     /// them are core actions aimed by the support block's friend selection.
     class PartyBlock final : public Block
@@ -56,7 +57,8 @@ namespace Animus::Curriculum
             MEMBER_TARGET_FIRST         = 22,   // one-hot: which enemy slot it attacks
             MEMBER_NO_TARGET            = 26,
             MEMBER_SLOT_ON_FIRST        = 27,   // per enemy slot: attacking it
-            MEMBER_FEATURES             = 31
+            MEMBER_GOAL_FIRST           = 31,   // one-hot over GOAL_COUNT: the goal it is pursuing (none: all 0)
+            MEMBER_FEATURES             = 31 + GOAL_COUNT
         };
 
         enum Action : uint32
