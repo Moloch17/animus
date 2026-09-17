@@ -4,8 +4,9 @@
 # mod-animus needs animus-lib, the code it shares with mod-animus-forge. When modules/mod-animus-lib is missing it is
 # cloned from ANIMUS_LIB_GIT_URL at ANIMUS_LIB_GIT_REF and built with this configure.
 #
-# Installs the exported models (models/*.amdl) into the data directory, where the worldserver finds
-# them through Animus.ModelDir (default "animus", resolved against DataDir).
+# Installs the exported models (models/*.amdl, each with its .json layout manifest, which a model does not load
+# without) into the data directory, where the worldserver finds them through Animus.ModelDir (default "animus",
+# resolved against DataDir).
 #
 # The default destination matches the Docker layout (AC_DATA_DIR=/azerothcore/env/dist/data). If
 # your worldserver's DataDir is elsewhere -- the stock worldserver.conf uses ".", the working
@@ -31,7 +32,7 @@ set(ANIMUS_MODELS_INSTALL_DIR "${CMAKE_INSTALL_PREFIX}/data/animus" CACHE PATH
 install(
   DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/models/"
   DESTINATION "${ANIMUS_MODELS_INSTALL_DIR}"
-  FILES_MATCHING PATTERN "*.amdl")
+  FILES_MATCHING PATTERN "*.amdl" PATTERN "*.json")
 
 message(STATUS "  mod-animus models install to ${ANIMUS_MODELS_INSTALL_DIR}")
 

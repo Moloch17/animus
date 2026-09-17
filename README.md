@@ -23,7 +23,8 @@ Both run the same scenario and encoding code as training, so a model sees and do
 2. Rebuild and install the worldserver.
 3. Copy `conf/mod_animus.conf.dist` to your config directory as `mod_animus.conf`.
 4. Put the exported models, each `.amdl` with its `.json` manifest beside it, in `Animus.ModelDir` (`animus`, relative
-   to `DataDir`).
+   to `DataDir`). Installing copies the ones in `models/` there: `stage1_duel`'s, one per class/role (confirmed at
+   60M steps, trained with animus-lib 99cbe94). Companions play them with `Animus.Curriculum.Stage = stage1_duel`.
 
 Don't build it into the forge core; a forge build disables it. Where the models come from, and how `DataDir` and the
 install step line up, is in
