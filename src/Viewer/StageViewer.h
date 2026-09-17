@@ -19,6 +19,7 @@
 #ifndef ANIMUS_STAGE_VIEWER_H
 #define ANIMUS_STAGE_VIEWER_H
 
+#include "MlpPolicy.h"
 #include "ObjectGuid.h"
 #include "StageSettings.h"
 #include <memory>
@@ -137,6 +138,7 @@ namespace Animus
         uint32 _sinceFreezeMs = 0;
         std::unordered_set<ObjectGuid> _frozenUnits;
         std::unordered_set<std::string> _modelErrorsTold;   // model names whose failure the viewer was told
+        std::vector<MlpPolicy::State> _policyState;        // per seat: what its model carries between decisions
     };
 }
 

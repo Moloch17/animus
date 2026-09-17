@@ -20,6 +20,7 @@
 #define ANIMUS_COMPANION_PARTY_H
 
 #include "Layout.h"
+#include "MlpPolicy.h"
 #include "ObjectGuid.h"
 #include "CurriculumTuning.h"
 #include "SeatMemory.h"
@@ -132,6 +133,7 @@ namespace Animus
             std::vector<uint8> Mask;
             Curriculum::SeatMemory Memory;      // pacing, and what it has been doing (as a forge seat's)
             Curriculum::SeatOption Option;      // the durative action it is running (rest, hold an interrupt, ...)
+            MlpPolicy::State Policy;            // what its model carries between decisions (memory, goal)
             bool ModelErrorLogged = false;
             bool Parked = false;                // out of the world while the owner flies or rides a vehicle
         };

@@ -288,6 +288,10 @@ void Animus::StageViewer::Decide(ModelLibrary& models)
     {
         ++_episodes;
         ReportEpisode(elapsedMs, _pool->Terminated[0] != 0);
+
+        // A new episode starts with nothing remembered, as it does in training.
+        for (MlpPolicy::State& state : _policyState)
+            state.Clear();
     }
 
     if (_policy == POLICY_MODEL)
@@ -510,7 +514,11 @@ void Animus::StageViewer::ChooseModelActions(ModelLibrary& models)
         }
 
         // The layout fills the first ObsDim features and NumActions mask entries of the seat's padded row.
-        _pool->Actions[agent] = policy->Decide(&_pool->Obs[agent * spec.ObsDim], &_pool->Mask[agent * spec.NumActions]);
+        if (_policyState.size() < spec.AgentsPerEnv)
+            _policyState.resize(spec.AgentsPerEnv);
+
+        _pool->Actions[agent] = policy->Decide(&_pool->Obs[agent * spec.ObsDim],
+            &_pool->Mask[agent * spec.NumActions], &_policyState[agent]);
     }
 }
 

@@ -469,7 +469,13 @@ void Animus::CompanionParty::Decide(Member& member, Player* bot, Player* owner, 
 {
     bool const inCombat = bot->IsInCombat();
     if (inCombat && !member.InCombat)
+    {
         member.CombatStartMs = _nowMs;
+
+        // A fight is its own episode as far as the model is concerned: it starts with nothing remembered, as the
+        // seats it trained as do.
+        member.Policy.Clear();
+    }
     member.InCombat = inCombat;
 
     // A pet it summoned starts defensive, as a forge seat's does.
@@ -504,7 +510,7 @@ void Animus::CompanionParty::Decide(Member& member, Player* bot, Player* owner, 
     if (!target && !SeatEncoder::ActsWithoutTarget(*member.L))
         return;
 
-    int32 const action = policy.Decide(member.Obs.data(), member.Mask.data());
+    int32 const action = policy.Decide(member.Obs.data(), member.Mask.data(), &member.Policy);
 
     SeatActionResult result;
     SeatEncoder::Apply(view, action, result);
