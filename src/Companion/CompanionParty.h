@@ -73,8 +73,8 @@ namespace Animus
 
         /// Create a companion of `race` and `layout` beside the owner -- in the open world, an instance or on a
         /// transport -- and add it to the owner's group (creating the group when the owner has none). It is
-        /// the owner's level, or its class's first level when that is higher (death knights: 55). The race must be
-        /// one the class allows. False with `message` set when refused.
+        /// the owner's level, or its class's first level when that is higher (death knights: 55), and levels up with
+        /// the owner. The race must be one the class allows. False with `message` set when refused.
         bool Add(Player* owner, Curriculum::Layout const& layout, uint8 race, std::string& message);
 
         Status Update(uint32 diff, Settings const& settings, ModelLibrary& models);
@@ -82,12 +82,16 @@ namespace Animus
         /// Take every companion out of the group and the world.
         void DestroyAll();
 
-        /// Map threads (UnitScript::DealDamage): `dealt` by `attacker` and `taken` by `victim`, where they are
-        /// companions.
-        void RecordDamage(ObjectGuid attacker, ObjectGuid victim, uint32 dealt, uint32 taken);
+        /// Map threads (UnitScript::DealDamage), counted as a forge seat's step damage: `damage` companion `bot` or its
+        /// pet, guardian or totem dealt to `victim`, which counts only on an enemy of the current pull (a forge seat's
+        /// env targets); `damage` companion `bot` took itself (its pets take their own). The pull is only changed on
+        /// the world thread, never while maps update.
+        void RecordDamageDealt(ObjectGuid bot, ObjectGuid victim, uint32 damage);
+        void RecordDamageTaken(ObjectGuid bot, uint32 damage);
 
         [[nodiscard]] ObjectGuid GetOwnerGUID() const { return _owner; }
         [[nodiscard]] std::vector<ObjectGuid> GetBotGUIDs() const;
+        [[nodiscard]] bool HasBot(ObjectGuid bot) const;
         [[nodiscard]] std::size_t Size() const { return _members.size(); }
 
         /// One line per companion: name, class/role, level, model state.
@@ -138,6 +142,10 @@ namespace Animus
         [[nodiscard]] Curriculum::SeatView View(Member const& member, Player* bot, Player* owner, Unit* target) const;
         /// Potions, bandages, stones and food for the member, topped up (the forge stocks every episode).
         void Restock(Member& member, Player* bot, Player* owner) const;
+        /// The owner's level (or its class's first) when it has passed the member's: the character is built again at
+        /// it -- talents, trainer spells, gear, supplies -- as a forge seat of that level is.
+        void LevelUp(Member& member, Player* bot, Player* owner) const;
+        [[nodiscard]] uint8 LevelFor(Member const& member, Player* owner) const;
         void StartEpisode(Player* owner);
         static void Destroy(Player* bot);
 

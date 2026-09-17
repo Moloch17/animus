@@ -18,6 +18,7 @@
 
 #include "CompanionParty.h"
 #include "BotFactory.h"
+#include "Chat.h"
 #include "ClassRoleAssets.h"
 #include "Creature.h"
 #include "EncoderSupport.h"
@@ -222,8 +223,18 @@ Animus::CompanionParty::Status Animus::CompanionParty::Update(uint32 diff, Setti
     if (!owner)
         return Status::Dismiss;
 
-    // Bots only leave through DestroyAll; anything else took one away.
-    std::erase_if(_members, [](std::unique_ptr<Member> const& member) { return !FindBot(member->Bot); });
+    // Bots only leave through DestroyAll; anything else took one away. It leaves the group too, which would otherwise
+    // keep it as an offline member.
+    std::erase_if(_members, [owner](std::unique_ptr<Member> const& member)
+    {
+        if (FindBot(member->Bot))
+            return false;
+
+        LOG_INFO("module.animus", "Companion {} ({}) is gone", member->Name, member->Bot.ToString());
+        if (Group* group = owner->GetGroup(); group && group->IsMember(member->Bot))
+            group->RemoveMember(member->Bot);
+        return true;
+    });
 
     // A teleport a bot started itself (its transport changing maps, a summoning spell) completes as its client would
     // acknowledge it, whatever the owner is doing. A parked bot's stays pending until the owner is back.
@@ -414,6 +425,10 @@ void Animus::CompanionParty::UpdateMember(Member& member, Player* bot, Player* o
     }
 
     member.DeadMs = 0;
+
+    // The owner levelled: the companion follows between pulls, as a new character of that level.
+    if (quiet && LevelFor(member, owner) > member.Level)
+        LevelUp(member, bot, owner);
 
     float const distance = bot->GetDistance(owner);
     if (quiet && distance > TELEPORT_DISTANCE)
@@ -612,15 +627,57 @@ Animus::Curriculum::SeatView Animus::CompanionParty::View(Member const& member, 
     return view;
 }
 
-void Animus::CompanionParty::RecordDamage(ObjectGuid attacker, ObjectGuid victim, uint32 dealt, uint32 taken)
+void Animus::CompanionParty::RecordDamageDealt(ObjectGuid bot, ObjectGuid victim, uint32 damage)
+{
+    if (std::find(_enemies.begin(), _enemies.end(), victim) == _enemies.end())
+        return;
+
+    for (std::unique_ptr<Member> const& member : _members)
+        if (member->Bot == bot)
+            member->StepDamage.fetch_add(damage, std::memory_order_relaxed);
+}
+
+void Animus::CompanionParty::RecordDamageTaken(ObjectGuid bot, uint32 damage)
 {
     for (std::unique_ptr<Member> const& member : _members)
-    {
-        if (dealt && member->Bot == attacker)
-            member->StepDamage.fetch_add(dealt, std::memory_order_relaxed);
-        if (taken && member->Bot == victim)
-            member->StepDamageTaken.fetch_add(taken, std::memory_order_relaxed);
-    }
+        if (member->Bot == bot)
+            member->StepDamageTaken.fetch_add(damage, std::memory_order_relaxed);
+}
+
+bool Animus::CompanionParty::HasBot(ObjectGuid bot) const
+{
+    return std::any_of(_members.begin(), _members.end(),
+        [bot](std::unique_ptr<Member> const& member) { return member->Bot == bot; });
+}
+
+uint8 Animus::CompanionParty::LevelFor(Member const& member, Player* owner) const
+{
+    return std::max<uint8>(owner->GetLevel(), member.L->Assets->Kit->MinLevel());
+}
+
+void Animus::CompanionParty::LevelUp(Member& member, Player* bot, Player* owner) const
+{
+    Layout const& layout = *member.L;
+    uint8 const level = LevelFor(member, owner);
+    bool const petOut = !bot->GetPetGUID().IsEmpty();
+
+    // A character of the new level, built as Add builds one: its talents spent again from all its points (resetting
+    // them puts the pet away), the trainer spells it now has, gear of its level (which empties the bags), then its
+    // pet back out if it had one (from the same stable), and supplies.
+    bot->GiveLevel(level);
+    bot->resetTalents(true);
+    bot->InitTalentForLevel();
+    member.Build = SeatCharacter::Configure(bot, layout, member.Spec, false).Build;
+    if (petOut)
+        SeatCharacter::GivePet(bot, member.Stable);
+
+    member.Level = level;
+    member.LastPetGuid.Clear();
+    Restock(member, bot, owner);
+    member.LastPower = bot->GetPower(bot->getPowerType());
+
+    LOG_INFO("module.animus", "Companion {} ({}) is now level {}", member.Name, layout.Profile->Name, level);
+    ChatHandler(owner->GetSession()).SendSysMessage(Acore::StringFormat("{} is now level {}.", member.Name, level));
 }
 
 std::vector<ObjectGuid> Animus::CompanionParty::GetBotGUIDs() const

@@ -5,8 +5,8 @@ Characters for an ordinary AzerothCore realm whose combat decisions come from mo
 changes, together with [animus-lib](https://github.com/Moloch17/animus-lib), the code it shares with the forge.
 
 - **Class/role companions.** Up to four characters of the race, class and role you choose join your party at your
-  level. They follow you through loading screens, into instances and onto transports, and play their class/role model
-  in every fight.
+  level and level up with you. They follow you through loading screens, into instances and onto transports, and play
+  their class/role model in every fight.
 - **The stage viewer.** A game master runs any curriculum stage exactly as the forge trains it, in their own instance,
   and watches the seats play their models, a scripted baseline or random actions.
 

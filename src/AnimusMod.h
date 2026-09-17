@@ -40,8 +40,8 @@ namespace Animus
     /// Module root: settings, the models, every player's class/role party and every game master's stage viewer.
     ///
     /// Everything except RecordDamage runs on the world thread (config load, commands, world update, shutdown), and
-    /// none of it while maps are updating. RecordDamage runs on map threads and only reads the bot index, which is
-    /// only changed on the world thread.
+    /// none of it while maps are updating. RecordDamage runs on map threads and only reads the bot index and the
+    /// parties' pulls, which are only changed on the world thread.
     class AnimusMod
     {
     public:

@@ -147,6 +147,9 @@ void Animus::AnimusMod::OnUpdate(uint32 diff)
     for (ObjectGuid const& owner : gone)
         RemoveParty(owner);
 
+    // A companion a party lost on its own (not dismissed) no longer counts damage.
+    std::erase_if(_partyByBot, [](auto const& entry) { return !entry.second->HasBot(entry.first); });
+
     std::vector<ObjectGuid> ended;
     for (auto const& [viewer, stage] : _viewers)
         if (stage->Update(diff, _models) == StageViewer::Status::Ended)
@@ -403,14 +406,14 @@ void Animus::AnimusMod::RecordDamage(Unit const* attacker, Unit const* victim, u
         || (type != DIRECT_DAMAGE && type != SPELL_DIRECT_DAMAGE && type != DOT))
         return;
 
-    // A companion's damage dealt and taken (the forge's step damage and damage taken).
-    auto const dealer = _partyByBot.find(attacker->GetGUID());
-    auto const taker = _partyByBot.find(victim->GetGUID());
-    if (dealer != _partyByBot.end())
-        dealer->second->RecordDamage(attacker->GetGUID(), victim->GetGUID(), damage,
-            taker != _partyByBot.end() && taker->second == dealer->second ? damage : 0);
-    if (taker != _partyByBot.end() && (dealer == _partyByBot.end() || taker->second != dealer->second))
-        taker->second->RecordDamage(attacker->GetGUID(), victim->GetGUID(), 0, damage);
+    // A companion's damage dealt and taken, counted as animus-lib's EnvPool::RecordDamage counts a forge seat's:
+    // taken on the companion itself, dealt by it or by its pets, guardians and totems.
+    if (auto const taker = _partyByBot.find(victim->GetGUID()); taker != _partyByBot.end())
+        taker->second->RecordDamageTaken(victim->GetGUID(), damage);
+
+    ObjectGuid const dealer = attacker->GetCharmerOrOwnerOrOwnGUID();
+    if (auto const party = _partyByBot.find(dealer); party != _partyByBot.end())
+        party->second->RecordDamageDealt(dealer, victim->GetGUID(), damage);
 }
 
 void Animus::AnimusMod::RemoveParty(ObjectGuid owner)
