@@ -354,6 +354,11 @@ Animus.Curriculum.Pulls.Approach = 0.5
 Animus.Curriculum.Pulls.StealthOpener = 0.5
 Animus.Curriculum.Pulls.StealthUtility = 0.05
 Animus.Curriculum.Pulls.Interrupt = 0.3
+#   an interrupt is paid Interrupt times what it stopped, from the spell's own properties: a heal, an area spell, a
+#   long cast. Never below 1
+Animus.Curriculum.Pulls.InterruptHeal = 3.0
+Animus.Curriculum.Pulls.InterruptArea = 2.0
+Animus.Curriculum.Pulls.InterruptLong = 1.5
 Animus.Curriculum.Pulls.Kill = 0.5
 #   per decision
 Animus.Curriculum.Pulls.StepCost = 0.0002
@@ -445,6 +450,10 @@ Animus.Curriculum.Options.HoldInterruptMs = 10000
 Animus.Curriculum.Options.KeepRangeMs = 10000
 #   ... and a melee spec back into melee reach whenever the target leaves it (ms)
 Animus.Curriculum.Options.StayOnTargetMs = 10000
+
+#   Ground effects: damage from something standing on the ground rather than aimed at the companion, charged per
+#   fraction of maximum health on top of the damage itself. The only term that pays for moving its feet.
+Animus.Curriculum.Hazards.Damage = 0.5
 
 #
 #    Animus.Curriculum.Owner.*
