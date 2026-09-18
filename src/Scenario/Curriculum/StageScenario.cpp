@@ -65,6 +65,9 @@ namespace
     using Encoding::RelativePosition;
 
     static_assert(MAX_SEATS <= Animus::BotAccounts::SEATS_PER_ENV, "every seat needs its own bot accounts");
+    static_assert(MAX_SEATS <= Animus::MAX_AGENTS, "every seat needs a column in the per-agent stats");
+    static_assert(MAX_SEATS == RAID_GROUPS * GROUP_SEATS, "the seats are the raid's groups");
+    static_assert(PARTY_MEMBERS == GROUP_MEMBERS + SPOTLIGHT_SLOTS, "teammate slots are the group and the spotlights");
 
     constexpr float PARTY_SPACING = 3.0f;
     constexpr float REWARD_TUNING_MS = 50.0f;       // per-decision reward terms are tuned for this decision interval
@@ -126,6 +129,22 @@ namespace
         if (minLevel <= lowLast && low)
             return uint8(urand(minLevel, lowLast));
         return uint8(urand(minLevel, DEFAULT_MAX_LEVEL));
+    }
+
+    /// The classic makeup for `seats` seats: a tank and a healer at the head of every group, the rest damage.
+    /// A party is one group, so it reads tank, healer, damage, damage as it always did; a raid gets one of each
+    /// per group, which is what a raid brings.
+    std::array<Role, MAX_SEATS> ClassicRoles(uint32 seats)
+    {
+        std::array<Role, MAX_SEATS> roles;
+        roles.fill(Role::Dps);
+        for (uint32 seat = 0; seat < seats && seat < MAX_SEATS; ++seat)
+        {
+            uint32 const inGroup = seat % GROUP_SEATS;
+            roles[seat] = inGroup == 0 ? Role::Tank : inGroup == 1 ? Role::Heal : Role::Dps;
+        }
+
+        return roles;
     }
 
     /// How many party seats get a character, drawn from the size weights.
@@ -1129,18 +1148,21 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
     // How many seats play this episode, and their class/roles: the arena's seats, except in a party, which has 1-4
     // like a player's companions; the rest stay empty: no character, no layout, only the no-op allowed.
     data.ActiveSeats = arena.SeatCount();
-    if (arena.Seats == SeatPlan::Party)
+    if (arena.Seats == SeatPlan::Party || arena.Seats == SeatPlan::Raid)
     {
-        data.ActiveSeats = RandomPartySize(_tuning.Party);
+        if (arena.Seats == SeatPlan::Party)
+            data.ActiveSeats = RandomPartySize(_tuning.Party);
 
-        // Some parties are the classic makeup (as many of a tank, a healer and two damage dealers as there are seats,
-        // in a random order); the rest draw every seat's role on its own. Each seat is then a class/role of its role.
-        std::array<Role, MAX_SEATS> roles = { Role::Tank, Role::Heal, Role::Dps, Role::Dps };
+        // Some parties are the classic makeup (a tank, a healer and damage dealers, in a random order); the rest
+        // draw every seat's role on its own. Each seat is then a class/role of its role. The makeup is built for the
+        // seats actually in play: a four-entry array left the other MAX_SEATS - 4 roles zero-filled, which a raid
+        // would have shuffled into the group that got them.
+        std::array<Role, MAX_SEATS> roles = ClassicRoles(data.ActiveSeats);
         if (roll_chance_i(_tuning.Party.ClassicChance))
-            Acore::Containers::RandomShuffle(roles);
+            std::shuffle(roles.begin(), roles.begin() + data.ActiveSeats, RandomEngine::Instance());
         else
-            for (Role& role : roles)
-                role = RollRole(_tuning.Party.RoleTankChance, _tuning.Party.RoleHealerChance);
+            for (uint32 seat = 0; seat < data.ActiveSeats; ++seat)
+                roles[seat] = RollRole(_tuning.Party.RoleTankChance, _tuning.Party.RoleHealerChance);
 
         for (uint32 seat = 0; seat < _seatCount; ++seat)
             data.Seats[seat].L = seat < data.ActiveSeats ? &DrawLayout(env, seat, roles[seat]) : nullptr;
@@ -1180,10 +1202,14 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
     for (uint32 seat = 0; seat < data.ActiveSeats; ++seat)
     {
         Position start = SpawnPointFor(env);
-        if (arena.Seats == SeatPlan::Party)
+        if (arena.Seats == SeatPlan::Party || arena.Seats == SeatPlan::Raid)
         {
-            start.m_positionX += (seat % 2 ? -PARTY_SPACING : PARTY_SPACING) * float(1 + seat / 2);
-            start.m_positionY += (seat % 2 ? PARTY_SPACING : -PARTY_SPACING);
+            // Within a group as a party has always spread; groups themselves step back in rows, so forty seats do
+            // not spawn in one line forty spacings long.
+            uint32 const inGroup = seat % GROUP_SEATS;
+            uint32 const group = seat / GROUP_SEATS;
+            start.m_positionX += (inGroup % 2 ? -PARTY_SPACING : PARTY_SPACING) * float(1 + inGroup / 2);
+            start.m_positionY += (inGroup % 2 ? PARTY_SPACING : -PARTY_SPACING) - PARTY_SPACING * 2.0f * float(group);
         }
         else if (arena.Seats == SeatPlan::Mirror && seat == 1 && firstNew)
         {
@@ -2027,8 +2053,19 @@ void Animus::Curriculum::StageScenario::WriteState(Env const& env, float* state)
         features[STATE_ENEMY_IN_COMBAT] = enemy->IsInCombat() ? 1.0f : 0.0f;
         features[STATE_ENEMY_ON_OWNER] = victim && victim == owner ? 1.0f : 0.0f;
         for (uint32 seat = 0; seat < _seatCount; ++seat)
-            if (victim && victim == bots[seat])
-                features[STATE_ENEMY_ON_SEAT_FIRST + seat] = 1.0f;
+        {
+            if (!victim || victim != bots[seat])
+                continue;
+
+            features[STATE_ENEMY_ON_SEAT] = 1.0f;
+            features[STATE_ENEMY_SEAT_INDEX] = float(seat) / float(MAX_SEATS);
+            uint32 const group = seat / GROUP_SEATS;
+            if (group < RAID_GROUPS)
+                features[STATE_ENEMY_SEAT_GROUP_FIRST + group] = 1.0f;
+            if (Layout const* layout = data.Seats[seat].L)
+                features[STATE_ENEMY_SEAT_ROLE_FIRST + uint32(layout->PlayRole())] = 1.0f;
+            break;
+        }
 
         if (Player* lead = bots[0])
         {

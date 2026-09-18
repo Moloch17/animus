@@ -25,6 +25,7 @@
 #include "Player.h"
 #include "SeatView.h"
 #include <algorithm>
+#include <limits>
 
 Animus::Curriculum::PartyEncounter::PartyEncounter(StageScenario& scenario, uint32 envs)
     : Encounter(scenario), _envs(envs)
@@ -135,16 +136,114 @@ void Animus::Curriculum::PartyEncounter::Disband(Env& env)
 void Animus::Curriculum::PartyEncounter::View(Env const& env, uint32 seatIndex, SeatView& view) const
 {
     EnvState const& data = _scenario.Data(env);
-    for (uint32 slot = 0; slot < PARTY_MEMBERS; ++slot)
+    uint32 const seats = _scenario.SeatCount();
+    Player* bot = env.FindBot(seatIndex);
+
+    std::array<bool, MAX_SEATS> shown{};
+    if (seatIndex < MAX_SEATS)
+        shown[seatIndex] = true;
+
+    auto const playing = [&](uint32 seat)
     {
-        uint32 const teammateSeat = TeammateSeat(seatIndex, slot);
-        if (teammateSeat >= _scenario.SeatCount() || !data.Seats[teammateSeat].L)
+        return seat < seats && seat < MAX_SEATS && !shown[seat] && data.Seats[seat].L && env.FindBot(seat);
+    };
+    auto const fill = [&](uint32 slot, uint32 seat)
+    {
+        Layout const& other = *data.Seats[seat].L;
+        shown[seat] = true;
+        view.Teammates[slot] = { env.FindBot(seat), data.Seats[seat].Goal, other.PlayRole(), other.Profile->Class };
+    };
+
+    // The seat's own group fills the first slots: in a party that is everyone, and in a raid it is who the seat
+    // heals, assists and guards without being told.
+    uint32 slot = 0;
+    uint32 const groupFirst = GroupFirstSeat(seatIndex);
+    for (uint32 seat = groupFirst; seat < groupFirst + GROUP_SEATS && slot < GROUP_MEMBERS; ++seat)
+        if (playing(seat))
+            fill(slot++, seat);
+
+    // Then the raiders outside it a seat still has to act on, in the order they matter: the raid's living tank, its
+    // most hurt member, and the nearest one. Empty below a raid, where the group is the whole party.
+    slot = GROUP_MEMBERS;
+    uint32 tank = MAX_SEATS;
+    uint32 hurt = MAX_SEATS;
+    uint32 closest = MAX_SEATS;
+    float lowest = 2.0f;
+    float nearest = std::numeric_limits<float>::max();
+    for (uint32 seat = 0; seat < seats && seat < MAX_SEATS; ++seat)
+    {
+        if (!playing(seat))
             continue;
 
-        Layout const& other = *data.Seats[teammateSeat].L;
-        view.Teammates[slot] = { env.FindBot(teammateSeat), data.Seats[teammateSeat].Goal, other.PlayRole(),
-            other.Profile->Class };
+        Player* other = env.FindBot(seat);
+        if (!other->IsAlive())
+            continue;
+
+        if (tank == MAX_SEATS && data.Seats[seat].L->PlayRole() == Role::Tank)
+            tank = seat;
+
+        float const health = other->GetHealthPct();
+        if (health < lowest)
+        {
+            lowest = health;
+            hurt = seat;
+        }
+
+        if (bot)
+        {
+            float const distance = bot->GetDistance(other);
+            if (distance < nearest)
+            {
+                nearest = distance;
+                closest = seat;
+            }
+        }
     }
+
+    for (uint32 spotlight : { tank, hurt, closest })
+        if (spotlight < MAX_SEATS && !shown[spotlight] && slot < PARTY_MEMBERS)
+            fill(slot++, spotlight);
+
+    // The rest of the raid in aggregate: the seat cannot act on them one by one, but how many still stand and how
+    // hurt the worst is decides whether it presses on or pulls back.
+    uint32 playingSeats = 0;
+    uint32 alive = 0;
+    uint32 inCombat = 0;
+    uint32 groupSeats = 0;
+    uint32 groupAlive = 0;
+    uint32 tanks = 0;
+    uint32 healers = 0;
+    float lowestHealth = 1.0f;
+    for (uint32 seat = 0; seat < seats && seat < MAX_SEATS; ++seat)
+    {
+        if (!data.Seats[seat].L)
+            continue;
+
+        Player* other = env.FindBot(seat);
+        if (!other)
+            continue;
+
+        ++playingSeats;
+        bool const ownGroup = GroupFirstSeat(seat) == groupFirst;
+        groupSeats += ownGroup ? 1 : 0;
+        if (!other->IsAlive())
+            continue;
+
+        ++alive;
+        groupAlive += ownGroup ? 1 : 0;
+        inCombat += other->IsInCombat() ? 1 : 0;
+        lowestHealth = std::min(lowestHealth, other->GetHealthPct() / 100.0f);
+        tanks += data.Seats[seat].L->PlayRole() == Role::Tank ? 1 : 0;
+        healers += data.Seats[seat].L->PlayRole() == Role::Heal ? 1 : 0;
+    }
+
+    view.Raid.Group = groupFirst / GROUP_SEATS;
+    view.Raid.Alive = playingSeats ? float(alive) / float(playingSeats) : 0.0f;
+    view.Raid.GroupAlive = groupSeats ? float(groupAlive) / float(groupSeats) : 0.0f;
+    view.Raid.InCombat = alive ? float(inCombat) / float(alive) : 0.0f;
+    view.Raid.LowestHealth = lowestHealth;
+    view.Raid.TanksAlive = std::min(1.0f, float(tanks) / float(RAID_GROUPS));
+    view.Raid.HealersAlive = std::min(1.0f, float(healers) / float(RAID_GROUPS));
 
     view.Tank = Tank(env);
 }
@@ -160,11 +259,12 @@ void Animus::Curriculum::PartyEncounter::Reward(Env& env, uint32 seatIndex, Play
     AgentStats const& step = env.StepStats[seatIndex];
     Role const role = data.Seats[seatIndex].L->PlayRole();
 
-    for (uint32 slot = 0; slot < PARTY_MEMBERS; ++slot)
+    // Every other seat, not only the ones the observation has slots for: a heal lands on whoever needed it, and a
+    // raider outside the seat's group is still the party's to keep alive.
+    for (uint32 teammateSeat = 0; teammateSeat < _scenario.SeatCount(); ++teammateSeat)
     {
-        uint32 const teammateSeat = TeammateSeat(seatIndex, slot);
-        Player* teammate = teammateSeat < _scenario.SeatCount() ? env.FindBot(teammateSeat) : nullptr;
-        if (!teammate)
+        Player* teammate = teammateSeat == seatIndex ? nullptr : env.FindBot(teammateSeat);
+        if (!teammate || !data.Seats[teammateSeat].L)
             continue;
 
         Role const teammateRole = data.Seats[teammateSeat].L->PlayRole();

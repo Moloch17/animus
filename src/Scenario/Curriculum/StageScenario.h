@@ -100,13 +100,19 @@ namespace Animus::Curriculum
             STATE_ENEMY_LEVEL_DIFF      = 7,    // (its level - seat 0's) / 5
             STATE_ENEMY_IN_COMBAT       = 8,
             STATE_ENEMY_ON_OWNER        = 9,    // its victim is the owner
-            STATE_ENEMY_ON_SEAT_FIRST   = 10,   // one-hot: its victim is seat s (MAX_SEATS columns)
-            STATE_ENEMY_MAX_HEALTH      = 10 + MAX_SEATS,   // its max health / seat 0's / 4, clamped
-            STATE_ENEMY_DAMAGE_MODIFIER = 11 + MAX_SEATS,   // / 2
-            STATE_ENEMY_ARMOR           = 12 + MAX_SEATS,   // share of seat 0's physical hits its armor takes off
-            STATE_ENEMY_RUN_SPEED       = 13 + MAX_SEATS,   // / 2
-            STATE_ENEMY_TYPE_FIRST      = 14 + MAX_SEATS,   // one-hot over Encoding::OPPONENT_TYPES (7)
-            STATE_ENEMY_FEATURES        = 21 + MAX_SEATS
+            // Who it is fighting, told in a raid's terms rather than a seat-wide one-hot: at forty seats that was
+            // 160 columns over four enemies, nearly all of them zero, and what a critic needs is which kind of seat
+            // and which group, not which index.
+            STATE_ENEMY_ON_SEAT         = 10,   // its victim is a learned seat at all
+            STATE_ENEMY_SEAT_INDEX      = 11,   // ... that seat / MAX_SEATS
+            STATE_ENEMY_SEAT_GROUP_FIRST = 12,  // ... one-hot over RAID_GROUPS
+            STATE_ENEMY_SEAT_ROLE_FIRST = 12 + RAID_GROUPS, // ... one-hot: damage, tank, healer
+            STATE_ENEMY_MAX_HEALTH      = 15 + RAID_GROUPS, // its max health / seat 0's / 4, clamped
+            STATE_ENEMY_DAMAGE_MODIFIER = 16 + RAID_GROUPS, // / 2
+            STATE_ENEMY_ARMOR           = 17 + RAID_GROUPS, // share of seat 0's physical hits its armor takes off
+            STATE_ENEMY_RUN_SPEED       = 18 + RAID_GROUPS, // / 2
+            STATE_ENEMY_TYPE_FIRST      = 19 + RAID_GROUPS, // one-hot over Encoding::OPPONENT_TYPES (7)
+            STATE_ENEMY_FEATURES        = 26 + RAID_GROUPS
         };
 
         StageScenario(StageSettings const& settings, StageDefinition const& stage);

@@ -355,7 +355,10 @@ uint32 Animus::Curriculum::ArenaDefinition::SeatCount() const
 {
     switch (Seats)
     {
-        case SeatPlan::Party:  return MAX_SEATS;
+        // A party is the owner and its companions: GROUP_MEMBERS learned seats beside it, which is what this
+        // returned when MAX_SEATS was 4 and is what it has to keep returning now that MAX_SEATS is a raid.
+        case SeatPlan::Party:  return GROUP_MEMBERS;
+        case SeatPlan::Raid:   return MAX_SEATS;
         case SeatPlan::Mirror: return 2;
         case SeatPlan::Solo:   break;
     }

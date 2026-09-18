@@ -31,9 +31,11 @@
 #include "Player.h"
 #include "Spell.h"
 #include "SpellAuraEffects.h"
+#include "DynamicObject.h"
 #include "SpellAuras.h"
 #include "SpellInfo.h"
 #include "SpellMgr.h"
+#include "ThreatManager.h"
 #include <algorithm>
 
 namespace
@@ -426,6 +428,66 @@ namespace Animus::Curriculum::Encoding
         }
 
         return nullptr;
+    }
+
+    uint32 StandingInHazards(Unit const* unit, Hazard* deepest)
+    {
+        if (!unit)
+            return 0;
+
+        uint32 count = 0;
+        float deepestLeft = -1.0f;
+        for (auto const& [spellId, application] : unit->GetAppliedAuras())
+        {
+            if (!application || application->IsPositive())
+                continue;
+
+            Aura const* aura = application->GetBase();
+            if (!aura || aura->GetType() != DYNOBJ_AURA_TYPE)
+                continue;
+
+            DynamicObject const* object = aura->GetDynobjOwner();
+            if (!object)
+                continue;
+
+            ++count;
+            if (!deepest)
+                continue;
+
+            // Deepest by how far there still is to walk: the radius it has to leave, less how far out it already is.
+            float const distance = unit->GetDistance2d(object);
+            float const left = object->GetRadius() - distance;
+            if (left <= deepestLeft)
+                continue;
+
+            deepestLeft = left;
+            deepest->Distance = distance;
+            deepest->Radius = object->GetRadius();
+            deepest->Bearing = unit->GetRelativeAngle(object);
+            deepest->Present = true;
+        }
+
+        return count;
+    }
+
+    float ThreatShare(Unit const* enemy, Unit const* unit)
+    {
+        if (!enemy || !unit)
+            return 0.0f;
+
+        ThreatManager const& threat = enemy->GetThreatMgr();
+        if (!threat.CanHaveThreatList())
+            return 0.0f;
+
+        float const mine = threat.GetThreat(unit);
+        if (mine <= 0.0f)
+            return 0.0f;
+
+        // The enemy's own victim tops its list in every case that matters here, and asking for one unit's threat is
+        // far cheaper than walking the sorted list every decision for every seat.
+        Unit const* victim = threat.GetLastVictim();
+        float const top = victim ? std::max(mine, threat.GetThreat(victim)) : mine;
+        return top > 0.0f ? std::min(1.0f, mine / top) : 0.0f;
     }
 
     bool IsCrowdControlled(Unit const* unit)

@@ -126,6 +126,30 @@ namespace Animus::Curriculum::Encoding
 
     [[nodiscard]] bool IsCrowdControlled(Unit const* unit);
 
+    /// A hostile ground effect the unit is standing in: where its centre is and how wide it is, so the seat can see
+    /// which way out is shortest.
+    struct Hazard
+    {
+        float Distance = 0.0f;      // yards from the unit to its centre
+        float Radius = 0.0f;        // ... and its radius, so Radius - Distance is the way out
+        float Bearing = 0.0f;       // the direction of its centre, relative to the unit's facing
+        bool Present = false;
+    };
+
+    /// The hostile ground effects the unit is standing in (persistent area auras: a fire pool, a poison cloud, a
+    /// consecration), counted, with the one it is deepest inside. Read from the unit's own aura list -- a ground
+    /// effect applies an aura to whoever stands in it, and the aura knows the object that owns it -- so this costs
+    /// no searching at all. Nothing in the module has ever observed area effects, which is why no seat has ever had
+    /// a reason to step out of one.
+    [[nodiscard]] uint32 StandingInHazards(Unit const* unit, Hazard* deepest);
+
+    /// Where `unit` stands on `enemy`'s threat list: its own threat over the threat of whoever the enemy is on, so 1
+    /// means it holds aggro (or is tied for it) and 0 means the enemy has never noticed it. Holding a pack off a
+    /// healer is threat management, and until now nothing in any block could see a threat table at all -- a tank
+    /// kept aggro only by accident, and every "threat" the encounters count is a proxy for it (who an enemy happens
+    /// to be swinging at this decision).
+    [[nodiscard]] float ThreatShare(Unit const* enemy, Unit const* unit);
+
     /// What kind of opponent a unit is, for the duel block and the critic state.
     ///
     /// The fair opponent creature types, one-hot in this order; a player counts as humanoid.

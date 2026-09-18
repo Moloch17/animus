@@ -201,6 +201,21 @@ namespace Animus::Curriculum
         std::array<Teammate, PARTY_MEMBERS> Teammates{};
         Player* Tank = nullptr;
 
+        /// The raid the seat's group belongs to, in aggregate: a seat acts on its own group and the spotlight slots,
+        /// but it has to know how the rest of the raid is doing. All zero below a party.
+        struct RaidView
+        {
+            uint32 Group = 0;                       // the seat's group index (0 in a party)
+            float Alive = 0.0f;                     // living seats, as a share of the seats in play
+            float GroupAlive = 0.0f;                // ... of the seat's own group
+            float InCombat = 0.0f;                  // seats in combat, as a share of the living
+            float LowestHealth = 1.0f;              // the most hurt living seat
+            float TanksAlive = 0.0f;                // living tanks / RAID_GROUPS, clamped
+            float HealersAlive = 0.0f;              // living healers / RAID_GROUPS, clamped
+        };
+
+        RaidView Raid;
+
         // Travel: where the seat is going.
         bool HasObjective = false;
         Position Objective;

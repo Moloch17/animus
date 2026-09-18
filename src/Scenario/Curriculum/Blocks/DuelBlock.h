@@ -20,6 +20,7 @@
 #define ANIMUS_LIB_CURRICULUM_DUEL_BLOCK_H
 
 #include "Block.h"
+#include "IncomingSpell.h"
 #include "Position.h"
 #include <array>
 
@@ -91,8 +92,23 @@ namespace Animus::Curriculum
             OBS_BOT_ROOTED              = 62,
             OBS_BOT_SILENCED            = 63,
             OBS_BOT_SNARED              = 64,
-            OBS_STABLE_FIRST            = 65,   // hunters: per stable slot STABLE_FEATURES
-            OBS_COUNT_WITHOUT_STABLE    = 65
+            /// What the target is casting, by the spell's own properties (IncomingSpell): how long is left of it,
+            /// whether it is aimed at the seat, area, cone, interruptible, dispellable, a heal, school and mechanic.
+            /// OBS_TARGET_CASTING above is the bare "it is doing something"; these are the casts there is still time
+            /// to answer, and they are what tells a seat which cast is worth an interrupt.
+            /// Where the seat stands on the target's threat list (1 = it holds aggro).
+            OBS_TARGET_THREAT_SHARE     = 65,
+            /// The hostile ground effects the seat is standing in (a fire pool, a poison cloud, a consecration):
+            /// how many / 3, and the one it is deepest inside -- how far it still has to walk to leave it / 20 yd,
+            /// and which way its centre lies, so moving away from that bearing is the way out. Without these a
+            /// ground effect is invisible: the seat only ever saw the damage arrive from nowhere.
+            OBS_HAZARDS_STANDING_IN     = 66,
+            OBS_HAZARD_WAY_OUT          = 67,
+            OBS_HAZARD_BEARING_SIN      = 68,
+            OBS_HAZARD_BEARING_COS      = 69,
+            OBS_TARGET_CAST_FIRST       = 70,
+            OBS_STABLE_FIRST            = OBS_TARGET_CAST_FIRST + IncomingSpell::FEATURE_COUNT,   // hunters: per slot STABLE_FEATURES
+            OBS_COUNT_WITHOUT_STABLE    = OBS_STABLE_FIRST
         };
 
         /// Per stabled beast: offered, family / 50, ferocity, tenacity, cunning.

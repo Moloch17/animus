@@ -22,6 +22,7 @@
 #include <boost/json/array.hpp>
 #include <boost/json/object.hpp>
 #include "Player.h"
+#include "StringFormat.h"
 #include <cmath>
 
 namespace
@@ -79,6 +80,33 @@ void Animus::Curriculum::PartyBlock::DescribeManifest(Layout const& /*layout*/, 
 {
     block["members"] = PARTY_MEMBERS;
     block["member_features"] = uint32(MEMBER_FEATURES);
+}
+
+std::string Animus::Curriculum::PartyBlock::ActionName(Layout const& layout, uint32 local) const
+{
+    // A slot is either the seat's own group or one of the spotlights outside it (PartyEncounter::View), and the
+    // name says which, so an evaluation's action counts can tell "healed my group" from "healed the main tank".
+    auto const slotName = [](uint32 member)
+    {
+        return member < GROUP_MEMBERS ? Acore::StringFormat("group_{}", member)
+            : Acore::StringFormat("spotlight_{}", member - GROUP_MEMBERS);
+    };
+
+    if (local == ACTION_FOLLOW_TANK)
+        return "follow_tank";
+    if (local < ACTION_GUARD_FIRST)
+        return "assist_" + slotName(local - ACTION_ASSIST_FIRST);
+    if (local < ACTION_REVIVE_FIRST)
+        return "guard_" + slotName(local - ACTION_GUARD_FIRST);
+
+    uint32 const revives = uint32(layout.AllyRevives.size());
+    if (!revives)
+        return {};
+
+    uint32 const index = local - ACTION_REVIVE_FIRST;
+    uint32 const member = index / revives;
+    return member < PARTY_MEMBERS ? Acore::StringFormat("revive_{}_{}", slotName(member), index % revives)
+        : std::string();
 }
 
 void Animus::Curriculum::PartyBlock::Observe(SeatView const& view, float* obs, uint8* mask) const
@@ -149,6 +177,14 @@ void Animus::Curriculum::PartyBlock::Observe(SeatView const& view, float* obs, u
 
     obs[OBS_ALIVE] = float(alive) / float(PARTY_MEMBERS + 2);
     obs[OBS_LOWEST_HEALTH] = lowest;
+
+    obs[OBS_RAID_GROUP] = float(view.Raid.Group) / float(RAID_GROUPS);
+    obs[OBS_RAID_ALIVE] = view.Raid.Alive;
+    obs[OBS_RAID_GROUP_ALIVE] = view.Raid.GroupAlive;
+    obs[OBS_RAID_IN_COMBAT] = view.Raid.InCombat;
+    obs[OBS_RAID_LOWEST_HEALTH] = view.Raid.LowestHealth;
+    obs[OBS_RAID_TANKS_ALIVE] = view.Raid.TanksAlive;
+    obs[OBS_RAID_HEALERS_ALIVE] = view.Raid.HealersAlive;
 
     uint32 const actions = view.L->Slice(BlockId::Party).ActionCount;
     for (uint32 action = 0; mask && action < actions; ++action)

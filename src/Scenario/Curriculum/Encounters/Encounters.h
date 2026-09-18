@@ -352,7 +352,8 @@ namespace Animus::Curriculum
         };
 
         /// The seat index of teammate slot `slot` (0..PARTY_MEMBERS-1) of `seat`: the other seats in order.
-        [[nodiscard]] static uint32 TeammateSeat(uint32 seat, uint32 slot) { return slot < seat ? slot : slot + 1; }
+        /// The first seat of the group `seat` is in: a party is one group, a raid is RAID_GROUPS of them.
+        [[nodiscard]] static uint32 GroupFirstSeat(uint32 seat) { return seat / GROUP_SEATS * GROUP_SEATS; }
         void Disband(Env& env);
 
         std::vector<EnvParty> _envs;
