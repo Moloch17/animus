@@ -63,6 +63,19 @@ namespace Animus::Curriculum
             FEATURE_COUNT               = 26
         };
 
+        /// What stopping a cast was worth, by what the cast was. A heal undoes damage already dealt, an area spell
+        /// hits the whole party, a long cast is a large part of the caster's output; an ordinary one is still worth
+        /// stopping, just less. Nothing here knows which spell it is, so it holds for a boss nobody has seen.
+        enum class Prevented : uint8
+        {
+            Ordinary = 0,
+            Long,
+            Area,
+            Heal
+        };
+
+        [[nodiscard]] static Prevented Classify(SpellInfo const* info, uint32 castTimeMs);
+
         /// Write `out[0 .. FEATURE_COUNT)` for whatever `enemy` is casting, from `seat`'s point of view, and return
         /// whether it was casting at all. `out` is left untouched where nothing is being cast, so a caller that has
         /// already zeroed its observation can ignore the result.

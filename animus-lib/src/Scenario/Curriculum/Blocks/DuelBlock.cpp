@@ -268,6 +268,15 @@ void Animus::Curriculum::DuelBlock::Observe(SeatView const& view, float* obs, ui
         }
     }
 
+    // What has been done to the seat: the same aura list the hazards came from, read for what an enemy put on it.
+    Encoding::Debuffs const debuffs = Encoding::IncomingDebuffs(bot);
+    obs[OBS_DEBUFF_COUNT] = std::min(1.0f, float(debuffs.Count) / 5.0f);
+    obs[OBS_DEBUFF_DISPELLABLE] = std::min(1.0f, float(debuffs.Dispellable) / 5.0f);
+    obs[OBS_DEBUFF_STACKS] = std::min(1.0f, float(debuffs.Stacks) / 10.0f);
+    obs[OBS_DEBUFF_LONGEST] = std::min(1.0f, float(debuffs.LongestMs) / 30000.0f);
+    for (std::size_t mechanic = 0; mechanic < debuffs.Mechanics.size(); ++mechanic)
+        obs[OBS_DEBUFF_MECHANIC_FIRST + mechanic] = debuffs.Mechanics[mechanic] ? 1.0f : 0.0f;
+
     obs[OBS_SHAPESHIFTED] = Encoding::CancellableForm(bot) ? 1.0f : 0.0f;
     obs[OBS_COMBAT_TIME] = view.CombatTime;
 

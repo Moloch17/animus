@@ -143,6 +143,20 @@ namespace Animus::Curriculum::Encoding
     /// a reason to step out of one.
     [[nodiscard]] uint32 StandingInHazards(Unit const* unit, Hazard* deepest);
 
+    /// The harmful auras on a unit, summarised: what is on it, what could be taken off, and how long the worst of
+    /// it lasts. A seat could always see its own buffs (per catalog action) and never what had been done to it, so
+    /// a debuff to dispel, a stack to run from and a snare to break all looked the same as nothing.
+    struct Debuffs
+    {
+        uint32 Count = 0;               // harmful auras
+        uint32 Dispellable = 0;         // ... of a kind a dispel can remove (magic, curse, disease, poison)
+        uint32 Stacks = 0;              // the most stacks any one of them has
+        uint32 LongestMs = 0;           // and the longest left to run
+        std::array<bool, 6> Mechanics{};// which of OBSERVED_MECHANICS are among them
+    };
+
+    [[nodiscard]] Debuffs IncomingDebuffs(Unit const* unit);
+
     /// Where `unit` stands on `enemy`'s threat list: its own threat over the threat of whoever the enemy is on, so 1
     /// means it holds aggro (or is tied for it) and 0 means the enemy has never noticed it. Holding a pack off a
     /// healer is threat management, and until now nothing in any block could see a threat table at all -- a tank

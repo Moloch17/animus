@@ -430,6 +430,48 @@ namespace Animus::Curriculum::Encoding
         return nullptr;
     }
 
+    Debuffs IncomingDebuffs(Unit const* unit)
+    {
+        Debuffs debuffs;
+        if (!unit)
+            return debuffs;
+
+        for (auto const& [spellId, application] : unit->GetAppliedAuras())
+        {
+            if (!application || application->IsPositive())
+                continue;
+
+            Aura const* aura = application->GetBase();
+            SpellInfo const* info = aura ? aura->GetSpellInfo() : nullptr;
+            if (!info)
+                continue;
+
+            ++debuffs.Count;
+            switch (info->Dispel)
+            {
+                case DISPEL_MAGIC:
+                case DISPEL_CURSE:
+                case DISPEL_DISEASE:
+                case DISPEL_POISON:
+                    ++debuffs.Dispellable;
+                    break;
+                default:
+                    break;
+            }
+
+            debuffs.Stacks = std::max(debuffs.Stacks, uint32(aura->GetStackAmount()));
+            if (int32 const left = aura->GetDuration(); left > 0)
+                debuffs.LongestMs = std::max(debuffs.LongestMs, uint32(left));
+
+            uint64 const mechanics = info->GetAllEffectsMechanicMask();
+            for (std::size_t mechanic = 0; mechanic < OBSERVED_MECHANICS.size(); ++mechanic)
+                if (mechanics & (uint64(1) << OBSERVED_MECHANICS[mechanic]))
+                    debuffs.Mechanics[mechanic] = true;
+        }
+
+        return debuffs;
+    }
+
     uint32 StandingInHazards(Unit const* unit, Hazard* deepest)
     {
         if (!unit)

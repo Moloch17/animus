@@ -162,6 +162,16 @@ namespace Animus::Curriculum
         uint32 DefensiveCasts = 0;
         uint32 HealingCasts = 0;
         uint32 DownrankedCasts = 0;
+        /// Standing in a hostile ground effect: how long, and what it cost. A seat that never learns to step out
+        /// pays for it here, and the two numbers say whether it is learning to (hazard_seconds falling while the
+        /// fights stay the same length).
+        uint32 HazardMs = 0;
+        uint64 HazardDamage = 0;
+        /// Enemy casts the seat could have interrupted: counted when one starts, so the press-to-interrupt ratio
+        /// can be read against what was actually there to interrupt rather than against presses alone.
+        uint32 InterruptibleCastsSeen = 0;
+        ObjectGuid LastInterruptibleCaster;     // ... the caster of the one last counted, so a cast counts once
+        uint32 LastInterruptibleSpell = 0;
         uint32 LowHealthMs = 0;
 
         // Where the bot last saw its target, for when the target hides (SeatView::HiddenTarget).
@@ -230,6 +240,11 @@ namespace Animus::Curriculum
             DefensiveCasts = 0;
             HealingCasts = 0;
             DownrankedCasts = 0;
+            HazardMs = 0;
+            HazardDamage = 0;
+            InterruptibleCastsSeen = 0;
+            LastInterruptibleCaster.Clear();
+            LastInterruptibleSpell = 0;
             LowHealthMs = 0;
             LastSeenGuid.Clear();
             LastSeenMs = 0;
