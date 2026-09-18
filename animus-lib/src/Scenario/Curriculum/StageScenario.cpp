@@ -1684,7 +1684,7 @@ void Animus::Curriculum::StageScenario::ApplySeatAction(Env& env, uint32 seatInd
     SeatOptionSet const started = seat.Option;
     SeatEncoder::Apply(view, action, result);
     if (action > 0)
-        Press(env, seat, bot, uint32(action));
+        Press(env, seat, bot, uint32(action), result.DidSomething());
 
     // Time under a durative action (wall time, whichever of the slots are running), and each one started (the
     // options are set by the action this decision applied).
@@ -1813,7 +1813,8 @@ bool Animus::Curriculum::StageScenario::Paced(Env const& env, SeatState const& s
     return seat.Memory.Paced(*seat.L, action, env.EpisodeElapsedMs, _tuning.Actions);
 }
 
-void Animus::Curriculum::StageScenario::Press(Env const& env, SeatState& seat, Player* bot, uint32 action) const
+void Animus::Curriculum::StageScenario::Press(Env const& env, SeatState& seat, Player* bot, uint32 action,
+    bool didSomething) const
 {
     Layout const& layout = *seat.L;
     std::optional<BlockId> const block = layout.BlockOfAction(action);
@@ -1825,8 +1826,16 @@ void Animus::Curriculum::StageScenario::Press(Env const& env, SeatState& seat, P
     CurriculumTuning::ActionTuning const& pacing = _tuning.Actions;
     seat.Memory.Press(layout, action, now, pacing, bot, &seat.KnownRanks);
 
-    // The same action again within the window, past the free presses: charged at the next reward. Movement orders are
-    // always free.
+    // The same action again within the window, past the free presses: charged at the next reward. Movement orders
+    // are always free, and so is a press that did something -- a spell that started casting, an item used, a pet
+    // ability. Pressing the same button again is waste only when the button did nothing: a caster's rotation is one
+    // nuke over and over, and charging that charges the correct play (stage1_duel at 10M: the two classes with the
+    // most repeated presses, warlock_dps at 39.7 an episode and mage_dps at 16.6, were the two lowest scoring).
+    // What the charge was built for is untouched: orders to a pet already obeying, a target selected again, a stance
+    // pressed twice -- none of them do anything, and all of them still count.
+    if (didSomething)
+        return;
+
     if (GetBlock(*block).IsMovement(action - layout.Slice(*block).ActionFirst))
         return;
 

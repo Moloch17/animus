@@ -79,7 +79,8 @@ Animus::Curriculum::BlockSize Animus::Curriculum::CoreBlock::Size(Layout const& 
 {
     uint32 const actions = uint32(layout.Catalog().Actions().size());
     uint32 const talents = uint32(layout.Assets->Talents->Talents().size());
-    return { OBS_GLOBAL_COUNT + actions * ACTION_FEATURES + talents + TalentBuilder::TREE_COUNT, actions };
+    return { OBS_GLOBAL_COUNT + actions * ACTION_FEATURES + talents + TalentBuilder::TREE_COUNT,
+             actions + ACTION_RANK_TIERS };
 }
 
 uint32 Animus::Curriculum::CoreBlock::TalentObsFirst(Layout const& layout)
@@ -120,7 +121,13 @@ Animus::Curriculum::ModeGroup Animus::Curriculum::CoreBlock::ModeGroupOf(Layout 
 std::string Animus::Curriculum::CoreBlock::ActionName(Layout const& layout, uint32 local) const
 {
     std::vector<ActionCatalog::Action> const& actions = layout.Catalog().Actions();
-    return local < actions.size() ? actions[local].Name : std::string();
+    if (local < actions.size())
+        return actions[local].Name;
+
+    static constexpr std::array<char const*, ACTION_RANK_TIERS> TIER_NAMES = { "rank_high", "rank_mid", "rank_low" };
+    static_assert(TIER_NAMES.back() != nullptr, "every rank tier needs a name");
+    uint32 const tier = local - uint32(actions.size());
+    return tier < TIER_NAMES.size() ? TIER_NAMES[tier] : std::string();
 }
 
 void Animus::Curriculum::CoreBlock::DescribeManifest(Layout const& layout, boost::json::object& block) const
@@ -321,12 +328,24 @@ void Animus::Curriculum::CoreBlock::Observe(SeatView const& view, float* obs, ui
         if (mask && action > 0)
             mask[action] = IsActionAllowed(view, action) ? 1 : 0;
     }
+
+    // The rank tier to cast rankable spells at: always offered but the one already chosen, so a press is a change.
+    if (mask)
+        for (uint32 tier = 0; tier < ACTION_RANK_TIERS; ++tier)
+            mask[actions.size() + tier] = view.Bot->IsAlive() && tier != view.RankTier ? 1 : 0;
 }
 
 void Animus::Curriculum::CoreBlock::Apply(SeatView& view, uint32 local, SeatActionResult& result) const
 {
     std::vector<ActionCatalog::Action> const& catalog = view.L->Catalog().Actions();
-    if (local == 0 || local >= catalog.size())
+    if (local >= catalog.size())
+    {
+        // The rank to cast rankable spells at, until it is chosen again (EncoderSupport::KnownRank).
+        view.RankTier = std::min(local - uint32(catalog.size()), ACTION_RANK_TIERS - 1);
+        return;
+    }
+
+    if (local == 0)
         return;
 
     Player* bot = view.Bot;

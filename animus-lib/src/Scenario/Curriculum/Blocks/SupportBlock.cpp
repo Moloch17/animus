@@ -31,9 +31,6 @@ namespace
 {
     using namespace Animus::Curriculum;
 
-    constexpr std::array<char const*, RANK_TIERS> TIER_NAMES = { "rank_high", "rank_mid", "rank_low" };
-    static_assert(TIER_NAMES.back() != nullptr, "every rank tier needs a name");
-
     /// A friend slot's name, built rather than listed: the teammate slots are the seat's own group and then the
     /// spotlights outside it (PartyEncounter::View), and they follow PARTY_MEMBERS, which follows the raid's shape.
     /// A fixed list silently filled its tail with null pointers when FRIEND_SLOTS grew -- and a static_assert on the
@@ -56,13 +53,8 @@ namespace
         if (!view.Bot->IsAlive() || action >= SupportBlock::ACTION_COUNT)
             return false;
 
-        if (action < SupportBlock::ACTION_RANK_TIER_FIRST)
-        {
-            Unit* other = Encoding::FriendUnit(view, action);
-            return action != view.FriendSlot && other && other->IsAlive();
-        }
-
-        return action - SupportBlock::ACTION_RANK_TIER_FIRST != view.RankTier;
+        Unit* other = Encoding::FriendUnit(view, action);
+        return action != view.FriendSlot && other && other->IsAlive();
     }
 
     /// The bot's own aura of `type` on `unit`: its duration left as a fraction (1 for a permanent one), or 0.
@@ -174,15 +166,10 @@ void Animus::Curriculum::SupportBlock::Apply(SeatView& view, uint32 local, SeatA
     if (!IsAllowed(view, local))
         return;
 
-    if (local < ACTION_RANK_TIER_FIRST)
-        view.FriendSlot = local;
-    else
-        view.RankTier = local - ACTION_RANK_TIER_FIRST;
+    view.FriendSlot = local;
 }
 
 std::string Animus::Curriculum::SupportBlock::ActionName(Layout const& /*layout*/, uint32 local) const
 {
-    if (local < ACTION_RANK_TIER_FIRST)
-        return FriendName(local);
-    return local < ACTION_COUNT ? TIER_NAMES[local - ACTION_RANK_TIER_FIRST] : std::string();
+    return local < ACTION_COUNT ? FriendName(local) : std::string();
 }

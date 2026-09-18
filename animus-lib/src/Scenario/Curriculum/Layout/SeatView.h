@@ -290,6 +290,16 @@ namespace Animus::Curriculum
         ObjectGuid PendingInterrupt;                // an interrupt was cast at this casting enemy
         uint32 CallBeast = 0;                       // hunters: call this stable beast (the scenario creates the pet)
         uint32 ConsumablesUsed = 0;                 // potions, healthstones, bandages, soulstones
+        /// Whether the press did something in the world that costs a resource or a global cooldown: a spell that
+        /// started casting, an item or trinket used, food or drink, a pet ability. Pressing the same button again is
+        /// only waste when the button did nothing -- a caster's rotation is the same nuke over and over, and
+        /// charging it as a repeat charges the correct play (stage1_duel at 10M: warlock_dps 39.7 repeated presses
+        /// an episode, mage_dps 16.6, the two lowest-scoring layouts in the run).
+        [[nodiscard]] bool DidSomething() const
+        {
+            return SpellCasts || ItemUses || TrinketUses || PetAbilities || FoodUsed || DrinkUsed;
+        }
+
         uint32 PreparationMs = 0;                   // a helpful spell started out of combat: its cast time or a GCD
         bool SelfResurrected = false;
         uint32 Revives = 0;                         // resurrection spells started on a dead ally

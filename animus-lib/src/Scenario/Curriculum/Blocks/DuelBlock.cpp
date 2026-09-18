@@ -440,6 +440,14 @@ void Animus::Curriculum::DuelBlock::BeforeApply(SeatView& view, SeatActionResult
     if (!bot->movespline->Finalized())
         return;     // already running somewhere: let the step finish
 
+    // Not while it is casting. Keeping range means moving, and moving cancels the cast the seat is paid to finish:
+    // at 10M in stage1_duel the two classes furthest inside melee reach (mage_dps 0.56 of the fight, warlock_dps
+    // 0.60, against hunter_dps at 0.22) were also the two cancelling the most casts (0.57 and 0.52 an episode),
+    // which is that loop. The option keeps running, so it steps the moment the cast is done.
+    if (Spell const* casting = bot->GetCurrentSpell(CURRENT_GENERIC_SPELL);
+        casting && casting->getState() == SPELL_STATE_PREPARING)
+        return;
+
     // Keeping range: the target in melee reach is what it runs back out from. Staying on the target: out of melee
     // reach is what it closes again.
     if (option.Kind == SeatOptionKind::KeepRange && target->IsWithinMeleeRange(bot))
