@@ -415,6 +415,14 @@ namespace Animus::Curriculum
         struct HazardTuning
         {
             float Damage = 0.5f;                // per fraction of the seat's maximum health taken from a hazard
+            /// Per second standing in one, whether or not it has ticked yet. The damage alone is small, late and
+            /// noisy -- it arrives after the decision that put the seat there -- while the seconds are immediate and
+            /// describe the behaviour, as Spacing does for a ranged spec caught in melee.
+            float Standing = 0.15f;
+            /// At most this much an episode, both terms together. Melee have to stand in melee: a hazard under the
+            /// enemy is a real trade, and an uncapped charge would teach a seat to leave the fight instead, which is
+            /// worse than standing in fire.
+            float Max = 3.0f;
         } Hazards;
 
         /// Resurrecting: a seat's own Soulstone or Reincarnation, and revives on allies (companion and party stages).
@@ -657,6 +665,8 @@ namespace Animus::Curriculum
             f("Options.RestMaxMs", tuning.Options.RestMaxMs);
             f("Options.HoldInterruptMs", tuning.Options.HoldInterruptMs);
             f("Hazards.Damage", tuning.Hazards.Damage);
+            f("Hazards.Standing", tuning.Hazards.Standing);
+            f("Hazards.Max", tuning.Hazards.Max);
             f("Options.KeepRangeMs", tuning.Options.KeepRangeMs);
             f("Options.StayOnTargetMs", tuning.Options.StayOnTargetMs);
             f("Owner.LevelSpread", tuning.Owner.LevelSpread);

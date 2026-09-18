@@ -259,6 +259,9 @@ namespace Animus::Curriculum
         /// Count an enemy cast the seat could have interrupted, once per cast (interruptible_casts_seen).
     void TrackInterruptibleCast(Env const& env, SeatState& seat, Player* bot);
 
+    /// The nearest hazard the seat is not standing in, cached and refreshed about once a second.
+    void TrackHazards(Env const& env, SeatState& seat, Player* bot);
+
     void TrackSupport(Env& env, uint32 seatIndex, Player* bot);
         void WriteState(Env const& env, float* state) const;
 

@@ -18,6 +18,11 @@
 
 #include "EncoderSupport.h"
 #include "CharmInfo.h"
+#include "Cell.h"
+#include "CellImpl.h"
+#include "GameObject.h"
+#include "GridNotifiers.h"
+#include "GridNotifiersImpl.h"
 #include "Creature.h"
 #include "CreatureAI.h"
 #include "GearStats.h"
@@ -37,6 +42,7 @@
 #include "SpellMgr.h"
 #include "ThreatManager.h"
 #include <algorithm>
+#include <limits>
 
 namespace
 {
@@ -430,6 +436,60 @@ namespace Animus::Curriculum::Encoding
         }
 
         return nullptr;
+    }
+
+    bool FindNearestHazard(Unit const* unit, float range, Hazard& out)
+    {
+        if (!unit || !unit->IsInWorld() || range <= 0.0f)
+            return false;
+
+        float nearestEdge = std::numeric_limits<float>::max();
+        auto const consider = [&](WorldObject* object, float radius)
+        {
+            if (radius <= 0.0f)
+                return;
+
+            float const distance = unit->GetDistance2d(object);
+            float const edge = distance - radius;     // negative: the unit is already inside it
+            if (edge >= nearestEdge)
+                return;
+
+            nearestEdge = edge;
+            out.Distance = distance;
+            out.Radius = radius;
+            out.Bearing = unit->GetRelativeAngle(object);
+            out.Centre.Relocate(object->GetPositionX(), object->GetPositionY(), object->GetPositionZ());
+            out.Present = true;
+        };
+
+        auto const worker = [&](WorldObject* object)
+        {
+            if (DynamicObject* area = object->ToDynObject())
+            {
+                // Only what would hurt this unit: a friendly caster's ground effect is somewhere to stand, not to
+                // leave, and the seat's own consecration is not a hazard to it.
+                Unit* caster = area->GetCaster();
+                SpellInfo const* info = sSpellMgr->GetSpellInfo(area->GetSpellId());
+                if (caster && info && !info->IsPositive() && !unit->IsFriendlyTo(caster))
+                    consider(area, area->GetRadius());
+                return;
+            }
+
+            if (GameObject* object3d = object->ToGameObject();
+                object3d && object3d->GetGoType() == GAMEOBJECT_TYPE_TRAP)
+            {
+                GameObjectTemplate const* info = object3d->GetGOInfo();
+                SpellInfo const* spell = info ? sSpellMgr->GetSpellInfo(info->trap.spellId) : nullptr;
+                if (spell && !spell->IsPositive())
+                    // A trap arms an area of `diameter` around itself.
+                    consider(object3d, std::max(1.0f, float(info->trap.diameter) / 2.0f));
+            }
+        };
+
+        Acore::WorldObjectWorker<decltype(worker)> searcher(unit, worker,
+            GRID_MAP_TYPE_MASK_DYNAMICOBJECT | GRID_MAP_TYPE_MASK_GAMEOBJECT);
+        Cell::VisitObjects(unit, searcher, range);
+        return out.Present;
     }
 
     Debuffs IncomingDebuffs(Unit const* unit)
