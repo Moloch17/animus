@@ -222,17 +222,19 @@ Animus.Curriculum.Duel.FastKill = 1.0
 #   value pays twice for the same thing and reads as "survive" rather than "win"
 Animus.Curriculum.Duel.HealthKept = 0.5
 Animus.Curriculum.Duel.Death = 10.0
-#   a creature duel that runs out of time with neither side dead: a lost fight, ended as one (as Death, so neither
-#   way of losing is the cheaper one)
+#   a creature duel that runs out of time with neither side dead: a lost fight, ended as one, charged times the share
+#   of the opponent still standing (with TimeoutFloor of it charged whatever the progress)
 Animus.Curriculum.Duel.Timeout = 10.0
+#   the share of Timeout charged whatever the fight's progress; the rest goes with the opponent still standing
+Animus.Curriculum.Duel.TimeoutFloor = 0.5
 #   creature duel: per second the fight has not started once StallGraceMs are gone; Timeout alone charges standing
 #   where it spawned only when the clock runs out, too far off for the policy to see
-Animus.Curriculum.Duel.Stall = 0.05
+Animus.Curriculum.Duel.Stall = 0.08
 #   ... the time a seat has to summon, buff and sneak up before it (ms)
 Animus.Curriculum.Duel.StallGraceMs = 15000
 #   ... which grows by the time spent starting buffs, forms, stances, stealth and pet summons out of combat (each its
 #   cast time, at least a global cooldown), up to this much (ms)
-Animus.Curriculum.Duel.PreparationRefundMaxMs = 30000
+Animus.Curriculum.Duel.PreparationRefundMaxMs = 15000
 #   creature duel, ranged specs: per second the opponent stands in melee range hitting the bot
 Animus.Curriculum.Duel.Spacing = 0.03
 #   the range the approach shaping aims for, melee specs
@@ -258,6 +260,8 @@ Animus.Curriculum.Difficulty.LowerBelow = 0.6
 Animus.Curriculum.Difficulty.Window = 200
 #   percent of training fights drawn from a lower tier, so none is forgotten
 Animus.Curriculum.Difficulty.ReviewChance = 25
+#   percent drawn one tier above the class/role's own, which do not count towards moving it
+Animus.Curriculum.Difficulty.StretchChance = 10
 
 #
 #    Animus.Curriculum.Casting.*
@@ -371,15 +375,17 @@ Animus.Curriculum.Pulls.PackDeath = 10.0
 #   level above), climbed per class/role at the Difficulty.* rates; 0 keeps every pack on the first rung
 Animus.Curriculum.Pulls.MaxTier = 5
 Animus.Curriculum.Pulls.Timeout = 10.0
+#   pack: the share of it charged whatever the pull's progress
+Animus.Curriculum.Pulls.TimeoutFloor = 0.5
 #   pack: per second a fight goes on past OvertimeGraceMs after it was engaged, and a death in overtime is charged the
 #   overtime left; a timeout alone, 150 s away, is too discounted to stop kiting out the clock
 Animus.Curriculum.Pulls.Overtime = 0.1
 Animus.Curriculum.Pulls.OvertimeGraceMs = 60000
-Animus.Curriculum.Pulls.Stall = 0.05
+Animus.Curriculum.Pulls.Stall = 0.08
 Animus.Curriculum.Pulls.StallGraceMs = 15000
 #   pack: the grace grows by the time spent starting buffs, forms, stances, stealth and pet summons out of combat (each
 #   its cast time, at least a global cooldown), up to this much (ms)
-Animus.Curriculum.Pulls.PreparationRefundMaxMs = 30000
+Animus.Curriculum.Pulls.PreparationRefundMaxMs = 15000
 Animus.Curriculum.Pulls.Spacing = 0.03
 #   solo gauntlet (pull after pull, no owner; won by lasting to the end with SoloGauntletWinPulls cleared): each pull
 #   cleared, instead of Clear ...
