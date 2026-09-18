@@ -75,8 +75,15 @@ bool Animus::Curriculum::CreatureEncounter::Build(Env& env, Map* map, uint8 /*le
     uint32 const steps = fight.Elite ? fight.Tier - difficulty.EliteTier : fight.Tier;
     uint8 const level = uint8(std::min<uint32>(seat.Level + steps * difficulty.LevelsPerTier, DEFAULT_MAX_LEVEL + 3));
 
+    // A share of duels are against something that casts, and some of those against something that puts a hazard on
+    // the ground. The duel's own pool is default-AI creatures, which never cast at all: stage 1 had no cast to
+    // interrupt, no debuff worth dispelling and nothing to step out of, so everything a seat learns about answering
+    // a caster had to wait for stage 2's packs. These come from the same cast-or-talk-only scripts the packs use.
     Opponents::OpponentPool const& pool = Opponents::OpponentPool::Instance();
     data.OpponentEntry = fight.Elite ? pool.RandomElite(level) : 0;
+    if (!data.OpponentEntry && roll_chance_i(difficulty.CasterChance))
+        data.OpponentEntry = roll_chance_i(difficulty.HazardChance) ? pool.RandomHazardCaster(level)
+                                                                    : pool.RandomCaster(level);
     if (!data.OpponentEntry)
     {
         fight.Elite = false;

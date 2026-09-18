@@ -49,26 +49,46 @@ namespace
     constexpr int32 MEAL_LEFT_SLACK_MS = 500;           // a meal ending with more than a decision and this left was cut
     constexpr float MEAL_FULL = 0.95f;                  // ... unless what it restores was already this full
 
-    /// A single pack's rungs, climbed per class/role (DifficultyLadder): more creatures, then more casters, then an
-    /// elite, then a level more. Every rung has a spellcaster (OpponentPool::RandomCaster), so there is always a cast
-    /// to interrupt; the others are any pack creature, casters included.
+    /// A single pack's rungs, climbed per class/role (DifficultyLadder): more creatures, then something on the
+    /// ground, then an elite, then a level more. Every rung has a spellcaster (OpponentPool::RandomCaster), so there
+    /// is always a cast to interrupt, and the upper rungs have a hazard caster (RandomHazardCaster), so there is
+    /// something to step out of -- without one, nothing in the curriculum ever puts anything on the ground and the
+    /// hazard features and charge read zero everywhere. The others are any pack creature, casters included.
     struct PackRung
     {
         uint8 Casters;
         uint8 Others;
         uint8 Elites;
         uint8 Levels;       // above the seat's
+        uint8 Hazards = 0;  // casters that put something on the ground to walk out of (RandomHazardCaster)
     };
 
     constexpr std::array<PackRung, 6> PACK_RUNGS =
     {{
-        { 1, 1, 0, 0 },     // 2 creatures
-        { 1, 2, 0, 0 },     // 3
-        { 1, 3, 0, 0 },     // 4
-        { 2, 2, 0, 0 },     // 4, two of them casters
-        { 1, 1, 1, 0 },     // 3 with an elite
-        { 2, 1, 1, 1 },     // 4 with an elite, a level above
+        { 1, 1, 0, 0, 0 },  // 2 creatures
+        { 1, 2, 0, 0, 0 },  // 3
+        { 1, 3, 0, 0, 0 },  // 4
+        { 1, 2, 0, 0, 1 },  // 4, one of them putting something on the ground
+        { 1, 1, 1, 0, 1 },  // 4 with an elite and a hazard
+        { 1, 1, 1, 1, 1 },  // 4 with an elite and a hazard, a level above
     }};
+
+    /// A raid's rungs (SeatPlan::Raid). A raid is not a bigger party: it is many seats around one large enemy, so
+    /// difficulty comes from what the enemy is -- elite, levels above, something on the ground -- rather than from
+    /// the count, which PACK_SLOTS caps at what a seat can observe anyway. The seats outnumber the enemies by design;
+    /// what is being trained is a raid's coordination against a fight that punishes standing in the wrong place, not
+    /// a brawl.
+    constexpr std::array<PackRung, 6> RAID_RUNGS =
+    {{
+        { 0, 0, 1, 1, 0 },  // one elite, a level above: the stand-in boss
+        { 0, 1, 1, 1, 1 },  // ... with an add and something on the ground
+        { 1, 1, 1, 2, 1 },  // ... a caster too, two levels above
+        { 0, 1, 2, 2, 1 },  // two elites
+        { 1, 0, 2, 3, 1 },  // ... three levels above
+        { 0, 1, 2, 3, 2 },  // two elites and two hazards to stand clear of
+    }};
+
+    static_assert(RAID_RUNGS.size() == PACK_RUNGS.size(), "one ladder indexes both rung tables");
 
     /// A planned run's pulls (PullSchedule::Sequence), in order: the same fights every episode, ending on a pack
     /// that cannot be walked into without something saved for it. A seat that spends everything on the first pull
@@ -77,12 +97,12 @@ namespace
     {{
         { 1, 1, 0, 0 },     // 2: an opener
         { 1, 2, 0, 0 },     // 3
-        { 2, 2, 0, 0 },     // 4, two of them casters
+        { 1, 2, 0, 0, 1 },  // 4, one of them putting something on the ground
         { 1, 1, 0, 0 },     // 2: a breather, if it is used as one
         { 1, 3, 0, 0 },     // 4
-        { 1, 1, 1, 0 },     // 3 with an elite
-        { 2, 1, 1, 1 },     // 4 with an elite, a level above
-        { 1, 1, 1, 2 },     // the last stand: an elite pack two levels above
+        { 1, 1, 1, 0, 0 },  // 3 with an elite
+        { 1, 1, 1, 1, 1 },  // 4 with an elite and a hazard, a level above
+        { 1, 1, 1, 2, 1 },  // the last stand: an elite pack two levels above, with something on the ground
     }};
 
     /// The pull's creatures leave; enemy players in the slots (ambushers) stay.
@@ -351,6 +371,9 @@ bool Animus::Curriculum::PullsEncounter::SpawnPull(Env& env, Map* map)
         for (uint32 i = 0; i < planned.Casters; ++i)
             if (uint32 const entry = pool.RandomCaster(poolLevel))
                 entries.push_back(entry);
+        for (uint32 i = 0; i < planned.Hazards; ++i)
+            if (uint32 const entry = pool.RandomHazardCaster(poolLevel))
+                entries.push_back(entry);
         for (uint32 i = 0; i < planned.Elites; ++i)
             if (uint32 const entry = pool.RandomElite(poolLevel))
                 entries.push_back(entry);
@@ -359,12 +382,14 @@ bool Animus::Curriculum::PullsEncounter::SpawnPull(Env& env, Map* map)
                 entries.push_back(entry);
     }
 
-    // A single pack is its class/role's rung on the ladder.
+    // A single pack is its class/role's rung on the ladder; a raid's is the raid ladder, since forty seats against
+    // a pack of four is not a fight.
     if (entries.empty() && SinglePack(env))
     {
+        bool const raid = arena.Seats == SeatPlan::Raid;
         uint16 const layout = data.Seats[0].L ? data.Seats[0].L->Index : 0;
         DifficultyLadder::Pick const pick = _ladder.Draw(env, layout, MaxRung());
-        PackRung const& rung = PACK_RUNGS[pick.Tier];
+        PackRung const& rung = raid ? RAID_RUNGS[pick.Tier] : PACK_RUNGS[pick.Tier];
         pulls.Rung = pick.Tier;
         pulls.RungLayout = layout;
         pulls.RungCounts = pick.Counts;
@@ -375,6 +400,9 @@ bool Animus::Curriculum::PullsEncounter::SpawnPull(Env& env, Map* map)
         for (uint32 i = 0; i < rung.Casters; ++i)
             if (uint32 const entry = pool.RandomCaster(poolLevel))
                 entries.push_back(entry);
+        for (uint32 i = 0; i < rung.Hazards; ++i)
+            if (uint32 const entry = pool.RandomHazardCaster(poolLevel))
+                entries.push_back(entry);
         for (uint32 i = 0; i < rung.Elites; ++i)
             if (uint32 const entry = pool.RandomElite(poolLevel))
                 entries.push_back(entry);
@@ -383,6 +411,30 @@ bool Animus::Curriculum::PullsEncounter::SpawnPull(Env& env, Map* map)
                 entries.push_back(entry);
 
         // Which slot the caster takes is no tell.
+        Acore::Containers::RandomShuffle(entries);
+    }
+
+    if (entries.empty() && Gauntlet(env) && arena.Seats == SeatPlan::Raid)
+    {
+        // Each pull of a raid's run is a raid fight, harder as the run goes on: what the seats have left when the
+        // last one comes is the stage's whole question, as it is for the solo gauntlet.
+        PackRung const& rung = RAID_RUNGS[std::min<std::size_t>(pulls.PullsCleared, RAID_RUNGS.size() - 1)];
+        level = uint8(std::min<uint32>(HIGHEST_OPPONENT_LEVEL, botLevel + rung.Levels));
+        uint8 const poolLevel = uint8(std::min<uint32>(level, DEFAULT_MAX_LEVEL));
+        pulls.EliteOrHigher = rung.Elites || rung.Levels;
+        for (uint32 i = 0; i < rung.Casters; ++i)
+            if (uint32 const entry = pool.RandomCaster(poolLevel))
+                entries.push_back(entry);
+        for (uint32 i = 0; i < rung.Hazards; ++i)
+            if (uint32 const entry = pool.RandomHazardCaster(poolLevel))
+                entries.push_back(entry);
+        for (uint32 i = 0; i < rung.Elites; ++i)
+            if (uint32 const entry = pool.RandomElite(poolLevel))
+                entries.push_back(entry);
+        for (uint32 i = 0; i < rung.Others; ++i)
+            if (uint32 const entry = pool.RandomPackMember(poolLevel))
+                entries.push_back(entry);
+
         Acore::Containers::RandomShuffle(entries);
     }
 

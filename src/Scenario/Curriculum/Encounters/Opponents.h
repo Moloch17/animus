@@ -63,6 +63,12 @@ namespace Animus::Curriculum::Opponents
         /// interrupt can stop. The pack ladder puts one in every pack.
         [[nodiscard]] uint32 RandomCaster(uint8 level) const;
 
+        /// A pack creature that puts something on the ground: its SmartAI casts at least one spell with a persistent
+        /// area aura (a fire pool, a poison cloud) or an area aura of its own. Nothing else in the curriculum
+        /// creates a hazard, so without these the ground features and the hazard charge read zero everywhere and
+        /// "step out of it" stays unlearnable until a dungeon.
+        [[nodiscard]] uint32 RandomHazardCaster(uint8 level) const;
+
     private:
         OpponentPool();
 
@@ -72,6 +78,7 @@ namespace Animus::Curriculum::Opponents
         std::array<std::vector<uint32>, 81> _packByLevel;
         std::array<std::vector<uint32>, 81> _elitesByLevel;
         std::array<std::vector<uint32>, 81> _castersByLevel;
+        std::array<std::vector<uint32>, 81> _hazardCastersByLevel;
     };
 
     /// A random spot 40-50 yd from the bot, in line of sight on roughly level ground the bot can walk to (so a

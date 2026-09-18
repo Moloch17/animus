@@ -149,6 +149,12 @@ namespace Animus::Curriculum
             /// fights it would otherwise never see: the rogue sat at tier 4 while 3 of its 7 evaluation tiers were
             /// elites it had never trained on, and lost 44% of them.
             int32 StretchChance = 10;
+            /// Duel: the share of fights against something that casts, and of those, the share against something
+            /// that puts a hazard on the ground. The duel pool is default-AI creatures, which never cast, so at 0
+            /// stage 1 teaches nothing about interrupting, dispelling or stepping out of anything -- every one of
+            /// those had to wait for stage 2's packs, where they compete with learning to fight several enemies.
+            uint32 CasterChance = 40;
+            uint32 HazardChance = 30;
         } Difficulty;
 
         /// Cast-time spells, from the duel stage on.
@@ -543,6 +549,8 @@ namespace Animus::Curriculum
             f("Difficulty.Window", tuning.Difficulty.Window);
             f("Difficulty.ReviewChance", tuning.Difficulty.ReviewChance);
             f("Difficulty.StretchChance", tuning.Difficulty.StretchChance);
+            f("Difficulty.CasterChance", tuning.Difficulty.CasterChance);
+            f("Difficulty.HazardChance", tuning.Difficulty.HazardChance);
 
             f("Casting.TimeWasted", tuning.Casting.TimeWasted);
             f("Casting.TimeCompleted", tuning.Casting.TimeCompleted);
