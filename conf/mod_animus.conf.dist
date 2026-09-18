@@ -457,6 +457,9 @@ Animus.Curriculum.Options.StayOnTargetMs = 10000
 #   Ground effects: damage from something standing on the ground rather than aimed at the companion, charged per
 #   fraction of maximum health on top of the damage itself. The only term that pays for moving its feet.
 Animus.Curriculum.Hazards.Damage = 0.5
+#   per second standing in one, and the cap on both hazard terms an episode
+Animus.Curriculum.Hazards.Standing = 0.15
+Animus.Curriculum.Hazards.Max = 3.0
 
 #
 #    Animus.Curriculum.Owner.*
