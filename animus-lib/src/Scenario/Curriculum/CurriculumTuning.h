@@ -159,10 +159,11 @@ namespace Animus::Curriculum
         /// The learner's goals (SeatGoal), in every stage that its policy chooses them for.
         struct GoalTuning
         {
-            /// Per decision whose actions matched the seat's goal (StageScenario::GoalHeld). Small on purpose: it is
-            /// there to keep the goals apart -- without it nothing stops every goal collapsing into one -- not to pay
-            /// for play the stage's own terms already price.
-            float Match = 0.01f;
+            /// Paid once for each goal the seat holds, on the first decision it holds it (StageScenario::GoalHeld),
+            /// not per decision: a goal is there to be reached, and paying to sit in one made standing at range the
+            /// stage's second largest earner. Small on purpose: it is there to keep the goals apart -- without it
+            /// nothing stops every goal collapsing into one -- not to pay for play the stage's own terms price.
+            float Match = 0.02f;
         } Goals;
 
         /// Looking after itself and its friends, in every stage.
@@ -176,6 +177,10 @@ namespace Animus::Curriculum
             /// Gauntlets: engaging a pull pays this times the share of the layout's buff groups up on the seat (and on
             /// the owner, averaged, with one), next to readiness.
             float BuffCoverage = 0.3f;
+            /// A class that keeps a pet (PetBlock::HasPet) with it out when a fight starts, paid once at the
+            /// engagement. A pet is part of being ready, and the kill alone did not teach it: the warlock summoned
+            /// in 7% of the episodes it did not start with one where the hunter summoned in 85% of its own.
+            float PetReady = 0.3f;
         } Support;
 
         /// How often a seat may press the same button, as a player would. Each decision is 100 ms apart, and a
@@ -516,6 +521,7 @@ namespace Animus::Curriculum
 
             f("Support.SelfHealing", tuning.Support.SelfHealing);
             f("Support.BuffCoverage", tuning.Support.BuffCoverage);
+            f("Support.PetReady", tuning.Support.PetReady);
 
             f("Pulls.LinkedChance", tuning.Pulls.LinkedChance);
             f("Pulls.EliteChance", tuning.Pulls.EliteChance);

@@ -39,7 +39,8 @@ std::vector<Animus::Curriculum::RewardTerm> Animus::Curriculum::CreatureEncounte
 {
     return { RewardTerm::StepCost, RewardTerm::DamageDealt, RewardTerm::DamageTaken, RewardTerm::Casting,
         RewardTerm::Approach, RewardTerm::StealthOpener, RewardTerm::StealthUtility, RewardTerm::Kill,
-        RewardTerm::HealthKept, RewardTerm::Death, RewardTerm::Timeout, RewardTerm::Stall, RewardTerm::Spacing };
+        RewardTerm::HealthKept, RewardTerm::Death, RewardTerm::Timeout, RewardTerm::Stall, RewardTerm::Spacing,
+        RewardTerm::Readiness };
 }
 
 Animus::Curriculum::CreatureEncounter::CreatureEncounter(StageScenario& scenario, uint32 envs)
@@ -157,10 +158,15 @@ void Animus::Curriculum::CreatureEncounter::Reward(Env& env, uint32 seat, Player
     }
 
     // Out of time with neither side dead: the fight is lost (IsTerminal ends it as a loss, not a cut-off).
+    //
+    // What it costs is what is left of the opponent. A clock that runs out with the creature nearly dead is a near
+    // miss; one that runs out with it untouched is a refusal to fight, and until 2026-09-17 the two cost the same
+    // as dying did -- so a seat unsure of the kill could take the certain loss by keeping its distance, which is
+    // what the low-level casters learned to do (timeouts 0.15 against the scripted baseline's 0.03).
     if (!tally.Killed && !tally.Died && !tally.TimedOut && TimeIsUp(env))
     {
         tally.TimedOut = true;
-        ledger.Add(RewardTerm::Timeout, -tuning.Timeout);
+        ledger.Add(RewardTerm::Timeout, -tuning.Timeout * CombatReward::HealthLeft(opponent));
     }
 }
 

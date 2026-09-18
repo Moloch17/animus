@@ -19,6 +19,7 @@
 #include "CombatReward.h"
 #include "EncoderSupport.h"
 #include "Creature.h"
+#include "PetBlock.h"
 #include "Env.h"
 #include "ObjectAccessor.h"
 #include "Player.h"
@@ -109,6 +110,14 @@ float Animus::Curriculum::CombatReward::TimeLeftSince(Env const& env, uint32 sin
 {
     uint32 const spent = env.EpisodeElapsedMs > sinceMs ? env.EpisodeElapsedMs - sinceMs : 0;
     return env.EpisodeLengthMs ? 1.0f - std::min(1.0f, float(spent) / float(env.EpisodeLengthMs)) : 0.0f;
+}
+
+float Animus::Curriculum::CombatReward::HealthLeft(Unit const* unit)
+{
+    if (!unit || !unit->IsAlive() || !unit->GetMaxHealth())
+        return 1.0f;    // nothing to read: the fight is charged as though none of it was done
+
+    return std::clamp(float(unit->GetHealth()) / float(unit->GetMaxHealth()), 0.0f, 1.0f);
 }
 
 void Animus::Curriculum::CombatReward::Stealth(CombatTally& tally, float opener, float utility, RewardLedger& ledger)
@@ -234,6 +243,13 @@ void Animus::Curriculum::CombatReward::OneOnOne(StageScenario& scenario, Env con
     {
         tally.Engaged = true;
         tally.EngageMs = env.EpisodeElapsedMs;
+
+        // Ready to fight: a class that keeps a pet should start the fight with it out. Paid once, when the fight
+        // starts, so summoning over and over earns nothing -- the same shape as the gauntlet's readiness and buff
+        // coverage. Measured 2026-09-17: the warlock summoned in 7% of the episodes it did not start with one,
+        // where the hunter summoned in 85% of its own.
+        if (seat.L && PetBlock::HasPet(seat.L->Profile->Class) && PetBlock::FindPet(bot))
+            ledger.Add(RewardTerm::Readiness, scenario.Tuning().Support.PetReady);
     }
 
     if (tally.Engaged && bot->IsAlive() && opponent->IsAlive())

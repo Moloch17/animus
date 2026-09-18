@@ -140,6 +140,7 @@ namespace Animus::Curriculum
         std::array<uint32, GOAL_COUNT> GoalDecisions{};
         std::array<uint32, GOAL_COUNT> GoalMatches{};
         uint32 GoalChanges = 0;
+        bool GoalRewarded = false;              // the goal now held has been paid for (Goals.Match, once per goal)
         uint32 StepPreparationMs = 0;           // buffs, summons and stealth started this decision (SeatGoal::Prepare)
         uint32 FriendSlot = FRIEND_SELF;        // the selected friend (support block)
         uint32 RankTier = 0;                    // the heals' rank tier (support block)
@@ -219,6 +220,7 @@ namespace Animus::Curriculum
             GoalDecisions.fill(0);
             GoalMatches.fill(0);
             GoalChanges = 0;
+            GoalRewarded = false;
             StepPreparationMs = 0;
             FriendSlot = FRIEND_SELF;
             RankTier = 0;

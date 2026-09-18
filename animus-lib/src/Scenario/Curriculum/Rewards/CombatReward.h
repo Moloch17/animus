@@ -58,6 +58,10 @@ namespace Animus::Curriculum
         /// each new target of one that kept it.
         void Stealth(CombatTally& tally, float opener, float utility, RewardLedger& ledger);
 
+        /// The share of `unit` still standing, 1 for a unit that is gone or cannot be read: what a fight left undone
+        /// is charged in (the timeout).
+        [[nodiscard]] float HealthLeft(Unit const* unit);
+
         /// How the seat is fighting `target`, measured only: time in the fight (FightMs, which every style share is
         /// divided by), time inside melee reach, time the target spent on the bot's pet, and the roots and snares the
         /// bot or its pet and totems hold it with. The caller decides when a fight is on; a null target still counts
