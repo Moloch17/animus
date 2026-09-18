@@ -70,6 +70,7 @@ namespace Animus::Curriculum
         Seal,           // paladin seals
         Armor,          // mage and warlock armors, shaman shields
         PetStance,      // passive, defensive, aggressive
+        RankTier,       // which rank a rankable spell is cast at (CoreBlock::ACTION_RANK_TIERS)
         Count
     };
 
