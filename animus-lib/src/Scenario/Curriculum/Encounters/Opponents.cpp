@@ -139,8 +139,10 @@ Animus::Curriculum::Opponents::OpponentPool::OpponentPool()
         } while (result->NextRow());
     }
 
-    // Of those, the ones that cast something with a cast time: an interrupt can stop it.
+    // Of those, the ones that cast something with a cast time: an interrupt can stop it, and the ones that put
+    // something on the ground: a persistent area aura to walk out of.
     std::unordered_set<uint32> castTimeSmart;
+    std::unordered_set<uint32> hazardSmart;
     if (QueryResult result = WorldDatabase.Query("SELECT entryorguid, action_param1 FROM smart_scripts "
         "WHERE source_type = 0 AND entryorguid > 0 AND action_type = 11"))
     {
@@ -149,8 +151,13 @@ Animus::Curriculum::Opponents::OpponentPool::OpponentPool()
             Field* fields = result->Fetch();
             uint32 const entry = uint32(fields[0].Get<int32>());
             SpellInfo const* spell = sSpellMgr->GetSpellInfo(fields[1].Get<uint32>());
-            if (castOnlySmart.contains(entry) && spell && spell->CastTimeEntry && spell->CastTimeEntry->CastTime > 0)
+            if (!castOnlySmart.contains(entry) || !spell)
+                continue;
+
+            if (spell->CastTimeEntry && spell->CastTimeEntry->CastTime > 0)
                 castTimeSmart.insert(entry);
+            if (spell->HasEffect(SPELL_EFFECT_PERSISTENT_AREA_AURA) || spell->HasAreaAuraEffect())
+                hazardSmart.insert(entry);
         } while (result->NextRow());
     }
 
@@ -158,6 +165,7 @@ Animus::Curriculum::Opponents::OpponentPool::OpponentPool()
     uint32 packMembers = 0;
     uint32 elites = 0;
     uint32 casters = 0;
+    uint32 hazards = 0;
     for (auto const& [entry, info] : *sObjectMgr->GetCreatureTemplates())
     {
         if (!spawned.contains(entry) || walkers.contains(entry))
@@ -183,6 +191,7 @@ Animus::Curriculum::Opponents::OpponentPool::OpponentPool()
         if (info.rank == CREATURE_ELITE_NORMAL)
         {
             bool const caster = castTimeSmart.contains(entry);
+            bool const hazard = hazardSmart.contains(entry);
             for (uint32 level = info.minlevel; level <= maxLevel; ++level)
             {
                 if (defaultAI)
@@ -190,10 +199,13 @@ Animus::Curriculum::Opponents::OpponentPool::OpponentPool()
                 _packByLevel[level].push_back(entry);
                 if (caster)
                     _castersByLevel[level].push_back(entry);
+                if (hazard)
+                    _hazardCastersByLevel[level].push_back(entry);
             }
 
             opponents += defaultAI ? 1 : 0;
             casters += caster ? 1 : 0;
+            hazards += hazard ? 1 : 0;
             ++packMembers;
         }
         else if (elite)
@@ -246,6 +258,11 @@ uint32 Animus::Curriculum::Opponents::OpponentPool::RandomElite(uint8 level) con
 uint32 Animus::Curriculum::Opponents::OpponentPool::RandomCaster(uint8 level) const
 {
     return PickNear(_castersByLevel, level);
+}
+
+uint32 Animus::Curriculum::Opponents::OpponentPool::RandomHazardCaster(uint8 level) const
+{
+    return PickNear(_hazardCastersByLevel, level);
 }
 
 Position Animus::Curriculum::Opponents::FindSpawnPoint(Player* bot, Map* map)

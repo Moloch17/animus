@@ -224,6 +224,39 @@ namespace
             .InDefaultQueue = false,
         });
 
+        // The raid branch: MAX_SEATS learned seats as RAID_GROUPS groups of GROUP_SEATS, each group with its own
+        // tank and healer (SeatPlan::Raid). A raid is not a bigger party -- it is many seats around one large enemy,
+        // which is why the opponents are an elite and its adds rather than a pack per seat, and why the mechanics a
+        // seat can now read (a cast worth interrupting, something on the ground, where it stands on the threat
+        // table) matter far more here than they do alone.
+        //
+        // NOT in the default queue, and not runnable at the usual env count: 40 seats an env is 40 bots an env, so
+        // AnimusForge.Envs has to come down roughly in proportion (a few dozen envs, not 128) before either of these
+        // is started. Train by name: `forge start stage13_raid_single`.
+        stages.push_back({
+            .Name = "stage13_raid_single",
+            .Suffix = "_raid",
+            .Extends = "stage5_party",
+            .Summary = "a raid of eight groups against one elite and its adds, won or lost as the single pack is",
+            .Blocks = { Core, Duel, Pet, Pack, Gauntlet, Companion, Party, Support },
+            .Arenas = { { .Name = "raid_single", .Seats = SeatPlan::Raid, .Against = Opposition::Pulls,
+                .Schedule = PullSchedule::SinglePack, .EpisodeSeconds = 300 } },
+            .InDefaultQueue = false,
+        });
+
+        // The raid's endurance: pull after pull with recovery between, which is what a wing of a raid instance is
+        // before the boss of it. Seeded from the single fight, as the gauntlet is from the pack.
+        stages.push_back({
+            .Name = "stage14_raid_gauntlet",
+            .Suffix = "_raidrun",
+            .Extends = "stage13_raid_single",
+            .Summary = "a raid clearing pull after pull, recovering between them",
+            .Blocks = { Core, Duel, Pet, Pack, Gauntlet, Companion, Party, Support },
+            .Arenas = { { .Name = "raid_gauntlet", .Seats = SeatPlan::Raid, .Against = Opposition::Pulls,
+                .Schedule = PullSchedule::Gauntlet, .EpisodeSeconds = 600 } },
+            .InDefaultQueue = false,
+        });
+
         // A pilot of arena mixing and merging, not part of the curriculum: the duel and the scripted enemy player in
         // one stage, merging the two stages that trained them (each teaches its arena). Trained only when named
         // (forge start mix_duel_pvp).
