@@ -262,6 +262,9 @@ Animus.Curriculum.Difficulty.Window = 200
 Animus.Curriculum.Difficulty.ReviewChance = 25
 #   percent drawn one tier above the class/role's own, which do not count towards moving it
 Animus.Curriculum.Difficulty.StretchChance = 10
+#   duel: the share of fights against something that casts, and of those, the share that puts a hazard on the ground
+Animus.Curriculum.Difficulty.CasterChance = 40
+Animus.Curriculum.Difficulty.HazardChance = 30
 
 #
 #    Animus.Curriculum.Casting.*
