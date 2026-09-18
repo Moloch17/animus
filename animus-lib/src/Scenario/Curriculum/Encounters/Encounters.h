@@ -43,6 +43,12 @@ class Map;
  */
 namespace Animus::Curriculum
 {
+    /// What stopping a cast was worth, as a multiple of the stage's own Interrupt weight: a heal undoes damage
+    /// already dealt, an area spell would have hit everyone, a long cast was a large part of the caster's output
+    /// (IncomingSpell::Prevented). Never below 1 -- the flat term is how a class finds interrupting at all. Shared
+    /// so the duel and the pack price the same prevented cast the same way.
+    [[nodiscard]] float PreventedScale(float heal, float area, float longCast, uint8 prevented);
+
     /// Scripted enemy players: the PvP stages' opponent and the ambushers.
     namespace EnemyPlayers
     {
@@ -99,7 +105,10 @@ namespace Animus::Curriculum
             uint16 Layout = 0;
             bool Counts = false;        // a training fight at its class/role's current tier: its outcome moves it
             bool Recorded = false;      // the outcome is in
+            ObjectGuid PendingInterrupt;// a casting opponent the seat just cast an interrupt at
         };
+
+        void OnSeatAction(Env& env, uint32 seat, SeatActionResult const& result) override;
 
         /// The episode's time limit is reached.
         [[nodiscard]] static bool TimeIsUp(Env const& env);
@@ -235,9 +244,6 @@ namespace Animus::Curriculum
         /// Whether an enemy is held out of the fight: stunned, incapacitated, asleep, polymorphed, feared, or rooted
         /// out of melee reach of what it was fighting and not casting at it.
         [[nodiscard]] static bool Controlled(Unit const* enemy);
-
-        /// What an interrupt of this kind of cast is worth, as a multiple of PullTuning::Interrupt (IncomingSpell).
-        [[nodiscard]] static float PreventedScale(CurriculumTuning::PullTuning const& tuning, uint8 prevented);
 
         /// The stall grace earned by preparing for the current pull (SeatPull::PreparationBaseMs).
         [[nodiscard]] static uint32 PreparationRefundMs(CurriculumTuning::PullTuning const& tuning,

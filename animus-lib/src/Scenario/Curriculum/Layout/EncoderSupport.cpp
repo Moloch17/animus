@@ -293,7 +293,9 @@ namespace Animus::Curriculum::Encoding
         }
 
         // An interrupt attempt on a casting enemy; the scenario checks next decision whether the cast stopped.
-        if (view.L->Has(BlockId::Pack) && targetCasting && target != bot && ActionCatalog::IsInterruptingSpell(info))
+        // Any stage, not only the ones with a pack block: the duel meets casters now (Difficulty.CasterChance), and
+        // an interrupt there is the cheapest place to learn what interrupting is for.
+        if (targetCasting && target != bot && ActionCatalog::IsInterruptingSpell(info))
             result.PendingInterrupt = target->GetGUID();
 
         return true;
