@@ -120,8 +120,12 @@ namespace Animus::Curriculum
             /// A ranged spec: back to casting range whenever the target closes in, decision after decision, until
             /// Options.KeepRangeMs runs out or the policy does something else (SeatOption).
             ACTION_KEEP_RANGE           = 16,
-            ACTION_CALL_BEAST_FIRST     = 17,   // hunters: call stable slot 0..STABLE_SLOTS-1
-            ACTION_COUNT_WITHOUT_STABLE = 17
+            /// A melee spec: back into melee reach whenever the target leaves it, decision after decision, until
+            /// Options.StayOnTargetMs runs out or the seat moves itself (SeatOption). One press instead of the
+            /// order re-issued every decision a fight leaves spare.
+            ACTION_STAY_ON_TARGET       = 17,
+            ACTION_CALL_BEAST_FIRST     = 18,   // hunters: call stable slot 0..STABLE_SLOTS-1
+            ACTION_COUNT_WITHOUT_STABLE = 18
         };
 
         static constexpr float MOVE_TO_RANGE_DISTANCE = 24.0f;
@@ -143,7 +147,8 @@ namespace Animus::Curriculum
         void Apply(SeatView& view, uint32 local, SeatActionResult& result) const override;
         [[nodiscard]] bool IsMovement(uint32 local) const override
         {
-            return local <= ACTION_STOP || local == ACTION_BREAK_LINE_OF_SIGHT;
+            return local <= ACTION_STOP || local == ACTION_BREAK_LINE_OF_SIGHT || local == ACTION_KEEP_RANGE
+                || local == ACTION_STAY_ON_TARGET;
         }
 
         [[nodiscard]] int8 MoveDirection(uint32 local) const override

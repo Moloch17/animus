@@ -377,6 +377,7 @@ namespace Animus::Curriculum
             uint32 RestMaxMs = 30000;           // eat and drink until health and mana are back
             uint32 HoldInterruptMs = 10000;     // interrupt the target as soon as it casts
             uint32 KeepRangeMs = 10000;         // a ranged spec: back to its range whenever the target closes in
+            uint32 StayOnTargetMs = 10000;      // a melee spec: back into melee reach whenever the target leaves it
         } Options;
 
         /// Resurrecting: a seat's own Soulstone or Reincarnation, and revives on allies (companion and party stages).
@@ -610,6 +611,7 @@ namespace Animus::Curriculum
             f("Options.RestMaxMs", tuning.Options.RestMaxMs);
             f("Options.HoldInterruptMs", tuning.Options.HoldInterruptMs);
             f("Options.KeepRangeMs", tuning.Options.KeepRangeMs);
+            f("Options.StayOnTargetMs", tuning.Options.StayOnTargetMs);
             f("Owner.LevelSpread", tuning.Owner.LevelSpread);
             f("Owner.TankChance", tuning.Owner.TankChance);
             f("Owner.HealerChance", tuning.Owner.HealerChance);

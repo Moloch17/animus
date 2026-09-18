@@ -20,6 +20,7 @@
 #include "CharmInfo.h"
 #include "CreatureAI.h"
 #include "DBCStores.h"
+#include "EncoderSupport.h"
 #include "Layout.h"
 #include "MotionMaster.h"
 #include "Pet.h"
@@ -201,7 +202,11 @@ namespace
         if (!pet || !pet->IsAlive() || !view.Bot->IsAlive())
             return false;
 
+        // A guardian takes no orders (it has no action bar of the owner's): nothing of it can be pressed, which is
+        // what a player sees too. PetBlock::OBS_COMMANDABLE says so.
         CharmInfo* charmInfo = pet->GetCharmInfo();
+        if (!charmInfo)
+            return false;
         switch (action)
         {
             case PetBlock::ACTION_PASSIVE:
@@ -297,7 +302,21 @@ bool Animus::Curriculum::PetBlock::HasPet(uint8 playerClass)
 
 Creature* Animus::Curriculum::PetBlock::FindPet(Player* bot)
 {
-    return bot ? bot->GetGuardianPet() : nullptr;
+    if (!bot)
+        return nullptr;
+
+    if (Creature* pet = bot->GetGuardianPet())
+        return pet;
+
+    // A summon the core did not register as the owner's pet fights for the seat all the same: a ghoul raised without
+    // Master of Ghouls, Army of the Dead, an Infernal, Feral Spirits. GetGuardianPet does not return any of them, so
+    // the whole block used to read zeros while the thing dealt a tenth of the seat's damage (stage1_duel, 2026-09-17:
+    // the death knight tank raised a ghoul in 90% of its fights and the policy never saw one). Orders stay masked --
+    // it cannot be commanded -- but the policy can see it and what it is doing.
+    if (Unit* first = Encoding::FirstPet(bot))
+        return first->ToCreature();
+
+    return nullptr;
 }
 
 void Animus::Curriculum::PetBlock::DefaultStance(Creature* pet, ObjectGuid& lastPet)
@@ -363,6 +382,7 @@ void Animus::Curriculum::PetBlock::Observe(SeatView const& view, float* obs, uin
     }
     if (CharmInfo* charmInfo = pet->GetCharmInfo())
     {
+        obs[OBS_COMMANDABLE] = 1.0f;
         obs[OBS_FOLLOWING] = charmInfo->HasCommandState(COMMAND_FOLLOW) ? 1.0f : 0.0f;
         obs[OBS_STAYING] = charmInfo->HasCommandState(COMMAND_STAY) ? 1.0f : 0.0f;
     }

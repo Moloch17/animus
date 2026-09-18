@@ -48,7 +48,9 @@ namespace Animus::Curriculum
             OBS_KIND_FIRST              = 12,   // one-hot: what the pet is (PetKind)
             OBS_TEMPORARY               = 23,   // it leaves on its own (a ghoul without Master of Ghouls, an elemental)
             OBS_TIME_LEFT               = 24,   // ... seconds until it does / 60
-            OBS_SLOT_FIRST              = 25,   // per ability slot SLOT_FEATURES
+            OBS_COMMANDABLE             = 25,   // it takes orders: a guardian fights on its own and every pet action
+                                                // of it is masked, but it is still there and still fighting
+            OBS_SLOT_FIRST              = 26,   // per ability slot SLOT_FEATURES
         };
 
         /// What a pet is: a hunter beast by its talent tree, a warlock's demon, a ghoul, a Water Elemental. The
@@ -84,17 +86,20 @@ namespace Animus::Curriculum
             SLOT_FEATURES
         };
 
-        static constexpr uint32 ABILITY_SLOTS = 4;
+        /// A talented hunter beast carries more than four castable abilities (a focus dump, its family's special,
+        /// a taunt, a sprint and what its talents added), and Abilities() keeps only the best kinds: at four slots
+        /// a ferocity pet's Rabid or Call of the Wild was never offered.
+        static constexpr uint32 ABILITY_SLOTS = 6;
 
         enum Action : uint32
         {
             ACTION_ABILITY_FIRST        = 0,    // cast slot 0..ABILITY_SLOTS-1: at the target, or on itself or the bot
-            ACTION_PASSIVE              = 4,
-            ACTION_DEFENSIVE            = 5,
-            ACTION_AGGRESSIVE           = 6,
-            ACTION_FOLLOW               = 7,
-            ACTION_STAY                 = 8,
-            ACTION_COUNT                = 9
+            ACTION_PASSIVE              = ACTION_ABILITY_FIRST + ABILITY_SLOTS,
+            ACTION_DEFENSIVE,
+            ACTION_AGGRESSIVE,
+            ACTION_FOLLOW,
+            ACTION_STAY,
+            ACTION_COUNT
         };
 
         [[nodiscard]] BlockId Id() const override { return BlockId::Pet; }
