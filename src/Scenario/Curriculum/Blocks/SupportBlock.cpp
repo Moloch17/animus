@@ -21,22 +21,35 @@
 #include "Player.h"
 #include "SpellAuraEffects.h"
 #include "SpellAuras.h"
+#include "StringFormat.h"
 #include <algorithm>
 #include <array>
+#include <string>
 #include <boost/json/object.hpp>
 
 namespace
 {
     using namespace Animus::Curriculum;
 
-    constexpr std::array<char const*, FRIEND_SLOTS> FRIEND_NAMES =
-    {
-        "friend_self", "friend_owner", "friend_teammate_1", "friend_teammate_2", "friend_teammate_3"
-    };
-
     constexpr std::array<char const*, RANK_TIERS> TIER_NAMES = { "rank_high", "rank_mid", "rank_low" };
-    static_assert(FRIEND_NAMES.size() == FRIEND_SLOTS && TIER_NAMES.size() == RANK_TIERS,
-        "every support action needs a name: an unnamed one is a null char* the manifest turns into a string");
+    static_assert(TIER_NAMES.back() != nullptr, "every rank tier needs a name");
+
+    /// A friend slot's name, built rather than listed: the teammate slots are the seat's own group and then the
+    /// spotlights outside it (PartyEncounter::View), and they follow PARTY_MEMBERS, which follows the raid's shape.
+    /// A fixed list silently filled its tail with null pointers when FRIEND_SLOTS grew -- and a static_assert on the
+    /// list's own size cannot catch that, because the size is declared as FRIEND_SLOTS and the missing entries are
+    /// value-initialised. The manifest builds a std::string from every action name, so each null was a crash.
+    std::string FriendName(uint32 slot)
+    {
+        if (slot == FRIEND_SELF)
+            return "friend_self";
+        if (slot == FRIEND_OWNER)
+            return "friend_owner";
+
+        uint32 const member = slot - FRIEND_TEAMMATE_FIRST;
+        return member < GROUP_MEMBERS ? Acore::StringFormat("friend_group_{}", member)
+            : Acore::StringFormat("friend_spotlight_{}", member - GROUP_MEMBERS);
+    }
 
     bool IsAllowed(SeatView const& view, uint32 action)
     {
@@ -170,6 +183,6 @@ void Animus::Curriculum::SupportBlock::Apply(SeatView& view, uint32 local, SeatA
 std::string Animus::Curriculum::SupportBlock::ActionName(Layout const& /*layout*/, uint32 local) const
 {
     if (local < ACTION_RANK_TIER_FIRST)
-        return FRIEND_NAMES[local];
+        return FriendName(local);
     return local < ACTION_COUNT ? TIER_NAMES[local - ACTION_RANK_TIER_FIRST] : std::string();
 }
