@@ -218,7 +218,8 @@ std::string Animus::Curriculum::DuelBlock::ActionName(Layout const& /*layout*/, 
         "stop_casting", "cancel_form", "health_potion", "mana_potion", "healthstone", "bandage", "soulstone_self",
         "self_resurrect", "break_line_of_sight", "keep_range", "stay_on_target"
     };
-    static_assert(NAMES.size() == ACTION_COUNT_WITHOUT_STABLE, "every duel action needs a name");
+    // back() rather than size(): a short initialiser list still fills the declared length, with nulls.
+    static_assert(NAMES.back() != nullptr, "every duel action needs a name");
 
     if (local < NAMES.size())
         return NAMES[local];

@@ -156,7 +156,10 @@ void Animus::Curriculum::GauntletBlock::Rest(SeatView& view, SeatActionResult& r
 std::string Animus::Curriculum::GauntletBlock::ActionName(Layout const& /*layout*/, uint32 local) const
 {
     static constexpr std::array<char const*, ACTION_COUNT> NAMES = { "eat", "drink", "rest_until_ready" };
-    static_assert(NAMES.size() == ACTION_COUNT, "every gauntlet action needs a name");
+    // back() rather than size(): the array is declared ACTION_COUNT long, so a short initialiser list value-
+    // initialises the rest to null and a size check passes anyway. A null name is a crash when the manifest
+    // builds a std::string from it (SupportBlock hit exactly that when the raid grew FRIEND_SLOTS).
+    static_assert(NAMES.back() != nullptr, "every gauntlet action needs a name");
 
     return local < NAMES.size() ? NAMES[local] : std::string();
 }
