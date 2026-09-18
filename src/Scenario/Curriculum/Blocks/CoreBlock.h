@@ -87,6 +87,12 @@ namespace Animus::Curriculum
             // per tree: points / 71.
         };
 
+        /// After the catalog's actions: which rank of a rankable spell to cast (RANK_TIERS: the highest known, about
+        /// two thirds up, about a third up). It lived in the support block, which only the stages from the gauntlet
+        /// on have -- so in the duel a seat could only ever cast the biggest heal it knew, at any deficit, and
+        /// overhealing was not a habit it could break. Down-ranking is a property of casting, so it belongs here.
+        static constexpr uint32 ACTION_RANK_TIERS = RANK_TIERS;
+
         /// The first two catalog actions are the no-op and cancel-queued.
         static constexpr uint32 FIRST_CAST_ACTION = 2;
         static constexpr uint32 ACTION_FEATURES = 6;

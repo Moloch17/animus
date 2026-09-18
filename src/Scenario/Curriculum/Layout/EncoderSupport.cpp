@@ -177,7 +177,10 @@ namespace Animus::Curriculum::Encoding
     {
         SpellInfo const* top = view.KnownRanks && def.Index < view.KnownRanks->size() ? (*view.KnownRanks)[def.Index]
             : ActionCatalog::KnownRank(view.Bot, def.FirstRank);
-        if (!top || !def.Rankable || !view.RankTier || !view.L || !view.L->Has(BlockId::Support))
+        // Every stage can down-rank: the choice is a core action now (CoreBlock::ACTION_RANK_TIERS), because a seat
+        // that can only cast the biggest heal it knows overheals by construction, and the duel is where that habit
+        // is cheapest to break.
+        if (!top || !def.Rankable || !view.RankTier || !view.L)
             return top;
 
         // The tier's share of the known ranks: tier 1 about two thirds of them up, tier 2 about a third. A lower rank

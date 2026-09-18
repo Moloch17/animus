@@ -247,7 +247,7 @@ namespace Animus::Curriculum
         /// Whether layout action `action` may not be pressed now (SeatMemory::Paced, Tuning().Actions).
         [[nodiscard]] bool Paced(Env const& env, SeatState const& seat, uint32 action) const;
         /// The seat pressed `action`: its memory, and the repeat charge.
-        void Press(Env const& env, SeatState& seat, Player* bot, uint32 action) const;
+        void Press(Env const& env, SeatState& seat, Player* bot, uint32 action, bool didSomething) const;
         void ObserveSeat(Env& env, uint32 seat, float* obs, uint8* mask);
         [[nodiscard]] float SeatReward(Env& env, uint32 seat);
         /// Whether the seat's decision matched the goal it is pursuing (SeatGoal): damage for Fight, an enemy other

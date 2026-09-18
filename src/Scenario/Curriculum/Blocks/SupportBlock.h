@@ -59,8 +59,9 @@ namespace Animus::Curriculum
         enum Action : uint32
         {
             ACTION_SELECT_FRIEND_FIRST  = 0,                            // + friend slot
-            ACTION_RANK_TIER_FIRST      = FRIEND_SLOTS,                 // + tier
-            ACTION_COUNT                = FRIEND_SLOTS + RANK_TIERS
+            /// The rank a heal is cast at moved to the core block (CoreBlock::ACTION_RANK_TIERS): it is a property
+            /// of casting, and only the stages with this block had it, so a duel could not down-rank at all.
+            ACTION_COUNT                = FRIEND_SLOTS
         };
 
         [[nodiscard]] BlockId Id() const override { return BlockId::Support; }
