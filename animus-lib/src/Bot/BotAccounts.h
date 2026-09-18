@@ -30,8 +30,9 @@ namespace Animus::BotAccounts
     /// Far above anything a real realm allocates.
     constexpr uint32 BASE = 0x7F000000;
 
-    /// Learned agents per env (a party's seats) and bots per agent (two sessions alternate across rebuilds).
-    constexpr uint32 SEATS_PER_ENV = 4;
+    /// Learned agents per env (a party's or a raid's seats) and bots per agent (two sessions alternate across
+    /// rebuilds). Must cover Curriculum::MAX_SEATS, which StageScenario asserts.
+    constexpr uint32 SEATS_PER_ENV = 40;
     constexpr uint32 SESSIONS_PER_BOT = 2;
 
     constexpr uint32 OWNER_OFFSET = 100000;
@@ -41,6 +42,7 @@ namespace Animus::BotAccounts
 
     /// Most envs whose seat accounts stay below the owner range (the owner and opponent ranges hold more).
     constexpr uint32 MAX_ENVS = OWNER_OFFSET / (SEATS_PER_ENV * SESSIONS_PER_BOT);
+    static_assert(MAX_ENVS >= 1024, "seat accounts leave too few envs for the sim to run");
     static_assert(MAX_ENVS * SESSIONS_PER_BOT <= OPPONENT_OFFSET - OWNER_OFFSET, "owner accounts overlap opponents'");
     static_assert(MAX_ENVS * SESSIONS_PER_BOT <= AMBUSHER_OFFSET - OPPONENT_OFFSET,
         "opponent accounts overlap ambushers'");

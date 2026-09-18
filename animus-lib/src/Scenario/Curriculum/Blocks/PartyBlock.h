@@ -32,13 +32,23 @@ namespace Animus::Curriculum
     public:
         enum Obs : uint32
         {
-            OBS_ALIVE                   = 0,    // living party players (bot and owner included) / 5
+            OBS_ALIVE                   = 0,    // living players in the slots (bot and owner included) / 5
             OBS_LOWEST_HEALTH           = 1,    // the most hurt living ally's health (owner and teammates)
             OBS_HAS_TANK                = 2,    // a living tank other than the bot
             OBS_HAS_HEALER              = 3,    // a living healer other than the bot
-            OBS_GLOBAL_COUNT            = 4
+            // The raid the seat's group is part of, which it cannot act on one by one (SeatView::RaidView). All
+            // zero in a party, where the group is the whole of it.
+            OBS_RAID_GROUP              = 4,    // the seat's group index / RAID_GROUPS
+            OBS_RAID_ALIVE              = 5,    // living seats, as a share of the seats in play
+            OBS_RAID_GROUP_ALIVE        = 6,    // ... of the seat's own group
+            OBS_RAID_IN_COMBAT          = 7,    // seats in combat, as a share of the living
+            OBS_RAID_LOWEST_HEALTH      = 8,    // the most hurt living seat anywhere in the raid
+            OBS_RAID_TANKS_ALIVE        = 9,    // living tanks / RAID_GROUPS, clamped
+            OBS_RAID_HEALERS_ALIVE      = 10,   // living healers / RAID_GROUPS, clamped
+            OBS_GLOBAL_COUNT            = 11
 
-            // Then PARTY_MEMBERS teammate slots of MEMBER_FEATURES.
+            // Then PARTY_MEMBERS teammate slots of MEMBER_FEATURES: GROUP_MEMBERS of the seat's own group, then
+            // SPOTLIGHT_SLOTS raiders outside it (PartyEncounter::View).
         };
 
         enum MemberFeature : uint32
@@ -71,6 +81,7 @@ namespace Animus::Curriculum
 
         [[nodiscard]] BlockId Id() const override { return BlockId::Party; }
         [[nodiscard]] BlockSize Size(Layout const& layout) const override;
+        [[nodiscard]] std::string ActionName(Layout const& layout, uint32 local) const override;
         void DescribeManifest(Layout const& layout, boost::json::object& block) const override;
         void Observe(SeatView const& view, float* obs, uint8* mask) const override;
         void Apply(SeatView& view, uint32 local, SeatActionResult& result) const override;

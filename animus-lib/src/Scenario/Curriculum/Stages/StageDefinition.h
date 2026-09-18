@@ -31,8 +31,9 @@ namespace Animus::Curriculum
     enum class SeatPlan : uint8
     {
         Solo,           // one seat
-        Party,          // four seats (1-4 with a character each episode): a tank, a healer and damage dealers
+        Party,          // one group (1-GROUP_SEATS with a character each episode): a tank, a healer and damage
         Mirror,         // two seats that fight each other (self-play)
+        Raid,           // the arena's seats as RAID_GROUPS groups of GROUP_SEATS: a tank and a healer per group
     };
 
     /// What the seats fight.

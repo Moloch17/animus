@@ -34,8 +34,9 @@ namespace Animus
     /// Most scripted allies an env can have (Env::Allies): a party's other four members.
     constexpr std::size_t MAX_ALLIES = 4;
 
-    /// Most learned agents an env can have.
-    constexpr std::size_t MAX_AGENTS = 8;
+    /// Most learned agents an env can have: a raid's forty seats. Indexes AgentHealingBy and AgentProtectionBy by
+    /// agent, so it must cover Curriculum::MAX_SEATS -- StageScenario asserts that it does.
+    constexpr std::size_t MAX_AGENTS = 40;
 
     /// Most enemy slots an env attributes damage to (Env::Targets): a pack's four, and the enemy players of the
     /// self-play and party arenas. Targets past this take damage as usual, they are just not attributed per slot.

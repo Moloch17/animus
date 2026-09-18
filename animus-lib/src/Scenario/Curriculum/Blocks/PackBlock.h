@@ -20,6 +20,7 @@
 #define ANIMUS_LIB_CURRICULUM_PACK_BLOCK_H
 
 #include "Block.h"
+#include "IncomingSpell.h"
 
 namespace Animus::Curriculum
 {
@@ -55,7 +56,16 @@ namespace Animus::Curriculum
             SLOT_ELITE                  = 13,
             SLOT_LEVEL_DIFFERENCE       = 14,   // (its level - the bot's) / 5
             SLOT_IN_LINE_OF_SIGHT       = 15,   // the bot can see it past the terrain and buildings
-            SLOT_FEATURES
+            /// What it is casting, described by the spell's own properties (IncomingSpell): cast time left, whether
+            /// it is aimed at the seat, area, cone, interruptible, dispellable, a heal, its school and mechanic.
+            /// SLOT_CASTING above is the bare "it is doing something", instants included; these are the casts there
+            /// is still time to answer.
+            /// Where the seat stands on this enemy's threat list, over the threat of whoever it is on: 1 means it
+            /// holds aggro. SLOT_ATTACKS_BOT says the enemy is on it right now; this says how close that is to
+            /// changing, which is what tanking and what staying off a pack are both about.
+            SLOT_THREAT_SHARE           = 16,
+            SLOT_CAST_FIRST             = 17,
+            SLOT_FEATURES               = SLOT_CAST_FIRST + IncomingSpell::FEATURE_COUNT
         };
 
         enum Action : uint32

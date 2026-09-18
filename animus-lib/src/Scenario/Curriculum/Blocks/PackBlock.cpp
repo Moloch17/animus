@@ -86,6 +86,8 @@ void Animus::Curriculum::PackBlock::Observe(SeatView const& view, float* obs, ui
         features[SLOT_ELITE] = enemy->ToCreature() && enemy->ToCreature()->isElite() ? 1.0f : 0.0f;
         features[SLOT_LEVEL_DIFFERENCE] = (float(enemy->GetLevel()) - float(bot->GetLevel())) / 5.0f;
         features[SLOT_IN_LINE_OF_SIGHT] = bot->IsWithinLOSInMap(enemy) ? 1.0f : 0.0f;
+        features[SLOT_THREAT_SHARE] = Encoding::ThreatShare(enemy, bot);
+        IncomingSpell::Observe(enemy, bot, features + SLOT_CAST_FIRST);
 
         alive += enemy->IsAlive() ? 1 : 0;
         inCombat += enemy->IsAlive() && enemy->IsInCombat() ? 1 : 0;
