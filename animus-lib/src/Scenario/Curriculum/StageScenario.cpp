@@ -78,6 +78,10 @@ namespace
     /// How far a cast counts as one this seat could have answered (interruptible_casts_seen): an interrupt's own
     /// range, near enough, and beyond it the press was never available anyway.
     constexpr float INTERRUPTIBLE_CAST_RANGE = 30.0f;
+    /// How often the nearest hazard is searched for, and how far. A ground effect does not move, so between searches
+    /// the cached one is simply measured again: the search is a grid visit, the measurement is arithmetic.
+    constexpr uint32 HAZARD_SEARCH_MS = 1000;
+    constexpr float HAZARD_SEARCH_RANGE = 30.0f;
     constexpr int32 ABSORB_EXPIRY_SLACK_MS = 500;   // an absorb gone with more than a decision and this left soaked it
 
     /// Version of stage.json (2 adds the stage's arenas).
@@ -1674,6 +1678,7 @@ void Animus::Curriculum::StageScenario::ApplySeatAction(Env& env, uint32 seatInd
         action = 0;
 
     SeatView view = ViewSeat(env, seatIndex, bot, target);
+    view.NearestHazard = seat.NearestHazard;
     view.Option = &seat.Option;
     SeatActionResult result;
     SeatOptionSet const started = seat.Option;
@@ -1793,6 +1798,7 @@ void Animus::Curriculum::StageScenario::ObserveSeat(Env& env, uint32 seatIndex, 
         seat.Memory.Reset(seat.L->NumActions);
     seat.Memory.Observe(bot, target, env.EpisodeElapsedMs);
     SeatView view = ViewSeat(env, seatIndex, bot, target);
+    view.NearestHazard = seat.NearestHazard;
     view.Option = &seat.Option;
     SeatEncoder::Observe(view, obs, mask);
 
@@ -1852,6 +1858,29 @@ void Animus::Curriculum::StageScenario::Reward(Env& env, float* reward)
 /// Count an enemy cast the seat could have interrupted, once per cast. The press-to-interrupt ratio alone cannot
 /// say whether a policy is pressing too often or whether there was simply nothing to interrupt; this is the
 /// denominator. The seat's own target is the one it could act on, so that is the one counted.
+/// The nearest ground effect the seat is not in yet, so it can be walked around rather than only walked out of.
+/// The grid search runs every HAZARD_SEARCH_MS; between searches the cached hazard is measured against the seat's
+/// own position again, which is exact because a ground effect stays where it was cast.
+void Animus::Curriculum::StageScenario::TrackHazards(Env const& env, SeatState& seat, Player* bot)
+{
+    Hazard& nearest = seat.NearestHazard;
+    if (env.EpisodeElapsedMs >= seat.HazardSearchMs + HAZARD_SEARCH_MS || !seat.HazardSearchMs)
+    {
+        seat.HazardSearchMs = env.EpisodeElapsedMs;
+        nearest = Hazard();
+        Encoding::FindNearestHazard(bot, HAZARD_SEARCH_RANGE, nearest);
+        return;
+    }
+
+    if (!nearest.Present)
+        return;
+
+    // It may have run out, and the seat has moved: measure it again rather than search again.
+    nearest.Distance = bot->GetExactDist2d(nearest.Centre.GetPositionX(), nearest.Centre.GetPositionY());
+    nearest.Bearing = bot->GetAngle(nearest.Centre.GetPositionX(), nearest.Centre.GetPositionY())
+        - bot->GetOrientation();
+}
+
 void Animus::Curriculum::StageScenario::TrackInterruptibleCast(Env const& env, SeatState& seat, Player* bot)
 {
     Unit* target = env.FindTargetUnit(seat.TargetSlot);
@@ -1976,18 +2005,29 @@ float Animus::Curriculum::StageScenario::SeatReward(Env& env, uint32 seatIndex)
     // for moving its feet. Both read zero where nothing puts anything on the ground.
     if (bot && bot->IsAlive())
     {
+        // Standing in one is charged by the second as well as by the damage it does. The damage alone is small,
+        // late and noisy -- it arrives in ticks after the decision that put the seat there -- while the seconds are
+        // immediate and describe the behaviour itself, which is what Spacing does for a ranged spec in melee. Capped
+        // per episode so it can never be worth leaving a fight over: melee have to stand in melee.
         if (Encoding::StandingInHazards(bot, nullptr))
+        {
             seat.HazardMs += _decisionMs;
+            float const seconds = float(_decisionMs) / 1000.0f;
+            float const room = std::max(0.0f, _tuning.Hazards.Max + seat.Rewards.Episode(RewardTerm::Hazard));
+            seat.Rewards.Add(RewardTerm::Hazard, -std::min(_tuning.Hazards.Standing * seconds, room));
+        }
 
         if (uint64 const hazardDamage = env.StepStats[seatIndex].HazardDamage)
         {
             seat.HazardDamage += hazardDamage;
             float const share = float(hazardDamage) / float(std::max<uint32>(1, bot->GetMaxHealth()));
-            seat.Rewards.Add(RewardTerm::Hazard, -_tuning.Hazards.Damage * share);
+            float const room = std::max(0.0f, _tuning.Hazards.Max + seat.Rewards.Episode(RewardTerm::Hazard));
+            seat.Rewards.Add(RewardTerm::Hazard, -std::min(_tuning.Hazards.Damage * share, room));
         }
 
         // Enemy casts there was something to do about: counted once each, when one the seat could interrupt starts.
         TrackInterruptibleCast(env, seat, bot);
+        TrackHazards(env, seat, bot);
     }
 
     // A pet that died: a corpse still the seat's (a hunter's beast), or one gone while nearly dead (a demon's body

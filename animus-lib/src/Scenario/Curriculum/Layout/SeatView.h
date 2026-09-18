@@ -74,6 +74,17 @@ namespace Animus::Curriculum
         return kind == SeatOptionKind::HoldInterrupt;
     }
 
+    /// A hostile ground effect: where its centre is and how wide it is, so a seat can see both which way out is
+    /// shortest and, for one it is not in yet, which way not to walk.
+    struct Hazard
+    {
+        float Distance = 0.0f;      // yards from the unit to its centre
+        float Radius = 0.0f;        // ... and its radius, so Radius - Distance is the way out (negative: outside it)
+        float Bearing = 0.0f;       // the direction of its centre, relative to the unit's facing
+        Position Centre;            // where it is, so a cached one can be measured again as the seat moves
+        bool Present = false;
+    };
+
     struct SeatOption
     {
         SeatOptionKind Kind = SeatOptionKind::None;
@@ -127,6 +138,9 @@ namespace Animus::Curriculum
         Layout const* L = nullptr;
         Player* Bot = nullptr;
         /// The seat's durative action, to read, start and stop. Null for a view without one.
+        /// The nearest hostile ground effect the seat is not standing in (StageScenario::TrackHazards): what makes
+        /// avoiding one possible rather than only leaving one.
+        Hazard NearestHazard;
         SeatOptionSet* Option = nullptr;
         /// How long each durative action may run (CurriculumTuning::OptionTuning).
         CurriculumTuning::OptionTuning Options;

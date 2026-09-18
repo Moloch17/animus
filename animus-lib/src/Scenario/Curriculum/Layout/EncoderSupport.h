@@ -126,22 +126,22 @@ namespace Animus::Curriculum::Encoding
 
     [[nodiscard]] bool IsCrowdControlled(Unit const* unit);
 
-    /// A hostile ground effect the unit is standing in: where its centre is and how wide it is, so the seat can see
-    /// which way out is shortest.
-    struct Hazard
-    {
-        float Distance = 0.0f;      // yards from the unit to its centre
-        float Radius = 0.0f;        // ... and its radius, so Radius - Distance is the way out
-        float Bearing = 0.0f;       // the direction of its centre, relative to the unit's facing
-        bool Present = false;
-    };
-
     /// The hostile ground effects the unit is standing in (persistent area auras: a fire pool, a poison cloud, a
     /// consecration), counted, with the one it is deepest inside. Read from the unit's own aura list -- a ground
     /// effect applies an aura to whoever stands in it, and the aura knows the object that owns it -- so this costs
     /// no searching at all. Nothing in the module has ever observed area effects, which is why no seat has ever had
     /// a reason to step out of one.
     [[nodiscard]] uint32 StandingInHazards(Unit const* unit, Hazard* deepest);
+
+    /// The nearest hostile ground effect the unit is NOT yet standing in, within `range` yards: a grid search over
+    /// dynamic objects (persistent area auras) and armed traps.
+    ///
+    /// This is what makes avoidance learnable at all. StandingInHazards reads the unit's own auras, so it can only
+    /// say "you are in fire" -- which teaches a seat to leave, never to stay out, because nothing in the observation
+    /// distinguishes clear ground from ground it is about to walk into. Hazards do not move, so the caller caches
+    /// what this finds and recomputes the distance itself (StageScenario::TrackHazards); the search runs about once
+    /// a second, not every decision.
+    [[nodiscard]] bool FindNearestHazard(Unit const* unit, float range, Hazard& out);
 
     /// The harmful auras on a unit, summarised: what is on it, what could be taken off, and how long the worst of
     /// it lasts. A seat could always see its own buffs (per catalog action) and never what had been done to it, so

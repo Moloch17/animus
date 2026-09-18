@@ -110,12 +110,21 @@ namespace Animus::Curriculum
             /// them a dispel could remove, the worst stack count, how long the longest has left, and which crowd
             /// control mechanics are among them. Its own buffs were always visible per catalog action; what an
             /// enemy put on it never was.
-            OBS_DEBUFF_COUNT            = 70,   // harmful auras / 5
-            OBS_DEBUFF_DISPELLABLE      = 71,   // ... of them dispellable / 5
-            OBS_DEBUFF_STACKS           = 72,   // the most stacks any one has / 10
-            OBS_DEBUFF_LONGEST          = 73,   // the longest left to run / 30 s
-            OBS_DEBUFF_MECHANIC_FIRST   = 74,   // which of Encoding::OBSERVED_MECHANICS are on it (6)
-            OBS_TARGET_CAST_FIRST       = 80,
+            /// The nearest hostile ground effect the seat is NOT in yet, within 30 yd: how far its edge is / 20 yd,
+            /// which way its centre lies, and how wide it is. Standing-in tells a seat to leave; this is what lets
+            /// it stay out, since nothing else in the observation tells clear ground from ground about to be walked
+            /// into. 0 when there is none nearby.
+            OBS_NEAR_HAZARD             = 70,   // there is one
+            OBS_NEAR_HAZARD_EDGE        = 71,   // yards to its edge / 20; 0 when the seat is already inside it
+            OBS_NEAR_HAZARD_BEARING_SIN = 72,
+            OBS_NEAR_HAZARD_BEARING_COS = 73,
+            OBS_NEAR_HAZARD_RADIUS      = 74,   // its radius / 20
+            OBS_DEBUFF_COUNT            = 75,   // harmful auras / 5
+            OBS_DEBUFF_DISPELLABLE      = 76,   // ... of them dispellable / 5
+            OBS_DEBUFF_STACKS           = 77,   // the most stacks any one has / 10
+            OBS_DEBUFF_LONGEST          = 78,   // the longest left to run / 30 s
+            OBS_DEBUFF_MECHANIC_FIRST   = 79,   // which of Encoding::OBSERVED_MECHANICS are on it (6)
+            OBS_TARGET_CAST_FIRST       = 85,
             OBS_STABLE_FIRST            = OBS_TARGET_CAST_FIRST + IncomingSpell::FEATURE_COUNT,   // hunters: per slot STABLE_FEATURES
             OBS_COUNT_WITHOUT_STABLE    = OBS_STABLE_FIRST
         };

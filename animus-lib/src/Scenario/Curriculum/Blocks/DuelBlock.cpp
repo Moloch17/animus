@@ -257,7 +257,7 @@ void Animus::Curriculum::DuelBlock::Observe(SeatView const& view, float* obs, ui
 
     // The ground it is standing on, whether or not it has a target: free, since a ground effect applies an aura to
     // whoever stands in it and the aura knows the object.
-    Encoding::Hazard hazard;
+    Hazard hazard;
     if (uint32 const hazards = Encoding::StandingInHazards(bot, &hazard))
     {
         obs[OBS_HAZARDS_STANDING_IN] = std::min(1.0f, float(hazards) / 3.0f);
@@ -267,6 +267,16 @@ void Animus::Curriculum::DuelBlock::Observe(SeatView const& view, float* obs, ui
             obs[OBS_HAZARD_BEARING_SIN] = std::sin(hazard.Bearing);
             obs[OBS_HAZARD_BEARING_COS] = std::cos(hazard.Bearing);
         }
+    }
+
+    // The nearest ground effect it is not in yet (StageScenario::TrackHazards), so it can be walked around.
+    if (Hazard const& near = view.NearestHazard; near.Present)
+    {
+        obs[OBS_NEAR_HAZARD] = 1.0f;
+        obs[OBS_NEAR_HAZARD_EDGE] = std::min(1.0f, std::max(0.0f, near.Distance - near.Radius) / 20.0f);
+        obs[OBS_NEAR_HAZARD_BEARING_SIN] = std::sin(near.Bearing);
+        obs[OBS_NEAR_HAZARD_BEARING_COS] = std::cos(near.Bearing);
+        obs[OBS_NEAR_HAZARD_RADIUS] = std::min(1.0f, near.Radius / 20.0f);
     }
 
     // What has been done to the seat: the same aura list the hazards came from, read for what an enemy put on it.
