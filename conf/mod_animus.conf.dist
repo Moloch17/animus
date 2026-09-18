@@ -272,13 +272,16 @@ Animus.Curriculum.Casting.TimeCompleted = 0.03
 Animus.Curriculum.Casting.Cancel = 0.05
 #   every stage, per decision: the bot's effective healing on itself plus what its own absorbs soaked and damage-taken
 #   reductions prevented on itself, as a fraction of its health; below every DamageTaken so it never pays to be hit
-#   per decision whose actions matched the goal the learner is pursuing for the seat (fight, control, recover,
-#   protect, position, prepare). Small on purpose: it keeps the goals apart so a goal head cannot collapse into one
-#   goal, rather than paying for play the stage's own terms already price
-Animus.Curriculum.Goals.Match = 0.01
+#   paid once for each goal the seat holds, on the first decision its actions match the goal the learner is pursuing
+#   (fight, control, recover, protect, position, prepare). Small on purpose: it keeps the goals apart so a goal head
+#   cannot collapse into one goal, rather than paying for play the stage's own terms already price
+Animus.Curriculum.Goals.Match = 0.02
 Animus.Curriculum.Support.SelfHealing = 0.5
 #   gauntlets: engaging a pull pays this times the share of the class's buff groups up on the bot (and the owner)
 Animus.Curriculum.Support.BuffCoverage = 0.3
+#   a class that keeps a pet (hunter, warlock, death knight, mage) with it out when a fight starts, paid once at the
+#   engagement
+Animus.Curriculum.Support.PetReady = 0.3
 
 #
 #    Animus.Curriculum.Actions.*
