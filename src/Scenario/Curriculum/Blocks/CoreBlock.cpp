@@ -97,6 +97,13 @@ uint32 Animus::Curriculum::CoreBlock::TreeObsFirst(Layout const& layout)
 Animus::Curriculum::ModeGroup Animus::Curriculum::CoreBlock::ModeGroupOf(Layout const& layout, uint32 local) const
 {
     std::vector<ActionCatalog::Action> const& actions = layout.Catalog().Actions();
+    // The rank to cast at is a standing choice like a stance or an aura, not an act: paced by ModeLockMs so it
+    // cannot be churned. Without this a fresh policy hammered the three tiers -- they do nothing in the world, so
+    // every press was waste the repeat charge then had to pay for (0.29M into the first run with them: 22 repeated
+    // presses an episode against 5 for the scripted baseline, which never presses them).
+    if (local >= actions.size())
+        return ModeGroup::RankTier;
+
     SpellInfo const* info = local < actions.size() && actions[local].Type == ActionCatalog::Kind::Spell
         ? sSpellMgr->GetSpellInfo(actions[local].FirstRank) : nullptr;
     if (!info)
