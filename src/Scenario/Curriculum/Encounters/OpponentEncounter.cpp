@@ -17,6 +17,7 @@
  */
 
 #include "Encounters.h"
+#include "IncomingSpell.h"
 #include "BotAccounts.h"
 #include "CombatReward.h"
 #include "Env.h"
@@ -26,6 +27,17 @@
 #include "SeatView.h"
 #include "StringFormat.h"
 #include <algorithm>
+
+float Animus::Curriculum::PreventedScale(float heal, float area, float longCast, uint8 prevented)
+{
+    switch (IncomingSpell::Prevented(prevented))
+    {
+        case IncomingSpell::Prevented::Heal:    return heal;
+        case IncomingSpell::Prevented::Area:    return area;
+        case IncomingSpell::Prevented::Long:    return longCast;
+        default:                                return 1.0f;
+    }
+}
 
 using Animus::Curriculum::EnemyPlayers::MakeEnemies;
 

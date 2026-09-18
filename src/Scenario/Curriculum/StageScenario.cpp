@@ -373,8 +373,11 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
         }
     }
 
-    // Repeats and self-healing are paid in every stage, by the scenario rather than an encounter.
-    for (RewardTerm term : { RewardTerm::Repeat, RewardTerm::SelfHealing, RewardTerm::GoalMatch })
+    // Repeats, self-healing, goals and ground effects are paid in every stage, by the scenario rather than an
+    // encounter, so they are listed here: a term no encounter claims has no column, and a charge with no column is
+    // invisible in exactly the run where it matters.
+    for (RewardTerm term : { RewardTerm::Repeat, RewardTerm::SelfHealing, RewardTerm::GoalMatch,
+        RewardTerm::Hazard })
         _info.Add("reward_" + std::string(RewardTermName(term)), [this, term](Env const& env, uint32 seat)
         {
             return Data(env).Seats[seat].Rewards.Episode(term);

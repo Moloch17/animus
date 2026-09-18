@@ -40,7 +40,7 @@ std::vector<Animus::Curriculum::RewardTerm> Animus::Curriculum::CreatureEncounte
     return { RewardTerm::StepCost, RewardTerm::DamageDealt, RewardTerm::DamageTaken, RewardTerm::Casting,
         RewardTerm::Approach, RewardTerm::StealthOpener, RewardTerm::StealthUtility, RewardTerm::Kill,
         RewardTerm::HealthKept, RewardTerm::Death, RewardTerm::Timeout, RewardTerm::Stall, RewardTerm::Spacing,
-        RewardTerm::Readiness };
+        RewardTerm::Readiness, RewardTerm::Interrupt };
 }
 
 Animus::Curriculum::CreatureEncounter::CreatureEncounter(StageScenario& scenario, uint32 envs)
@@ -102,8 +102,30 @@ bool Animus::Curriculum::CreatureEncounter::Build(Env& env, Map* map, uint8 /*le
     return true;
 }
 
+void Animus::Curriculum::CreatureEncounter::OnSeatAction(Env& env, uint32 /*seat*/, SeatActionResult const& result)
+{
+    if (!result.PendingInterrupt.IsEmpty())
+        _envs[env.Index].PendingInterrupt = result.PendingInterrupt;
+}
+
 void Animus::Curriculum::CreatureEncounter::Reward(Env& env, uint32 seat, Player* bot, RewardLedger& ledger)
 {
+    // An interrupt counts when the opponent it was cast at had its cast cut short since, and is paid by what it
+    // stopped (IncomingSpell::Prevented) -- a heal is worth far more than a filler, and the duel is the cheapest
+    // place to learn the difference.
+    EnvFight& pending = _envs[env.Index];
+    if (!pending.PendingInterrupt.IsEmpty())
+    {
+        CurriculumTuning::DuelTuning const& duel = _scenario.Tuning().Duel;
+        auto const stopped = std::find_if(env.StepInterruptedTargets.begin(), env.StepInterruptedTargets.end(),
+            [&pending](Env::InterruptedCast const& cast) { return cast.Caster == pending.PendingInterrupt; });
+        if (stopped != env.StepInterruptedTargets.end())
+            ledger.Add(RewardTerm::Interrupt, duel.Interrupt
+                * PreventedScale(duel.InterruptHeal, duel.InterruptArea, duel.InterruptLong, stopped->Prevented));
+
+        pending.PendingInterrupt.Clear();
+    }
+
     Unit* opponent = env.FindTargetUnit(0);
     CombatReward::OneOnOne(_scenario, env, seat, bot, opponent, ledger);
 

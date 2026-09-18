@@ -126,6 +126,13 @@ namespace Animus::Curriculum
             /// Creature duel, ranged specs: per second the opponent stands in melee range hitting the bot. The approach
             /// shaping only pays for closing in, so nothing told a hunter, mage or warlock to keep the range it
             /// fights best at (stage1_duel at 20M: 88 of 96 hunter kills ended within 5 yd).
+            /// Stopping the opponent's cast. The duel meets casters now (Difficulty.CasterChance), so this is the
+            /// cheapest place to learn what an interrupt is for: one enemy, one cast, nothing else happening. Priced
+            /// by what was stopped, as the pack's is.
+            float Interrupt = 0.3f;
+            float InterruptHeal = 3.0f;
+            float InterruptArea = 2.0f;
+            float InterruptLong = 1.5f;
             float Spacing = 0.03f;
             float MeleeRange = 3.5f;            // the range the approach shaping aims for, melee specs
             float RangedRange = 25.0f;          // ... ranged specs
@@ -537,6 +544,10 @@ namespace Animus::Curriculum
             f("Duel.Stall", tuning.Duel.Stall);
             f("Duel.StallGraceMs", tuning.Duel.StallGraceMs);
             f("Duel.PreparationRefundMaxMs", tuning.Duel.PreparationRefundMaxMs);
+            f("Duel.Interrupt", tuning.Duel.Interrupt);
+            f("Duel.InterruptHeal", tuning.Duel.InterruptHeal);
+            f("Duel.InterruptArea", tuning.Duel.InterruptArea);
+            f("Duel.InterruptLong", tuning.Duel.InterruptLong);
             f("Duel.Spacing", tuning.Duel.Spacing);
             f("Duel.MeleeRange", tuning.Duel.MeleeRange);
             f("Duel.RangedRange", tuning.Duel.RangedRange);
