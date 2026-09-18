@@ -108,8 +108,7 @@ void Animus::Curriculum::GauntletBlock::Apply(SeatView& view, uint32 local, Seat
 
     if (local == ACTION_REST_UNTIL_READY)
     {
-        view.Option->Kind = SeatOptionKind::RestUntilReady;
-        view.Option->UntilMs = view.NowMs + view.Options.RestMaxMs;
+        view.Option->Start(SeatOptionKind::RestUntilReady, view.NowMs + view.Options.RestMaxMs);
         Rest(view, result);
         return;
     }
@@ -133,7 +132,7 @@ void Animus::Curriculum::GauntletBlock::BeforeApply(SeatView& view, SeatActionRe
         || bot->HasAuraType(SPELL_AURA_MOD_REGEN) || bot->HasAuraType(SPELL_AURA_MOD_POWER_REGEN);
     if (!bot->IsAlive() || bot->IsInCombat() || Recovered(bot) || !usable)
     {
-        *view.Option = SeatOption();
+        view.Option->Stop(SeatOptionKind::RestUntilReady);
         return;
     }
 

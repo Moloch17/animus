@@ -17,8 +17,10 @@
  */
 
 #include "PackBlock.h"
+#include "CoreBlock.h"
 #include "Creature.h"
 #include "EncoderSupport.h"
+#include "PetBlock.h"
 #include "Layout.h"
 #include "StringFormat.h"
 #include <string>
@@ -98,9 +100,13 @@ void Animus::Curriculum::PackBlock::Observe(SeatView const& view, float* obs, ui
     for (uint32 slot = 0; slot < PACK_SLOTS; ++slot)
         mask[slot] = IsSlotAllowed(view, slot) ? 1 : 0;
 
-    // Holding an interrupt is offered while there is something to interrupt and it is not already being held.
-    mask[ACTION_HOLD_INTERRUPT] = view.Target && view.Target->IsAlive() && bot->IsAlive() && view.Option
-        && !view.Option->Running(SeatOptionKind::HoldInterrupt, view.NowMs) ? 1 : 0;
+    // Holding an interrupt is offered to a seat that has one -- its own spell or its pet's -- while there is
+    // something to interrupt and it is not already being held. Offered to everyone, it was pressed hardest by the
+    // classes that could not interrupt at all (stage2_pack 2026-09-18: the druid healer pressed it 2.0 times a fight
+    // with nothing to cast, and each press was a decision spent doing nothing).
+    bool const canInterrupt = CoreBlock::KnowsInterrupt(view) || PetBlock::HasInterruptAbility(view);
+    mask[ACTION_HOLD_INTERRUPT] = canInterrupt && view.Target && view.Target->IsAlive() && bot->IsAlive()
+        && view.Option && !view.Option->Running(SeatOptionKind::HoldInterrupt, view.NowMs) ? 1 : 0;
 }
 
 void Animus::Curriculum::PackBlock::Apply(SeatView& view, uint32 local, SeatActionResult& /*result*/) const
@@ -109,8 +115,7 @@ void Animus::Curriculum::PackBlock::Apply(SeatView& view, uint32 local, SeatActi
     {
         if (view.Option && view.Target && view.Target->IsAlive() && view.Bot->IsAlive())
         {
-            view.Option->Kind = SeatOptionKind::HoldInterrupt;
-            view.Option->UntilMs = view.NowMs + view.Options.HoldInterruptMs;
+            view.Option->Start(SeatOptionKind::HoldInterrupt, view.NowMs + view.Options.HoldInterruptMs);
         }
         return;
     }

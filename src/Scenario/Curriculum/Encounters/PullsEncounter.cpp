@@ -455,6 +455,7 @@ bool Animus::Curriculum::PullsEncounter::SpawnPull(Env& env, Map* map)
         data.Seats[seat].Combat.LastDistance = -1.0f;
         pulls.Seats[seat].PullDamageTaken = 0;
         pulls.Seats[seat].PullControlPaid = 0.0f;
+        pulls.Seats[seat].PreparationBaseMs = data.Seats[seat].Combat.PreparationMs;
         // Each pull brings its own creatures into the same slots: what the last one's did says nothing about these.
         pulls.Seats[seat].SlotDamage.fill(0);
         pulls.Seats[seat].SlotFreeMs.fill(0);
@@ -950,7 +951,7 @@ void Animus::Curriculum::PullsEncounter::Reward(Env& env, uint32 seatIndex, Play
     if (bot->IsAlive() && !tally.Killed)
     {
         float const seconds = float(_scenario.DecisionMs()) / 1000.0f;
-        uint32 const graceMs = tuning.StallGraceMs + std::min(tally.PreparationMs, tuning.PreparationRefundMaxMs);
+        uint32 const graceMs = tuning.StallGraceMs + PreparationRefundMs(tuning, tally, pull);
         if (!pulls.PullEngaged && env.EpisodeElapsedMs > graceMs)
             ledger.Add(RewardTerm::Stall, -tuning.Stall * seconds);
 
@@ -1022,7 +1023,7 @@ void Animus::Curriculum::PullsEncounter::GauntletAloneTerms(Env& env, SeatState&
     // A pull left standing is charged once its grace from the spawn is gone (not while eating or drinking, which is
     // recovering for it), and a ranged spec hit in melee reach.
     float const seconds = float(_scenario.DecisionMs()) / 1000.0f;
-    uint32 const graceMs = tuning.StallGraceMs + std::min(tally.PreparationMs, tuning.PreparationRefundMaxMs);
+    uint32 const graceMs = tuning.StallGraceMs + PreparationRefundMs(tuning, tally, pull);
     bool const resting = bot->HasAuraType(SPELL_AURA_MOD_REGEN) || bot->HasAuraType(SPELL_AURA_MOD_POWER_REGEN);
     if (!pulls.PullEngaged && !resting && env.EpisodeElapsedMs > pulls.PullStartMs + graceMs)
         ledger.Add(RewardTerm::Stall, -tuning.Stall * seconds);
@@ -1103,6 +1104,19 @@ void Animus::Curriculum::PullsEncounter::ControlTerm(Env& env, SeatState const& 
         pull.PullControlPaid += pay;
         ledger.Add(RewardTerm::Control, pay);
     }
+}
+
+/// The stall grace a seat has earned by preparing for the pull it is facing: buffs, forms, stealth and a pet
+/// started since this pull spawned, capped at PullTuning::PreparationRefundMaxMs. Per pull rather than per episode:
+/// CombatTally::PreparationMs runs over the whole gauntlet, so preparing once bought the full refund on every pull
+/// after it, and a seat that kept re-buffing between kites earned grace for it (stage2_pack 2026-09-18: the warlock's
+/// preparation went from 5.6 s a fight to 14.2 s, 19.4 s in the fights it lost).
+uint32 Animus::Curriculum::PullsEncounter::PreparationRefundMs(CurriculumTuning::PullTuning const& tuning,
+    CombatTally const& tally, SeatPull const& pull)
+{
+    uint32 const prepared = tally.PreparationMs > pull.PreparationBaseMs
+        ? tally.PreparationMs - pull.PreparationBaseMs : 0;
+    return std::min(prepared, tuning.PreparationRefundMaxMs);
 }
 
 bool Animus::Curriculum::PullsEncounter::Controlled(Unit const* enemy)

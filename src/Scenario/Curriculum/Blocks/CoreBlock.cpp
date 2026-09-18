@@ -161,6 +161,22 @@ void Animus::Curriculum::CoreBlock::DescribeManifest(Layout const& layout, boost
         talents.push_back(boost::json::array{ talent.TalentId, talent.MaxRank });
 }
 
+static_assert(uint32(Animus::Curriculum::CoreBlock::OBS_OPTION_FIRST) + OPTION_KINDS
+    == uint32(Animus::Curriculum::CoreBlock::OBS_GLOBAL_COUNT), "every durative action needs its own clock");
+
+bool Animus::Curriculum::CoreBlock::KnowsInterrupt(SeatView const& view)
+{
+    if (!view.L)
+        return false;
+
+    for (ActionCatalog::Action const& def : view.L->Catalog().Actions())
+        if (def.Type == ActionCatalog::Kind::Spell
+            && ActionCatalog::IsInterruptingSpell(Encoding::KnownRank(view, def)))
+            return true;
+
+    return false;
+}
+
 void Animus::Curriculum::CoreBlock::ObserveCharacter(SeatView const& view, float* obs)
 {
     Layout const& layout = *view.L;
@@ -262,13 +278,18 @@ void Animus::Curriculum::CoreBlock::Observe(SeatView const& view, float* obs, ui
         obs[OBS_SINCE_MODE_CHANGE] = 1.0f;
     }
 
-    // The durative action it is running, and how much of its clock is left.
-    if (view.Option && view.Option->Kind != SeatOptionKind::None && view.NowMs < view.Option->UntilMs)
+    // The durative actions it is running, and how much of each one's clock is left.
+    if (view.Option)
     {
-        uint32 const kind = uint32(view.Option->Kind) - 1;
-        if (kind < OPTION_KINDS)
-            obs[OBS_OPTION_FIRST + kind] = 1.0f;
-        obs[OBS_OPTION_LEFT] = std::min(1.0f, float(view.Option->UntilMs - view.NowMs) / OPTION_SCALE_MS);
+        for (SeatOption const& option : view.Option->Slots)
+        {
+            if (option.Kind == SeatOptionKind::None || view.NowMs >= option.UntilMs)
+                continue;
+
+            uint32 const kind = uint32(option.Kind) - 1;
+            if (kind < OPTION_KINDS)
+                obs[OBS_OPTION_FIRST + kind] = std::min(1.0f, float(option.UntilMs - view.NowMs) / OPTION_SCALE_MS);
+        }
     }
 
     std::vector<ActionCatalog::Action> const& actions = view.L->Catalog().Actions();
@@ -350,7 +371,7 @@ void Animus::Curriculum::CoreBlock::BeforeApply(SeatView& view, SeatActionResult
     Unit* target = view.Target;
     if (!bot->IsAlive() || !target || !target->IsAlive())
     {
-        *view.Option = SeatOption();
+        view.Option->Stop(SeatOptionKind::HoldInterrupt);
         return;
     }
 
@@ -369,7 +390,7 @@ void Animus::Curriculum::CoreBlock::BeforeApply(SeatView& view, SeatActionResult
             continue;
 
         Apply(view, action, result);
-        *view.Option = SeatOption();
+        view.Option->Stop(SeatOptionKind::HoldInterrupt);
         return;
     }
 }

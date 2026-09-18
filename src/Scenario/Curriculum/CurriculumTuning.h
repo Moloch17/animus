@@ -282,17 +282,21 @@ namespace Animus::Curriculum
             /// the currency DamageTaken is already charged in and the two weights are comparable. The divisor is
             /// *current* health, floored at ControlHealthFloor of the maximum: preventing a hit matters more the less
             /// health there is to lose, which is what makes control a survival tool rather than a damage discount.
-            /// SinglePackControl 0 measures without paying -- control_prevented still reports -- so the weight can be
-            /// set from what a run actually saves instead of guessed, and turning it on is a config change.
-            float SinglePackControl = 0.0f;
+            /// Priced at half DamageTaken: the damage a held enemy would have dealt is estimated from what it dealt
+            /// while loose, not observed, and the health floor can multiply it fivefold, so control is paid less than
+            /// the damage it is credited with preventing. Measured at 0 through 2026-09-18 (stage2_pack at 30M:
+            /// control_prevented 0.03 healths a fight, reward_control 0.00 -- nothing was controlled because nothing
+            /// paid for it).
+            float SinglePackControl = 0.5f;
             float SinglePackControlMax = 1.0f;  // ... at most this per pull, a guard rather than a shaping knob
             float ControlHealthFloor = 0.2f;
             float ControlFallbackDps = 0.02f;   // maximum healths per second, for an enemy that never got to act
             uint32 ControlRateMinMs = 3000;     // free-to-act time before an enemy's own measured rate is trusted
             /// Pack: control time extends the overtime grace, up to this much, so holding an add is not charged as
-            /// dragging the fight out. 0 leaves the grace alone. Bounded on purpose: Overtime exists to stop kiting
-            /// the clock, and an unbounded pause would hand that back.
-            uint32 ControlGraceMaxMs = 0;
+            /// dragging the fight out -- with the grace alone, the overtime charge took back what the control paid.
+            /// 0 leaves the grace alone. Bounded on purpose: Overtime exists to stop kiting the clock, and an
+            /// unbounded pause would hand that back.
+            uint32 ControlGraceMaxMs = 15000;
             float Stall = 0.08f;                // pack: per second not engaged once StallGraceMs are gone
             uint32 StallGraceMs = 15000;
             uint32 PreparationRefundMaxMs = 15000;  // pack: as the duel's

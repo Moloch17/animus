@@ -65,6 +65,15 @@ namespace Animus::Curriculum
         return kind == SeatOptionKind::KeepRange || kind == SeatOptionKind::StayOnTarget;
     }
 
+    /// Holding an interrupt is a standby, not something the seat does: it waits for the target to cast while the seat
+    /// keeps fighting, so every other action leaves it running. Cancelling it on any press left it lasting 0.6 s
+    /// against casts of 1.5-2.5 s (stage2_pack 2026-09-18: the warlock pressed it 7.8 times a fight and interrupted
+    /// 0.01 casts, the druid 10.4 times for none).
+    [[nodiscard]] constexpr bool IsStandby(SeatOptionKind kind)
+    {
+        return kind == SeatOptionKind::HoldInterrupt;
+    }
+
     struct SeatOption
     {
         SeatOptionKind Kind = SeatOptionKind::None;
@@ -76,12 +85,49 @@ namespace Animus::Curriculum
         }
     };
 
+    /// Which option a kind occupies: a seat runs one positioning option and one standby option at a time. Keeping a
+    /// caster at range and waiting for its cast are not alternatives, and with a single slot each press of one threw
+    /// the other away -- a melee seat holding an interrupt stopped staying on its target.
+    enum class SeatOptionSlot : uint8
+    {
+        Positioning = 0,
+        Standby,
+        Count
+    };
+
+    [[nodiscard]] constexpr SeatOptionSlot SlotOf(SeatOptionKind kind)
+    {
+        return IsPositioning(kind) ? SeatOptionSlot::Positioning : SeatOptionSlot::Standby;
+    }
+
+    /// The durative actions a seat is running, one per slot.
+    struct SeatOptionSet
+    {
+        std::array<SeatOption, std::size_t(SeatOptionSlot::Count)> Slots{};
+
+        [[nodiscard]] SeatOption& Of(SeatOptionKind kind) { return Slots[std::size_t(SlotOf(kind))]; }
+        [[nodiscard]] SeatOption const& Of(SeatOptionKind kind) const { return Slots[std::size_t(SlotOf(kind))]; }
+
+        [[nodiscard]] bool Running(SeatOptionKind kind, uint64 nowMs) const { return Of(kind).Running(kind, nowMs); }
+        [[nodiscard]] bool Any(uint64 nowMs) const
+        {
+            for (SeatOption const& option : Slots)
+                if (option.Kind != SeatOptionKind::None && nowMs < option.UntilMs)
+                    return true;
+            return false;
+        }
+
+        void Start(SeatOptionKind kind, uint64 untilMs) { Of(kind) = SeatOption{ kind, untilMs }; }
+        void Stop(SeatOptionKind kind) { if (Of(kind).Kind == kind) Of(kind) = SeatOption(); }
+        void Clear() { Slots = {}; }
+    };
+
     struct SeatView
     {
         Layout const* L = nullptr;
         Player* Bot = nullptr;
         /// The seat's durative action, to read, start and stop. Null for a view without one.
-        SeatOption* Option = nullptr;
+        SeatOptionSet* Option = nullptr;
         /// How long each durative action may run (CurriculumTuning::OptionTuning).
         CurriculumTuning::OptionTuning Options;
         /// What the actions aim at: the opponent, the selected enemy. May be null (between pulls).

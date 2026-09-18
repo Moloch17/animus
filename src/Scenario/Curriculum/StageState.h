@@ -125,9 +125,10 @@ namespace Animus::Curriculum
         float LastStepDamageTaken = 0.0f;
         uint32 SpellCasts = 0;
         uint32 TrinketUses = 0;
-        /// The durative action the seat is running (SeatOption), how many it started and how long they ran: one press
-        /// that stands for many decisions of resting, holding an interrupt or keeping range.
-        SeatOption Option;
+        /// The durative actions the seat is running (SeatOptionSet: a positioning one and a standby), how many it
+        /// started and how long any of them ran: one press that stands for many decisions of resting, holding an
+        /// interrupt or keeping range.
+        SeatOptionSet Option;
         uint32 OptionPresses = 0;
         uint32 OptionMs = 0;
         uint32 ItemUses = 0;
@@ -209,7 +210,7 @@ namespace Animus::Curriculum
             LastStepDamageTaken = 0.0f;
             SpellCasts = 0;
             TrinketUses = 0;
-            Option = SeatOption();
+            Option = SeatOptionSet();
             OptionPresses = 0;
             OptionMs = 0;
             ItemUses = 0;

@@ -87,12 +87,32 @@ void Animus::Curriculum::SeatEncoder::Apply(SeatView& view, int32 action, SeatAc
     uint32 const local = block ? uint32(action) - layout.Slice(*block).ActionFirst : 0;
 
     // A durative action runs until the policy does something else: anything but the no-op takes over from it, except
-    // that a positioning option (IsPositioning) survives everything but the seat moving itself -- casting and
-    // swinging are what it is there to keep the seat in place for. Its own action is masked while it runs, so this
-    // cannot cancel a press of the option that is already going.
-    if (action > 0 && view.Option && (!IsPositioning(view.Option->Kind)
-        || (block && GetBlock(*block).IsMovement(local))))
-        *view.Option = SeatOption();
+    // that a positioning option (IsPositioning) survives everything but the seat steering the other way -- casting
+    // and swinging are what it is there to keep the seat in place for, and so is closing in while keeping range --
+    // and a standby (IsStandby) survives everything, since waiting for the target's cast is not a thing the seat
+    // stops fighting to do. Each option's own action is masked while it runs, so this cannot cancel a fresh press.
+    if (action > 0 && view.Option)
+    {
+        bool const movement = block && GetBlock(*block).IsMovement(local);
+        int8 const direction = block ? GetBlock(*block).MoveDirection(local) : 0;
+        for (SeatOption& option : view.Option->Slots)
+        {
+            if (option.Kind == SeatOptionKind::None || IsStandby(option.Kind))
+                continue;
+
+            if (!IsPositioning(option.Kind))
+            {
+                option = SeatOption();
+                continue;
+            }
+
+            // Only movement that contradicts it: backing off ends staying on the target, closing in ends keeping
+            // range, and a step that does neither (to casting range, stop, follow) leaves both alone.
+            int8 const against = option.Kind == SeatOptionKind::StayOnTarget ? -1 : 1;
+            if (movement && direction == against)
+                option = SeatOption();
+        }
+    }
 
     // Every decision, whatever the action (the no-op included): this is where a running option acts.
     for (BlockId id : layout.Blocks)
