@@ -361,11 +361,13 @@ namespace Animus::Curriculum
             float DamageTakenDps = 1.0f;        // damage dealers: the owner's damage taken, fraction of its health
             float DamageTakenProtector = 2.0f;  // tanks and healers exist to prevent it
             float TankOwnerDamageShare = 0.25f; // a tank owner is hit by design: its damage taken counts this much
-            float Healing = 2.0f;               // healers: effective healing, fraction of the owner's health
+            float Healing = 2.0f;               // any role: effective healing and protection on the owner, as a
+                                                // fraction of its health
             float TankDamageRefund = 0.5f;      // tanks: soften the pulls' damage taken
             float TankHold = 0.002f;            // tanks: per enemy on the tank, per decision
             float TankLose = 0.02f;             // tanks: per enemy on the owner, per decision
-            float PulledThreat = 0.004f;        // damage dealers and healers: per enemy on the bot, per decision
+            float PulledThreat = 0.004f;        // damage dealers and healers beside a TANK owner: per enemy on
+                                                // the bot, per decision; not charged beside any other owner
             float SoloFight = 0.01f;            // per decision in combat while the owner is not
             float FollowFar = 0.002f;           // per decision out of combat beyond FollowFarDistance
             float FollowNear = 0.0005f;         // per decision out of combat within FollowNearDistance

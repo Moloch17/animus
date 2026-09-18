@@ -238,10 +238,12 @@ void Animus::Curriculum::OwnerEncounter::Reward(Env& env, uint32 seatIndex, Play
     ledger.Add(RewardTerm::OwnerDamageTaken, -(role == Role::Dps ? tuning.DamageTakenDps : tuning.DamageTakenProtector)
         * (ownerTanks ? tuning.TankOwnerDamageShare : 1.0f) * float(step.AllyDamageTakenBy[0]) / ownerHealth);
 
-    // Healing, and what the seat's absorbs soaked and its reductions prevented on the owner, count alike.
-    if (role == Role::Heal)
-        ledger.Add(RewardTerm::OwnerHealing,
-            tuning.Healing * float(step.AllyHealingBy[0] + step.AllyProtectionBy[0]) / ownerHealth);
+    // Healing, and what the seat's absorbs soaked and its reductions prevented on the owner, count alike. Every
+    // role is paid for it: a paladin or a shaman that tops its owner up between swings is doing the stage's job,
+    // and paying only healers left the owner's share of a seat's healing at 0.000-0.005 for every class without a
+    // healing spec (stage4_companion at start, 2026-09-18).
+    ledger.Add(RewardTerm::OwnerHealing,
+        tuning.Healing * float(step.AllyHealingBy[0] + step.AllyProtectionBy[0]) / ownerHealth);
 
     // Tanks take hits by design: soften the pulls' damage taken.
     if (role == Role::Tank)
@@ -260,7 +262,12 @@ void Animus::Curriculum::OwnerEncounter::Reward(Env& env, uint32 seatIndex, Play
     if (role == Role::Tank)
         ledger.Add(RewardTerm::Threat,
             (tuning.TankHold * float(onBot) - (ownerTanks ? 0.0f : tuning.TankLose * float(onOwner))) * scale);
-    else
+    else if (ownerTanks)
+        // Pulling an enemy off a tank owner is the mistake this charges for. It used to be charged whatever the
+        // owner was, so a damage dealer or a healer escorting another damage dealer or a healer paid for holding
+        // the enemies nobody else could hold -- while Owner.DamageTaken charged it again if it let them through.
+        // At 0.004 an enemy a decision over a 450 s episode that was the largest term in the stage: the scripted
+        // baseline paid -22.9 of it against +0.6 for healing the owner (2026-09-18).
         ledger.Add(RewardTerm::Threat, -tuning.PulledThreat * float(onBot) * scale);
 
     if (owner->IsAlive())
