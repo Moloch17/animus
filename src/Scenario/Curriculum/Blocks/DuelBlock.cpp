@@ -47,6 +47,10 @@ namespace
 
     constexpr uint32 DUEL_MOVE_POINT_ID = 1;
 
+    /// A seat this far along DuelBlock::MOVE_TO_RANGE_DISTANCE is at its casting range already: running there again
+    /// would not move it.
+    constexpr float AT_RANGE_FRACTION = 0.6f;
+
     uint32 StableSlots(Layout const& layout)
     {
         return layout.Profile->Class == CLASS_HUNTER ? STABLE_SLOTS : 0;
@@ -117,11 +121,22 @@ namespace
         if (!target || !target->IsAlive())
             return false;
 
+        // Standing still where the order would take it: the order is done, and offering it again is what a
+        // jittering policy presses (stage1_duel 2026-09-17: the rogue pressed a movement order every 0.39 s while
+        // it stood in melee reach 96% of the time). Moving, it is offered: the target may have moved on.
+        bool const standing = bot->movespline->Finalized();
+        bool const inMelee = target->IsWithinMeleeRange(bot);
         switch (action)
         {
             case DuelBlock::ACTION_MOVE_TO_TARGET:
+                return canMove && !(standing && inMelee);
             case DuelBlock::ACTION_MOVE_BEHIND:
+                // Behind is the target's back arc, which is where the order would have put it.
+                return canMove && !(standing && inMelee && !target->HasInArc(float(M_PI), bot));
             case DuelBlock::ACTION_MOVE_TO_RANGE:
+                return canMove && !(standing && !inMelee
+                    && bot->GetDistance(target) >= AT_RANGE_FRACTION * DuelBlock::MOVE_TO_RANGE_DISTANCE
+                    && bot->GetDistance(target) <= DuelBlock::MOVE_TO_RANGE_DISTANCE);
             case DuelBlock::ACTION_BACK_OFF:
                 return canMove;
             case DuelBlock::ACTION_STOP:
@@ -134,6 +149,10 @@ namespace
                 // A ranged spec only, and not while it is already keeping range.
                 return canMove && view.Option && !view.Option->Running(SeatOptionKind::KeepRange, view.NowMs)
                     && view.L->Profile->Specs[view.Spec].Range != RangeBand::Melee;
+            case DuelBlock::ACTION_STAY_ON_TARGET:
+                // The melee mirror of keeping range.
+                return canMove && view.Option && !view.Option->Running(SeatOptionKind::StayOnTarget, view.NowMs)
+                    && view.L->Profile->Specs[view.Spec].Range == RangeBand::Melee;
             case DuelBlock::ACTION_PET_ATTACK:
                 return std::any_of(bot->m_Controlled.begin(), bot->m_Controlled.end(), [target](Unit* pet)
                 {
@@ -197,7 +216,7 @@ std::string Animus::Curriculum::DuelBlock::ActionName(Layout const& /*layout*/, 
     {
         "move_to_target", "move_behind", "move_to_range", "back_off", "stop", "start_attack", "pet_attack",
         "stop_casting", "cancel_form", "health_potion", "mana_potion", "healthstone", "bandage", "soulstone_self",
-        "self_resurrect", "break_line_of_sight", "keep_range"
+        "self_resurrect", "break_line_of_sight", "keep_range", "stay_on_target"
     };
     static_assert(NAMES.size() == ACTION_COUNT_WITHOUT_STABLE, "every duel action needs a name");
 
@@ -368,19 +387,25 @@ void Animus::Curriculum::DuelBlock::BeforeApply(SeatView& view, SeatActionResult
     if (target && bot->IsAlive() && bot->movespline->Finalized() && !bot->HasInArc(float(M_PI) / 2, target))
         bot->SetFacingToObject(target);
 
-    if (!view.Option || !view.Option->Running(SeatOptionKind::KeepRange, view.NowMs))
+    if (!view.Option || !IsPositioning(view.Option->Kind) || view.NowMs >= view.Option->UntilMs)
         return;
 
-    // Keeping range is over once there is nothing to keep it from.
+    // A positioning option is over once there is nothing to position against.
     if (!target || !target->IsAlive() || !bot->IsAlive())
     {
         *view.Option = SeatOption();
         return;
     }
 
-    // Whenever the target is in melee reach and the bot is standing, run back out to casting range.
-    if (target->IsWithinMeleeRange(bot) && bot->movespline->Finalized())
+    if (!bot->movespline->Finalized())
+        return;     // already running somewhere: let the step finish
+
+    // Keeping range: the target in melee reach is what it runs back out from. Staying on the target: out of melee
+    // reach is what it closes again.
+    if (view.Option->Kind == SeatOptionKind::KeepRange && target->IsWithinMeleeRange(bot))
         Apply(view, ACTION_MOVE_TO_RANGE, result);
+    else if (view.Option->Kind == SeatOptionKind::StayOnTarget && !target->IsWithinMeleeRange(bot))
+        Apply(view, ACTION_MOVE_TO_TARGET, result);
 }
 
 void Animus::Curriculum::DuelBlock::Apply(SeatView& view, uint32 local, SeatActionResult& result) const
@@ -435,6 +460,15 @@ void Animus::Curriculum::DuelBlock::Apply(SeatView& view, uint32 local, SeatActi
         view.Option->UntilMs = view.NowMs + view.Options.KeepRangeMs;
         if (target && target->IsWithinMeleeRange(bot))
             Apply(view, ACTION_MOVE_TO_RANGE, result);
+        return;
+    }
+
+    if (local == ACTION_STAY_ON_TARGET)
+    {
+        view.Option->Kind = SeatOptionKind::StayOnTarget;
+        view.Option->UntilMs = view.NowMs + view.Options.StayOnTargetMs;
+        if (target && !target->IsWithinMeleeRange(bot))
+            Apply(view, ACTION_MOVE_TO_TARGET, result);
         return;
     }
 

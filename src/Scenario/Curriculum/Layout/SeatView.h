@@ -52,8 +52,18 @@ namespace Animus::Curriculum
         RestUntilReady,     // eat and drink between pulls until health and mana are back
         HoldInterrupt,      // interrupt the target as soon as it casts
         KeepRange,          // a ranged spec: back to its range whenever the target closes in
+        StayOnTarget,       // a melee spec: back into melee reach whenever the target leaves it
         Count
     };
+
+    /// Positioning options (KeepRange, StayOnTarget) hold the seat where its spec fights from. Only the seat moving
+    /// itself takes over from one: a fight is spells and swings between steps, and cancelling on those left a melee
+    /// seat re-issuing its own movement every decision (stage1_duel 2026-09-17: the rogue pressed one every 0.39 s
+    /// while it stood in melee reach 96% of the time).
+    [[nodiscard]] constexpr bool IsPositioning(SeatOptionKind kind)
+    {
+        return kind == SeatOptionKind::KeepRange || kind == SeatOptionKind::StayOnTarget;
+    }
 
     struct SeatOption
     {
