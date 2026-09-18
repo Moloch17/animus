@@ -75,11 +75,11 @@ namespace Animus::Curriculum
                                                 // stance change / 10 s; 1 = none yet
             OBS_HEALTH_TREND            = 65,   // its health now - its average over the last few seconds
             OBS_TARGET_HEALTH_TREND     = 66,   // the same for its target
-            /// The durative action the seat is running (SeatOptionKind, one-hot without None) and how long it has
-            /// left / its full length. Without them a running option is hidden state: the policy could not tell that
-            /// it is already resting, holding an interrupt or keeping range.
+            /// Per durative action (SeatOptionKind without None): how much of its clock is left / 30 s, 0 when it is
+            /// not running. Without them a running option is hidden state: the policy could not tell that it is
+            /// already resting, holding an interrupt or keeping range -- and the seat runs two at once (a
+            /// positioning option and a standby), so one slot with one clock could not say which.
             OBS_OPTION_FIRST            = 67,
-            OBS_OPTION_LEFT             = 70,
             OBS_GLOBAL_COUNT            = 71
 
             // Then, per catalog action: ACTION_FEATURES features (known, cooldown, aura on target, aura on self,
@@ -101,6 +101,11 @@ namespace Animus::Curriculum
         [[nodiscard]] ModeGroup ModeGroupOf(Layout const& layout, uint32 local) const override;
         void Observe(SeatView const& view, float* obs, uint8* mask) const override;
         void Apply(SeatView& view, uint32 local, SeatActionResult& result) const override;
+
+        /// Whether the seat knows a spell that interrupts a cast (Kick, Counterspell, Mind Freeze, Shield Bash),
+        /// whatever its cooldown: what makes holding an interrupt worth offering at all. Cooldowns are not counted --
+        /// the hold runs for seconds and the mask would flicker under it.
+        [[nodiscard]] static bool KnowsInterrupt(SeatView const& view);
 
         /// The character as built (level, race, spec, talent build): written whether the bot is alive or not.
         static void ObserveCharacter(SeatView const& view, float* obs);

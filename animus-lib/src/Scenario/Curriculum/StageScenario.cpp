@@ -1626,18 +1626,27 @@ void Animus::Curriculum::StageScenario::ApplySeatAction(Env& env, uint32 seatInd
     SeatView view = ViewSeat(env, seatIndex, bot, target);
     view.Option = &seat.Option;
     SeatActionResult result;
-    SeatOptionKind const started = seat.Option.Kind;
+    SeatOptionSet const started = seat.Option;
     SeatEncoder::Apply(view, action, result);
     if (action > 0)
         Press(env, seat, bot, uint32(action));
 
-    // Time a durative action ran, and each one started (the option is set by the action this decision applied).
-    if (seat.Option.Kind != SeatOptionKind::None)
+    // Time under a durative action (wall time, whichever of the slots are running), and each one started (the
+    // options are set by the action this decision applied).
+    bool running = false;
+    for (std::size_t slot = 0; slot < seat.Option.Slots.size(); ++slot)
     {
-        seat.OptionMs += _decisionMs;
-        if (started != seat.Option.Kind)
+        SeatOptionKind const kind = seat.Option.Slots[slot].Kind;
+        if (kind == SeatOptionKind::None)
+            continue;
+
+        running = true;
+        if (started.Slots[slot].Kind != kind)
             ++seat.OptionPresses;
     }
+
+    if (running)
+        seat.OptionMs += _decisionMs;
 
     seat.TargetSlot = view.TargetSlot;
     seat.StepPreparationMs += result.PreparationMs;

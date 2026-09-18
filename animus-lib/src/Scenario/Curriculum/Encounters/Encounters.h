@@ -157,6 +157,10 @@ namespace Animus::Curriculum
             uint32 MealsCutShort = 0;           // food or drink ended early with health or mana still to restore
             int32 FoodLeftMs = -1;              // the food aura's remaining time last decision; -1 without one ...
             int32 DrinkLeftMs = -1;             // ... and the drink's
+            /// CombatTally::PreparationMs when the current pull spawned: what the seat prepared for this pull is
+            /// what its stall grace is refunded for (PullTuning::PreparationRefundMaxMs). Counted over the episode,
+            /// a gauntlet seat carried one pull's buffing into the grace of every pull after it.
+            uint32 PreparationBaseMs = 0;
             uint32 ControlMs = 0;               // enemy-time kept out of the fight by crowd control (solo gauntlet)
             float PullControlPaid = 0.0f;       // ... and the control reward paid for the current pull
             /// Crowd control priced as the damage it prevents (single pack). What holding an enemy out of the fight
@@ -231,6 +235,10 @@ namespace Animus::Curriculum
         /// Whether an enemy is held out of the fight: stunned, incapacitated, asleep, polymorphed, feared, or rooted
         /// out of melee reach of what it was fighting and not casting at it.
         [[nodiscard]] static bool Controlled(Unit const* enemy);
+
+        /// The stall grace earned by preparing for the current pull (SeatPull::PreparationBaseMs).
+        [[nodiscard]] static uint32 PreparationRefundMs(CurriculumTuning::PullTuning const& tuning,
+            CombatTally const& tally, SeatPull const& pull);
         /// A single pack's control, priced as the damage it prevents rather than as time held. Tracks what each enemy
         /// slot deals while it is free to act, credits every held add its own rate over the decision, and pays
         /// Pulls.SinglePackControl times that -- in maximum healths, over health now, so control is worth more the

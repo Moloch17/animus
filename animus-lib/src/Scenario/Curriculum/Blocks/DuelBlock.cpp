@@ -387,13 +387,17 @@ void Animus::Curriculum::DuelBlock::BeforeApply(SeatView& view, SeatActionResult
     if (target && bot->IsAlive() && bot->movespline->Finalized() && !bot->HasInArc(float(M_PI) / 2, target))
         bot->SetFacingToObject(target);
 
-    if (!view.Option || !IsPositioning(view.Option->Kind) || view.NowMs >= view.Option->UntilMs)
+    if (!view.Option)
+        return;
+
+    SeatOption& option = view.Option->Slots[std::size_t(SeatOptionSlot::Positioning)];
+    if (!IsPositioning(option.Kind) || view.NowMs >= option.UntilMs)
         return;
 
     // A positioning option is over once there is nothing to position against.
     if (!target || !target->IsAlive() || !bot->IsAlive())
     {
-        *view.Option = SeatOption();
+        option = SeatOption();
         return;
     }
 
@@ -402,9 +406,9 @@ void Animus::Curriculum::DuelBlock::BeforeApply(SeatView& view, SeatActionResult
 
     // Keeping range: the target in melee reach is what it runs back out from. Staying on the target: out of melee
     // reach is what it closes again.
-    if (view.Option->Kind == SeatOptionKind::KeepRange && target->IsWithinMeleeRange(bot))
+    if (option.Kind == SeatOptionKind::KeepRange && target->IsWithinMeleeRange(bot))
         Apply(view, ACTION_MOVE_TO_RANGE, result);
-    else if (view.Option->Kind == SeatOptionKind::StayOnTarget && !target->IsWithinMeleeRange(bot))
+    else if (option.Kind == SeatOptionKind::StayOnTarget && !target->IsWithinMeleeRange(bot))
         Apply(view, ACTION_MOVE_TO_TARGET, result);
 }
 
@@ -456,8 +460,7 @@ void Animus::Curriculum::DuelBlock::Apply(SeatView& view, uint32 local, SeatActi
     // Keeping range is a durative action: it starts here and runs in BeforeApply until the policy does something else.
     if (local == ACTION_KEEP_RANGE)
     {
-        view.Option->Kind = SeatOptionKind::KeepRange;
-        view.Option->UntilMs = view.NowMs + view.Options.KeepRangeMs;
+        view.Option->Start(SeatOptionKind::KeepRange, view.NowMs + view.Options.KeepRangeMs);
         if (target && target->IsWithinMeleeRange(bot))
             Apply(view, ACTION_MOVE_TO_RANGE, result);
         return;
@@ -465,8 +468,7 @@ void Animus::Curriculum::DuelBlock::Apply(SeatView& view, uint32 local, SeatActi
 
     if (local == ACTION_STAY_ON_TARGET)
     {
-        view.Option->Kind = SeatOptionKind::StayOnTarget;
-        view.Option->UntilMs = view.NowMs + view.Options.StayOnTargetMs;
+        view.Option->Start(SeatOptionKind::StayOnTarget, view.NowMs + view.Options.StayOnTargetMs);
         if (target && !target->IsWithinMeleeRange(bot))
             Apply(view, ACTION_MOVE_TO_TARGET, result);
         return;

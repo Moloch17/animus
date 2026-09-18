@@ -335,6 +335,56 @@ void Animus::Curriculum::PetBlock::DefaultStance(Creature* pet, ObjectGuid& last
         pet->SetReactState(REACT_DEFENSIVE);
 }
 
+bool Animus::Curriculum::PetBlock::HasInterruptAbility(SeatView const& view)
+{
+    if (!view.L || !HasPet(view.L->Profile->Class))
+        return false;
+
+    Creature* pet = FindPet(view.Bot);
+    if (!pet || !pet->IsAlive())
+        return false;
+
+    for (Ability const& ability : Abilities(pet))
+        if (ability.Flags & (1 << KIND_INTERRUPT))
+            return true;
+
+    return false;
+}
+
+/// A held interrupt (SeatOptionKind::HoldInterrupt) the seat has no spell of its own for: the pet's. The core block
+/// runs first and only leaves the hold standing when it found nothing to cast, so a seat with both uses its own
+/// (stage2_pack 2026-09-18: the warlock pressed the hold 7.8 times a fight for 0.01 interrupts -- its interrupt is
+/// the felhunter's Spell Lock, which the option never looked at).
+void Animus::Curriculum::PetBlock::BeforeApply(SeatView& view, SeatActionResult& result) const
+{
+    if (!view.Option || !view.Option->Running(SeatOptionKind::HoldInterrupt, view.NowMs)
+        || !HasPet(view.L->Profile->Class))
+        return;
+
+    Unit* target = view.Target;
+    if (!target || !target->IsAlive() || !target->IsNonMeleeSpellCast(false))
+        return;
+
+    Creature* pet = FindPet(view.Bot);
+    if (!pet)
+        return;
+
+    std::vector<Ability> const abilities = Abilities(pet);
+    for (std::size_t slot = 0; slot < abilities.size(); ++slot)
+    {
+        if (!(abilities[slot].Flags & (1 << KIND_INTERRUPT)))
+            continue;
+
+        uint32 const action = ACTION_ABILITY_FIRST + uint32(slot);
+        if (!IsAllowed(view, pet, abilities, action))
+            continue;
+
+        Apply(view, action, result);
+        view.Option->Stop(SeatOptionKind::HoldInterrupt);
+        return;
+    }
+}
+
 Animus::Curriculum::BlockSize Animus::Curriculum::PetBlock::Size(Layout const& layout) const
 {
     if (!HasPet(layout.Profile->Class))

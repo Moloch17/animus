@@ -103,6 +103,7 @@ namespace Animus::Curriculum
         };
 
         [[nodiscard]] BlockId Id() const override { return BlockId::Pet; }
+        void BeforeApply(SeatView& view, SeatActionResult& result) const override;
         [[nodiscard]] BlockSize Size(Layout const& layout) const override;
         void Observe(SeatView const& view, float* obs, uint8* mask) const override;
         void Apply(SeatView& view, uint32 local, SeatActionResult& result) const override;
@@ -112,6 +113,11 @@ namespace Animus::Curriculum
             return local == ACTION_PASSIVE || local == ACTION_DEFENSIVE || local == ACTION_AGGRESSIVE
                 ? ModeGroup::PetStance : ModeGroup::None;
         }
+
+        /// Whether the pet out right now has an ability that interrupts a cast (a Felhunter's Spell Lock, a
+        /// Succubus' Seduction, a silence): for several classes that is the seat's only interrupt, so holding one
+        /// has to look here too. Cooldowns are not counted, as CoreBlock::KnowsInterrupt does not count them.
+        [[nodiscard]] static bool HasInterruptAbility(SeatView const& view);
 
         /// Whether the class has a pet this block controls.
         [[nodiscard]] static bool HasPet(uint8 playerClass);
