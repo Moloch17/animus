@@ -35,8 +35,9 @@ namespace Animus::Curriculum
 
     /// Difficulty that adapts per class/role (CurriculumTuning::DifficultyTuning): each class/role fights at its own
     /// rung, 0 up to the encounter's top one. After Window fights at a rung it moves up one once it won RaiseAbove of
-    /// them, down one below LowerBelow; ReviewChance of its training fights are at a lower rung, which don't count, so
-    /// none is forgotten. A fight that simple play wins every time teaches nothing a plan would add.
+    /// them, down one below LowerBelow; ReviewChance of its training fights are at a lower rung and StretchChance at
+    /// the next one up, neither of which count, so nothing is forgotten and nothing is met for the first time in an
+    /// evaluation. A fight that simple play wins every time teaches nothing a plan would add.
     ///
     /// An evaluation spreads its seeds over the rungs instead (every class/role over every rung), so two checkpoints
     /// meet the same fights, and a stage viewer's forced tier (StageScenario::ForceTier) wins over both. Rungs start at

@@ -62,6 +62,10 @@ namespace Animus::Curriculum
         /// is charged in (the timeout).
         [[nodiscard]] float HealthLeft(Unit const* unit);
 
+        /// The share of a timeout charge to take when the fight ended with `healthLeft` of its enemy standing:
+        /// `floor` of it always, the rest with the work left undone.
+        [[nodiscard]] float TimeoutScale(float floor, float healthLeft);
+
         /// How the seat is fighting `target`, measured only: time in the fight (FightMs, which every style share is
         /// divided by), time inside melee reach, time the target spent on the bot's pet, and the roots and snares the
         /// bot or its pet and totems hold it with. The caller decides when a fight is on; a null target still counts

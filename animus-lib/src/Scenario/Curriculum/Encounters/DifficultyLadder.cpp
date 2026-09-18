@@ -45,12 +45,20 @@ Animus::Curriculum::DifficultyLadder::Pick Animus::Curriculum::DifficultyLadder:
     }
     else
     {
+        CurriculumTuning::DifficultyTuning const& difficulty = _scenario.Tuning().Difficulty;
         uint32 const current = std::min(Tier(layout), maxTier);
         pick.Tier = current;
         pick.Counts = true;
-        if (current && roll_chance_i(_scenario.Tuning().Difficulty.ReviewChance))
+        if (current && roll_chance_i(difficulty.ReviewChance))
         {
             pick.Tier = urand(0, current - 1);
+            pick.Counts = false;
+        }
+        else if (current < maxTier && roll_chance_i(difficulty.StretchChance))
+        {
+            // One rung above, and it does not count: a class/role is scored on every rung, so it should have met
+            // the next one before it is asked to clear it -- without its losses there dragging it back down.
+            pick.Tier = current + 1;
             pick.Counts = false;
         }
     }
