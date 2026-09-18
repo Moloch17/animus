@@ -728,6 +728,11 @@ bool Animus::Curriculum::ActionCatalog::IsSustainSpell(SpellInfo const* info)
 
 bool Animus::Curriculum::ActionCatalog::IsInterruptingSpell(SpellInfo const* info)
 {
+    // Null where every other predicate here takes it: a seat that knows no rank of the action yet
+    // (Encoding::KnownRank), which is what CoreBlock's held interrupt asks about every decision it runs.
+    if (!info)
+        return false;
+
     for (SpellEffectInfo const& effect : info->GetEffects())
     {
         if (effect.Effect == SPELL_EFFECT_INTERRUPT_CAST || effect.Effect == SPELL_EFFECT_KNOCK_BACK)
