@@ -981,7 +981,8 @@ void Animus::Curriculum::PullsEncounter::Reward(Env& env, uint32 seatIndex, Play
     if (!tally.Killed && !tally.Died && !tally.TimedOut && TimeIsUp(env))
     {
         tally.TimedOut = true;
-        ledger.Add(RewardTerm::Timeout, -tuning.Timeout * (pullHealth > 0.0f ? pullLeft / pullHealth : 1.0f));
+        ledger.Add(RewardTerm::Timeout, -tuning.Timeout * CombatReward::TimeoutScale(tuning.TimeoutFloor,
+            pullHealth > 0.0f ? pullLeft / pullHealth : 1.0f));
     }
 
     // The outcome moves the class/role on the ladder, once: a clear without a death is a win.

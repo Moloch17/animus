@@ -166,7 +166,8 @@ void Animus::Curriculum::CreatureEncounter::Reward(Env& env, uint32 seat, Player
     if (!tally.Killed && !tally.Died && !tally.TimedOut && TimeIsUp(env))
     {
         tally.TimedOut = true;
-        ledger.Add(RewardTerm::Timeout, -tuning.Timeout * CombatReward::HealthLeft(opponent));
+        ledger.Add(RewardTerm::Timeout, -tuning.Timeout
+            * CombatReward::TimeoutScale(tuning.TimeoutFloor, CombatReward::HealthLeft(opponent)));
     }
 }
 

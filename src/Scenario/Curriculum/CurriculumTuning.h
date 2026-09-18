@@ -106,15 +106,23 @@ namespace Animus::Curriculum
             /// started (stage1_duel at 30M: none of the 11 failed warlock episodes took any damage). As Death, so
             /// neither way of losing is the cheaper one to learn.
             float Timeout = 10.0f;
+            /// The share of Timeout charged whatever the fight's progress; the rest is charged times the share of the
+            /// opponent still standing, so a near miss costs about half a refusal. Without the floor, breaking off
+            /// was cheaper than dying: the fights lost to the clock on 2026-09-17 ended with 71% of the opponent
+            /// left, which is -6.7 unfloored against -8.9 for dying and -9.5 for the flat charge it replaced.
+            float TimeoutFloor = 0.5f;
             /// Creature duel: per second the fight has not started once StallGraceMs of the episode are gone. Timeout
             /// alone charges standing still only at the end of the clock, 900 decisions away: stage1_duel at 20M had
             /// its deterministic policy stand where it spawned for all 90 s in 67 of 2048 episodes (21 without a
-            /// single action), fights the same policy sampled won.
-            float Stall = 0.05f;
+            /// single action), fights the same policy sampled won. Raised from 0.05 on 2026-09-17: standing at range
+            /// held SeatGoal::Position and earned Goals.Match at 0.01 a decision against this at 0.0125, so keeping
+            /// out of the fight was all but free -- 24 of the 87 elite fights lost to the clock were never engaged.
+            float Stall = 0.08f;
             uint32 StallGraceMs = 15000;        // summoning a pet, buffing and sneaking up in stealth fit in this
             /// Preparing is not stalling: the grace grows by the time the seat spent starting buffs, forms, stances,
-            /// stealth and pet summons out of combat (CombatTally::PreparationMs), up to this much.
-            uint32 PreparationRefundMaxMs = 30000;
+            /// stealth and pet summons out of combat (CombatTally::PreparationMs), up to this much. 30 s made a 45 s
+            /// approach free; buffing, a form, a pet and an opener from stealth fit in 15.
+            uint32 PreparationRefundMaxMs = 15000;
             /// Creature duel, ranged specs: per second the opponent stands in melee range hitting the bot. The approach
             /// shaping only pays for closing in, so nothing told a hunter, mage or warlock to keep the range it
             /// fights best at (stage1_duel at 20M: 88 of 96 hunter kills ended within 5 yd).
@@ -136,6 +144,11 @@ namespace Animus::Curriculum
             float LowerBelow = 0.6f;
             uint32 Window = 200;                // fights at a tier before it is judged
             int32 ReviewChance = 25;            // percent of training fights drawn from a lower tier, so none is lost
+            /// Percent of training fights drawn one tier *above* the class/role's own, which do not count towards
+            /// moving it. An evaluation spreads its seeds over every tier, so a class/role that stalls is scored on
+            /// fights it would otherwise never see: the rogue sat at tier 4 while 3 of its 7 evaluation tiers were
+            /// elites it had never trained on, and lost 44% of them.
+            int32 StretchChance = 10;
         } Difficulty;
 
         /// Cast-time spells, from the duel stage on.
@@ -258,6 +271,7 @@ namespace Animus::Curriculum
             /// class/role with the Difficulty.* rates. 0 keeps every pack on the first rung.
             uint32 MaxTier = 5;
             float Timeout = 10.0f;              // pack: the clock ran out with the pack and the seat both alive
+            float TimeoutFloor = 0.5f;          // pack: the share of it charged whatever the pull's progress
             /// A timeout charged only at the end is 150 s away when the kiting starts: the discount leaves about a
             /// fifth of it, against a whole death now, so running out the clock looked safe. A fight engaged longer
             /// than OvertimeGraceMs is charged as it drags on, and a death in overtime is charged the overtime left,
@@ -279,9 +293,9 @@ namespace Animus::Curriculum
             /// dragging the fight out. 0 leaves the grace alone. Bounded on purpose: Overtime exists to stop kiting
             /// the clock, and an unbounded pause would hand that back.
             uint32 ControlGraceMaxMs = 0;
-            float Stall = 0.05f;                // pack: per second not engaged once StallGraceMs are gone
+            float Stall = 0.08f;                // pack: per second not engaged once StallGraceMs are gone
             uint32 StallGraceMs = 15000;
-            uint32 PreparationRefundMaxMs = 30000;  // pack: as the duel's
+            uint32 PreparationRefundMaxMs = 15000;  // pack: as the duel's
             float Spacing = 0.03f;              // pack: per second a ranged spec is hit in melee reach
             /// A gauntlet alone (no owner) is won by lasting: pull after pull until the episode ends, and a death ends
             /// it with every pull left unfought. Clear 2 + FastPull 2 and HealthKept 2 had each pull worth up to 6
@@ -488,6 +502,7 @@ namespace Animus::Curriculum
             f("Duel.HealthKept", tuning.Duel.HealthKept);
             f("Duel.Death", tuning.Duel.Death);
             f("Duel.Timeout", tuning.Duel.Timeout);
+            f("Duel.TimeoutFloor", tuning.Duel.TimeoutFloor);
             f("Duel.Stall", tuning.Duel.Stall);
             f("Duel.StallGraceMs", tuning.Duel.StallGraceMs);
             f("Duel.PreparationRefundMaxMs", tuning.Duel.PreparationRefundMaxMs);
@@ -502,6 +517,7 @@ namespace Animus::Curriculum
             f("Difficulty.LowerBelow", tuning.Difficulty.LowerBelow);
             f("Difficulty.Window", tuning.Difficulty.Window);
             f("Difficulty.ReviewChance", tuning.Difficulty.ReviewChance);
+            f("Difficulty.StretchChance", tuning.Difficulty.StretchChance);
 
             f("Casting.TimeWasted", tuning.Casting.TimeWasted);
             f("Casting.TimeCompleted", tuning.Casting.TimeCompleted);
@@ -556,6 +572,7 @@ namespace Animus::Curriculum
             f("Pulls.PackDeath", tuning.Pulls.PackDeath);
             f("Pulls.MaxTier", tuning.Pulls.MaxTier);
             f("Pulls.Timeout", tuning.Pulls.Timeout);
+            f("Pulls.TimeoutFloor", tuning.Pulls.TimeoutFloor);
             f("Pulls.Overtime", tuning.Pulls.Overtime);
             f("Pulls.OvertimeGraceMs", tuning.Pulls.OvertimeGraceMs);
             f("Pulls.SinglePackControl", tuning.Pulls.SinglePackControl);

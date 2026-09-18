@@ -120,6 +120,12 @@ float Animus::Curriculum::CombatReward::HealthLeft(Unit const* unit)
     return std::clamp(float(unit->GetHealth()) / float(unit->GetMaxHealth()), 0.0f, 1.0f);
 }
 
+float Animus::Curriculum::CombatReward::TimeoutScale(float floor, float healthLeft)
+{
+    float const share = std::clamp(floor, 0.0f, 1.0f);
+    return share + (1.0f - share) * std::clamp(healthLeft, 0.0f, 1.0f);
+}
+
 void Animus::Curriculum::CombatReward::Stealth(CombatTally& tally, float opener, float utility, RewardLedger& ledger)
 {
     if (tally.StepStealthOpener)
