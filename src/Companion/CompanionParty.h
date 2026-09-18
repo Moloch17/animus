@@ -132,7 +132,7 @@ namespace Animus
             std::vector<float> Obs;
             std::vector<uint8> Mask;
             Curriculum::SeatMemory Memory;      // pacing, and what it has been doing (as a forge seat's)
-            Curriculum::SeatOption Option;      // the durative action it is running (rest, hold an interrupt, ...)
+            Curriculum::SeatOptionSet Option;   // the durative actions it is running (keep range, hold an interrupt)
             MlpPolicy::State Policy;            // what its model carries between decisions (memory, goal)
             int32 Goal = Curriculum::NO_GOAL;   // ... the goal of it, as its teammates see it
             bool ModelErrorLogged = false;
