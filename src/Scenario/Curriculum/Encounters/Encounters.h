@@ -236,6 +236,9 @@ namespace Animus::Curriculum
         /// out of melee reach of what it was fighting and not casting at it.
         [[nodiscard]] static bool Controlled(Unit const* enemy);
 
+        /// What an interrupt of this kind of cast is worth, as a multiple of PullTuning::Interrupt (IncomingSpell).
+        [[nodiscard]] static float PreventedScale(CurriculumTuning::PullTuning const& tuning, uint8 prevented);
+
         /// The stall grace earned by preparing for the current pull (SeatPull::PreparationBaseMs).
         [[nodiscard]] static uint32 PreparationRefundMs(CurriculumTuning::PullTuning const& tuning,
             CombatTally const& tally, SeatPull const& pull);

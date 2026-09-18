@@ -75,6 +75,9 @@ namespace
     constexpr float MAX_UNSEEN_TIME_MS = 20000.0f;
     constexpr float GOAL_RANGE_SLACK_YARDS = 5.0f;  // a ranged spec holds its range to within this (SeatGoal::Position)
     constexpr float LOW_HEALTH_PCT = 35.0f;         // a friend below this is low (low_health_seconds)
+    /// How far a cast counts as one this seat could have answered (interruptible_casts_seen): an interrupt's own
+    /// range, near enough, and beyond it the press was never available anyway.
+    constexpr float INTERRUPTIBLE_CAST_RANGE = 30.0f;
     constexpr int32 ABSORB_EXPIRY_SLACK_MS = 500;   // an absorb gone with more than a decision and this left soaked it
 
     /// Version of stage.json (2 adds the stage's arenas).
@@ -806,6 +809,24 @@ void Animus::Curriculum::StageScenario::AddCoreEpisodeInfo()
     _info.Add("low_health_seconds", [seat](Env const& env, uint32 index)
     {
         return float(seat(env, index).LowHealthMs) / 1000.0f;
+    });
+
+    // Ground effects: how long the seat stood in one, what that cost it as a share of its health, and how many casts
+    // it could have interrupted were there to interrupt. The last is the denominator for the press-to-interrupt
+    // ratio -- presses alone cannot say whether a policy is pressing too often or whether there was nothing to stop.
+    _info.Add("hazard_seconds", [seat](Env const& env, uint32 index)
+    {
+        return float(seat(env, index).HazardMs) / 1000.0f;
+    });
+    _info.Add("hazard_damage", [seat](Env const& env, uint32 index)
+    {
+        SeatState const& state = seat(env, index);
+        Player const* bot = env.FindBot(index);
+        return bot ? float(state.HazardDamage) / float(std::max<uint32>(1, bot->GetMaxHealth())) : 0.0f;
+    });
+    _info.Add("interruptible_casts_seen", [seat](Env const& env, uint32 index)
+    {
+        return float(seat(env, index).InterruptibleCastsSeen);
     });
 
     // Goals (SeatGoal): the share of decisions spent on each, how often the decisions matched the goal, and how often
@@ -1825,6 +1846,37 @@ void Animus::Curriculum::StageScenario::Reward(Env& env, float* reward)
         encounter->AfterRewards(env);
 }
 
+/// Count an enemy cast the seat could have interrupted, once per cast. The press-to-interrupt ratio alone cannot
+/// say whether a policy is pressing too often or whether there was simply nothing to interrupt; this is the
+/// denominator. The seat's own target is the one it could act on, so that is the one counted.
+void Animus::Curriculum::StageScenario::TrackInterruptibleCast(Env const& env, SeatState& seat, Player* bot)
+{
+    Unit* target = env.FindTargetUnit(seat.TargetSlot);
+    if (!target || !target->IsAlive() || !bot->IsWithinDistInMap(target, INTERRUPTIBLE_CAST_RANGE))
+    {
+        seat.LastInterruptibleCaster.Clear();
+        seat.LastInterruptibleSpell = 0;
+        return;
+    }
+
+    SpellInfo const* info = IncomingSpell::Interruptible(target)
+        ? IncomingSpell::CastInProgress(target, nullptr, nullptr, nullptr) : nullptr;
+    if (!info)
+    {
+        seat.LastInterruptibleCaster.Clear();
+        seat.LastInterruptibleSpell = 0;
+        return;
+    }
+
+    // The same cast seen again is not another cast.
+    if (seat.LastInterruptibleCaster == target->GetGUID() && seat.LastInterruptibleSpell == info->Id)
+        return;
+
+    seat.LastInterruptibleCaster = target->GetGUID();
+    seat.LastInterruptibleSpell = info->Id;
+    ++seat.InterruptibleCastsSeen;
+}
+
 void Animus::Curriculum::StageScenario::TrackSupport(Env& env, uint32 seatIndex, Player* bot)
 {
     SeatState& seat = Data(env).Seats[seatIndex];
@@ -1915,6 +1967,25 @@ float Animus::Curriculum::StageScenario::SeatReward(Env& env, uint32 seatIndex)
 
     // Also before the encounters: the owner's and teammates' rewards read what the seat's absorbs soaked on them.
     TrackSupport(env, seatIndex, bot);
+
+    // Standing in something, and what it cost. The damage is charged on top of DamageTaken: taking a hit that could
+    // have been walked out of is worse than taking one that could not, and this is the only term that pays a seat
+    // for moving its feet. Both read zero where nothing puts anything on the ground.
+    if (bot && bot->IsAlive())
+    {
+        if (Encoding::StandingInHazards(bot, nullptr))
+            seat.HazardMs += _decisionMs;
+
+        if (uint64 const hazardDamage = env.StepStats[seatIndex].HazardDamage)
+        {
+            seat.HazardDamage += hazardDamage;
+            float const share = float(hazardDamage) / float(std::max<uint32>(1, bot->GetMaxHealth()));
+            seat.Rewards.Add(RewardTerm::Hazard, -_tuning.Hazards.Damage * share);
+        }
+
+        // Enemy casts there was something to do about: counted once each, when one the seat could interrupt starts.
+        TrackInterruptibleCast(env, seat, bot);
+    }
 
     // A pet that died: a corpse still the seat's (a hunter's beast), or one gone while nearly dead (a demon's body
     // leaves at once). Replacing a healthy pet with another is not a death.

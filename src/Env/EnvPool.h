@@ -178,7 +178,7 @@ namespace Animus
         /// Write the env's per-agent layout and presence rows (after its observation).
         void DescribeAgents(Env const& env);
         /// A non-agent's cast was cancelled: note it on its env when it is one of the env's targets.
-        void RecordTargetInterrupted(Unit const* caster, bool bySelf);
+        void RecordTargetInterrupted(Unit const* caster, Spell* spell, bool bySelf);
         /// Map the env's bots, allies and instance to it (world thread, while no map updates).
         void IndexEnv(Env const& env);
         void ReportEpisode(uint32 envIndex);

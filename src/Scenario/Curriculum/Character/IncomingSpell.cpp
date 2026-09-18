@@ -27,6 +27,7 @@ namespace
 {
     constexpr float CAST_SCALE_MS = 3000.0f;    // a cast this long or longer reads as "all the time there is"
     constexpr float RADIUS_SCALE_YD = 40.0f;
+    constexpr uint32 LONG_CAST_MS = 2000;       // a cast at least this long is a large part of a caster's output
 
     /// The spell of `type` that `enemy` is part way through, if it is one that takes time: an instant is over before
     /// anything could be observed about it, and the core's own interrupt test treats a zero cast time the same way.
@@ -91,6 +92,24 @@ namespace
 
         return widest;
     }
+}
+
+Animus::Curriculum::IncomingSpell::Prevented Animus::Curriculum::IncomingSpell::Classify(SpellInfo const* info,
+    uint32 castTimeMs)
+{
+    if (!info)
+        return Prevented::Ordinary;
+
+    // Most valuable first: a heal undoes work already done, an area spell hits everyone, a long cast is a large part
+    // of what the caster was going to deal.
+    if (Heals(info))
+        return Prevented::Heal;
+    if (info->IsTargetingArea() || info->HasAreaAuraEffect() || info->MaxAffectedTargets > 1)
+        return Prevented::Area;
+    if (castTimeMs >= LONG_CAST_MS)
+        return Prevented::Long;
+
+    return Prevented::Ordinary;
 }
 
 bool Animus::Curriculum::IncomingSpell::Interruptible(Unit const* enemy)

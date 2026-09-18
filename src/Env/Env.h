@@ -62,6 +62,11 @@ namespace Animus
         // What crowd control prevents is read from here: an enemy's own damage rate is what holding it out of the
         // fight saves. Damage from anything not in a target slot is in DamageTaken only.
         std::array<uint64, MAX_TARGETS> DamageTakenBy{};
+        /// Of DamageTaken, what came from something standing on the ground rather than aimed at the agent: a fire
+        /// pool, a poison cloud, a consecration (a persistent area aura, or an area aura from its caster). This is
+        /// the damage a seat could have walked out of, and until it was counted it was indistinguishable from a
+        /// melee swing.
+        uint64 HazardDamage = 0;
         uint64 AllyDamageTaken = 0;     // by the env's allies (Env::Allies), from anything
         uint64 AllyHealing = 0;         // effective healing the agent (or its pets) did on the env's allies
         std::array<uint64, MAX_ALLIES> AllyDamageTakenBy{};    // the same, per Env::Allies index
@@ -87,6 +92,7 @@ namespace Animus
         void Add(AgentStats const& other)
         {
             Damage += other.Damage;
+            HazardDamage += other.HazardDamage;
             WhiteDamage += other.WhiteDamage;
             SpecialDamage += other.SpecialDamage;
             PetDamage += other.PetDamage;
@@ -156,7 +162,17 @@ namespace Animus
 
         /// Targets whose cast or channel was cut short by something other than themselves since the last decision
         /// (an interrupt, stun, silence, ...). Written by the map thread updating the env's instance.
-        std::vector<ObjectGuid> StepInterruptedTargets;
+        /// Enemies whose cast was stopped this decision, with what the cast was worth stopping (IncomingSpell's
+        /// Prevented, kept as a plain value so Env stays free of the curriculum's headers). An interrupt is paid by
+        /// what it prevented, so the kind has to survive the moment the cast dies -- afterwards there is nothing
+        /// left to read it from.
+        struct InterruptedCast
+        {
+            ObjectGuid Caster;
+            uint8 Prevented = 0;
+        };
+
+        std::vector<InterruptedCast> StepInterruptedTargets;
 
         [[nodiscard]] Map* FindMap() const;
         [[nodiscard]] Player* FindBot(uint32 agent) const;

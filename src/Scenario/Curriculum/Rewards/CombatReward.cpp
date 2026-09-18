@@ -62,6 +62,7 @@ std::string_view Animus::Curriculum::RewardTermName(RewardTerm term)
         case RewardTerm::StealthOpener:         return "stealth_opener";
         case RewardTerm::StealthUtility:        return "stealth_utility";
         case RewardTerm::Interrupt:             return "interrupt";
+        case RewardTerm::Hazard:                return "hazard";
         case RewardTerm::Kill:                  return "kill";
         case RewardTerm::Clear:                 return "clear";
         case RewardTerm::HealthKept:            return "health_kept";

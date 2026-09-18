@@ -17,6 +17,7 @@
  */
 
 #include "Encounters.h"
+#include "IncomingSpell.h"
 #include "CombatReward.h"
 #include "Creature.h"
 #include "CreatureAI.h"
@@ -863,10 +864,15 @@ void Animus::Curriculum::PullsEncounter::Reward(Env& env, uint32 seatIndex, Play
     // or an enemy that died, is not one.
     if (!pull.PendingInterrupt.IsEmpty())
     {
-        if (std::find(env.StepInterruptedTargets.begin(), env.StepInterruptedTargets.end(), pull.PendingInterrupt)
-            != env.StepInterruptedTargets.end())
+        auto const stopped = std::find_if(env.StepInterruptedTargets.begin(), env.StepInterruptedTargets.end(),
+            [&pull](Env::InterruptedCast const& cast) { return cast.Caster == pull.PendingInterrupt; });
+        if (stopped != env.StepInterruptedTargets.end())
         {
-            ledger.Add(RewardTerm::Interrupt, tuning.Interrupt);
+            // Paid by what it prevented, not per press: stopping a heal undoes damage already dealt, an area spell
+            // would have hit the whole party, a long cast was a large part of the caster's output. An ordinary cast
+            // still pays the full Interrupt -- that term is how a class finds the behaviour at all, and a policy
+            // that only ever saw a heal pay might never find it.
+            ledger.Add(RewardTerm::Interrupt, tuning.Interrupt * PreventedScale(tuning, stopped->Prevented));
             ++pull.Interrupts;
         }
 
@@ -1117,6 +1123,19 @@ uint32 Animus::Curriculum::PullsEncounter::PreparationRefundMs(CurriculumTuning:
     uint32 const prepared = tally.PreparationMs > pull.PreparationBaseMs
         ? tally.PreparationMs - pull.PreparationBaseMs : 0;
     return std::min(prepared, tuning.PreparationRefundMaxMs);
+}
+
+/// What an interrupt of this kind of cast is worth, as a multiple of PullTuning::Interrupt. Never below 1: the flat
+/// term is what teaches a class to interrupt at all.
+float Animus::Curriculum::PullsEncounter::PreventedScale(CurriculumTuning::PullTuning const& tuning, uint8 prevented)
+{
+    switch (IncomingSpell::Prevented(prevented))
+    {
+        case IncomingSpell::Prevented::Heal:    return tuning.InterruptHeal;
+        case IncomingSpell::Prevented::Area:    return tuning.InterruptArea;
+        case IncomingSpell::Prevented::Long:    return tuning.InterruptLong;
+        default:                                return 1.0f;
+    }
 }
 
 bool Animus::Curriculum::PullsEncounter::Controlled(Unit const* enemy)

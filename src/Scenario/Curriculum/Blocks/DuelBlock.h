@@ -106,7 +106,16 @@ namespace Animus::Curriculum
             OBS_HAZARD_WAY_OUT          = 67,
             OBS_HAZARD_BEARING_SIN      = 68,
             OBS_HAZARD_BEARING_COS      = 69,
-            OBS_TARGET_CAST_FIRST       = 70,
+            /// What has been done to the seat (Encoding::Debuffs): how many harmful auras are on it, how many of
+            /// them a dispel could remove, the worst stack count, how long the longest has left, and which crowd
+            /// control mechanics are among them. Its own buffs were always visible per catalog action; what an
+            /// enemy put on it never was.
+            OBS_DEBUFF_COUNT            = 70,   // harmful auras / 5
+            OBS_DEBUFF_DISPELLABLE      = 71,   // ... of them dispellable / 5
+            OBS_DEBUFF_STACKS           = 72,   // the most stacks any one has / 10
+            OBS_DEBUFF_LONGEST          = 73,   // the longest left to run / 30 s
+            OBS_DEBUFF_MECHANIC_FIRST   = 74,   // which of Encoding::OBSERVED_MECHANICS are on it (6)
+            OBS_TARGET_CAST_FIRST       = 80,
             OBS_STABLE_FIRST            = OBS_TARGET_CAST_FIRST + IncomingSpell::FEATURE_COUNT,   // hunters: per slot STABLE_FEATURES
             OBS_COUNT_WITHOUT_STABLE    = OBS_STABLE_FIRST
         };

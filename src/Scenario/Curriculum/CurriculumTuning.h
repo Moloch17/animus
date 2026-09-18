@@ -249,6 +249,14 @@ namespace Animus::Curriculum
             float StealthOpener = 0.5f;
             float StealthUtility = 0.05f;
             float Interrupt = 0.3f;
+            /// An interrupt is paid by what it prevented, as a multiple of Interrupt: a heal undoes damage already
+            /// dealt, an area spell would have hit everyone, a long cast was a large part of the caster's output.
+            /// Never below 1 -- the flat term is how a class finds interrupting at all, and paying only for heals
+            /// risks the behaviour never appearing to be shaped (stage 2: the classes that interrupt found it
+            /// through the flat term).
+            float InterruptHeal = 3.0f;
+            float InterruptArea = 2.0f;
+            float InterruptLong = 1.5f;
             float Kill = 0.5f;
             float StepCost = 0.0002f;           // per decision
             /// Owner arenas (stages 4, 5, 8), win-first as the solo gauntlet: each pull cleared pays Clear plus
@@ -385,6 +393,16 @@ namespace Animus::Curriculum
             uint32 KeepRangeMs = 10000;         // a ranged spec: back to its range whenever the target closes in
             uint32 StayOnTargetMs = 10000;      // a melee spec: back into melee reach whenever the target leaves it
         } Options;
+
+        /// Ground effects: damage from something standing on the ground rather than aimed at the seat (a fire pool,
+        /// a poison cloud, a consecration). Charged on top of DamageTaken, which already charges it once as damage,
+        /// because this is the damage a seat could have walked out of -- it is the only term that pays for moving,
+        /// and it is what makes "step out of it" learnable at all. It reads zero wherever nothing puts anything on
+        /// the ground, which is most of the curriculum today and none of a dungeon.
+        struct HazardTuning
+        {
+            float Damage = 0.5f;                // per fraction of the seat's maximum health taken from a hazard
+        } Hazards;
 
         /// Resurrecting: a seat's own Soulstone or Reincarnation, and revives on allies (companion and party stages).
         struct ResurrectionTuning
@@ -567,6 +585,9 @@ namespace Animus::Curriculum
             f("Pulls.StealthOpener", tuning.Pulls.StealthOpener);
             f("Pulls.StealthUtility", tuning.Pulls.StealthUtility);
             f("Pulls.Interrupt", tuning.Pulls.Interrupt);
+            f("Pulls.InterruptHeal", tuning.Pulls.InterruptHeal);
+            f("Pulls.InterruptArea", tuning.Pulls.InterruptArea);
+            f("Pulls.InterruptLong", tuning.Pulls.InterruptLong);
             f("Pulls.Kill", tuning.Pulls.Kill);
             f("Pulls.StepCost", tuning.Pulls.StepCost);
             f("Pulls.Clear", tuning.Pulls.Clear);
@@ -616,6 +637,7 @@ namespace Animus::Curriculum
 
             f("Options.RestMaxMs", tuning.Options.RestMaxMs);
             f("Options.HoldInterruptMs", tuning.Options.HoldInterruptMs);
+            f("Hazards.Damage", tuning.Hazards.Damage);
             f("Options.KeepRangeMs", tuning.Options.KeepRangeMs);
             f("Options.StayOnTargetMs", tuning.Options.StayOnTargetMs);
             f("Owner.LevelSpread", tuning.Owner.LevelSpread);

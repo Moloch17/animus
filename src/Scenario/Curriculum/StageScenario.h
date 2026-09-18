@@ -256,7 +256,10 @@ namespace Animus::Curriculum
         [[nodiscard]] bool GoalHeld(Env const& env, uint32 seatIndex, Player* bot) const;
         /// Before a seat's reward: what its absorbs on itself and its friends soaked since the last one (into the
         /// step's protection stats), and whether any friend is low.
-        void TrackSupport(Env& env, uint32 seatIndex, Player* bot);
+        /// Count an enemy cast the seat could have interrupted, once per cast (interruptible_casts_seen).
+    void TrackInterruptibleCast(Env const& env, SeatState& seat, Player* bot);
+
+    void TrackSupport(Env& env, uint32 seatIndex, Player* bot);
         void WriteState(Env const& env, float* state) const;
 
         StageDefinition const& _stage;
