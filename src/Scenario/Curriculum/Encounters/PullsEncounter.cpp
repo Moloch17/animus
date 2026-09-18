@@ -24,6 +24,7 @@
 #include "Log.h"
 #include "Map.h"
 #include "Opponents.h"
+#include "PetBlock.h"
 #include "Player.h"
 #include "Random.h"
 #include "SeatView.h"
@@ -761,6 +762,7 @@ void Animus::Curriculum::PullsEncounter::Reward(Env& env, uint32 seatIndex, Play
 
     // Damage is a fraction of the pull's total health, taken damage a fraction of the bot's.
     float pullHealth = 0.0f;
+    float pullLeft = 0.0f;
     Unit* nearest = nullptr;
     bool fighting = false;
     for (uint32 slot = 0; slot < env.Targets.size(); ++slot)
@@ -773,7 +775,11 @@ void Animus::Curriculum::PullsEncounter::Reward(Env& env, uint32 seatIndex, Play
 
         // The pull is its creatures; an ambusher is paid for by the ambush, but still a place to close in on.
         if (!enemy->IsPlayer())
+        {
             pullHealth += float(enemy->GetMaxHealth());
+            if (enemy->IsAlive())
+                pullLeft += float(enemy->GetHealth());
+        }
         if (enemy->IsAlive() && (!nearest || bot->GetDistance(enemy) < bot->GetDistance(nearest)))
             nearest = enemy;
     }
@@ -811,6 +817,10 @@ void Animus::Curriculum::PullsEncounter::Reward(Env& env, uint32 seatIndex, Play
                 coverage = 0.5f * (coverage + SupportBlock::BuffCoverage(*seat.L, owner));
             pull.BuffCoverageSum += coverage;
             ledger.Add(RewardTerm::Readiness, _scenario.Tuning().Support.BuffCoverage * coverage);
+
+            // And its pet out, as the duel pays for at its engagement (CombatReward::OneOnOne).
+            if (seat.L && PetBlock::HasPet(seat.L->Profile->Class) && PetBlock::FindPet(bot))
+                ledger.Add(RewardTerm::Readiness, _scenario.Tuning().Support.PetReady);
         }
 
         if (!pulls.PullEngaged || pulls.PullEngageMs != env.EpisodeElapsedMs)
@@ -966,10 +976,12 @@ void Animus::Curriculum::PullsEncounter::Reward(Env& env, uint32 seatIndex, Play
         }
     }
 
+    // What the clock costs is what is left of the pull, as the duel charges what is left of its opponent: a pack
+    // nearly down is a near miss, one untouched is a refusal to fight.
     if (!tally.Killed && !tally.Died && !tally.TimedOut && TimeIsUp(env))
     {
         tally.TimedOut = true;
-        ledger.Add(RewardTerm::Timeout, -tuning.Timeout);
+        ledger.Add(RewardTerm::Timeout, -tuning.Timeout * (pullHealth > 0.0f ? pullLeft / pullHealth : 1.0f));
     }
 
     // The outcome moves the class/role on the ladder, once: a clear without a death is a win.

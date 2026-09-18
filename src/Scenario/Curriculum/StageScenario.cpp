@@ -89,12 +89,32 @@ namespace
         return SeatCharacter::TalentPlan::Standard;
     }
 
+    /// How many level bands an evaluation spreads its seeds over (LEVEL_BANDS x 20 levels).
+    constexpr uint32 LEVEL_BANDS = 4;
+
     /// A level every seat's class can be: `fixed` when set (raised to minLevel), else drawn from the tuning: the high
     /// levels, the low levels (when the classes can be that low), or any level.
-    uint8 RandomLevel(uint8 minLevel, uint32 fixed, CurriculumTuning::CharacterTuning const& tuning)
+    ///
+    /// An evaluation episode takes its band from its seed instead (`seedIndex`), so every class/role meets every
+    /// band in equal numbers however the training draw is weighted: training sees the levels the shipped companions
+    /// play, and the evaluation still measures all of them. A band the seat's classes cannot reach (a death knight
+    /// below 55) falls through to the next one up.
+    uint8 RandomLevel(uint8 minLevel, uint32 fixed, CurriculumTuning::CharacterTuning const& tuning,
+        uint32 seedIndex, uint32 layouts)
     {
         if (fixed)
             return uint8(std::clamp<uint32>(fixed, minLevel, DEFAULT_MAX_LEVEL));
+
+        if (seedIndex != Animus::NO_EPISODE_SEED)
+        {
+            uint32 const width = std::max<uint32>(1, DEFAULT_MAX_LEVEL / LEVEL_BANDS);
+            uint32 const band = (seedIndex / std::max<uint32>(1, layouts)) % LEVEL_BANDS;
+            uint32 const last = std::min<uint32>(DEFAULT_MAX_LEVEL, (band + 1) * width);
+            if (last >= minLevel)
+                return uint8(urand(std::max<uint32>(minLevel, band * width + 1), last));
+
+            return uint8(urand(minLevel, DEFAULT_MAX_LEVEL));
+        }
 
         uint32 const highFirst = std::clamp<uint32>(tuning.HighLevelFirst, 1, DEFAULT_MAX_LEVEL);
         uint32 const lowLast = std::min<uint32>(tuning.LowLevelLast, DEFAULT_MAX_LEVEL);
@@ -1140,7 +1160,8 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
             minLevel = std::max(minLevel, data.Seats[seat].L->Assets->Kit->MinLevel());
 
     minLevel = std::max(minLevel, _stage.MinLevel);
-    uint8 const level = RandomLevel(minLevel, _forcedLevel ? _forcedLevel : _level, _tuning.Characters);
+    uint8 const level = RandomLevel(minLevel, _forcedLevel ? _forcedLevel : _level, _tuning.Characters,
+        env.EpisodeSeedIndex, uint32(_layouts.size()));
 
     // The first build opens a new instance, unless the host placed the env in one (Env::MapId/InstanceId).
     Map* map = !firstBuild || env.InstanceId ? env.FindMap() : nullptr;
@@ -1411,6 +1432,10 @@ void Animus::Curriculum::StageScenario::ApplyGoals(Env& env, int32 const* goals)
         SeatState& state = data.Seats[seat];
         if (goal != state.Goal && state.Goal != NO_GOAL && goal != NO_GOAL)
             ++state.GoalChanges;
+
+        // A new goal is a new thing to reach, and is paid for again when it is.
+        if (goal != state.Goal)
+            state.GoalRewarded = false;
 
         state.Goal = goal;
     }
@@ -1893,7 +1918,16 @@ float Animus::Curriculum::StageScenario::SeatReward(Env& env, uint32 seatIndex)
         if (GoalHeld(env, seatIndex, bot))
         {
             ++seat.GoalMatches[std::size_t(seat.Goal)];
-            seat.Rewards.Add(RewardTerm::GoalMatch, _tuning.Goals.Match);
+
+            // Paid for reaching the goal, once per goal held, not for sitting in it: a ranged seat holds
+            // SeatGoal::Position by standing at its range, and paying that every decision made keeping away from
+            // the fight the second largest earner in the stage (measured 2026-09-17: +0.93 an episode, more than
+            // the approach, casting and health terms together). goal_match_share still reports every decision.
+            if (!seat.GoalRewarded)
+            {
+                seat.GoalRewarded = true;
+                seat.Rewards.Add(RewardTerm::GoalMatch, _tuning.Goals.Match);
+            }
         }
     }
 
