@@ -86,6 +86,14 @@ void Animus::Curriculum::SeatEncoder::Apply(SeatView& view, int32 action, SeatAc
     std::optional<BlockId> const block = action > 0 ? layout.BlockOfAction(uint32(action)) : std::nullopt;
     uint32 const local = block ? uint32(action) - layout.Slice(*block).ActionFirst : 0;
 
+    // An option whose clock has run out is over. Nothing else clears it -- every block that runs one checks Running()
+    // and simply stops acting -- so a stale Kind counted as a running option in the seat's statistics (stage1_duel
+    // 2026-09-18: paladin_heal reported one option started and 32.5 s held against a 10 s clock).
+    if (view.Option)
+        for (SeatOption& option : view.Option->Slots)
+            if (option.Kind != SeatOptionKind::None && view.NowMs >= option.UntilMs)
+                option = SeatOption();
+
     // A durative action runs until the policy does something else: anything but the no-op takes over from it, except
     // that a positioning option (IsPositioning) survives everything but the seat steering the other way -- casting
     // and swinging are what it is there to keep the seat in place for, and so is closing in while keeping range --
