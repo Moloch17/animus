@@ -259,9 +259,14 @@ void Animus::Curriculum::TravelBlock::AllowFlight(Player* bot)
     // why riding beat flying and the policy kept choosing it. The core works around the same thing for charmed
     // flyers: "Xinef: If creature can fly, add normal player flying flag (fixes speed)", Unit.cpp.
     //
-    // Set it as the game does: on a flying mount and off the ground. A gryphon on the ground is a slow mount,
-    // which is what makes ascending worth an action.
-    bool const aloft = mounted && HeightAboveGround(bot) > AIRBORNE_ABOVE;
+    // Set it with the mount, not with altitude. Tying it to being off the ground made flight speed conditional on
+    // the one behaviour that ruins a trip: MOVE_TO_OBJECTIVE flies to ground + 1, so the best trip -- mount, fly
+    // the straight line, land -- sits below the threshold and crawled at run speed, and the only way to earn
+    // flight speed was to climb first. Seats duly climbed to eighty and a hundred yards, spending their air time
+    // going up and down at zero yards across: 23 yd/s available, 4 achieved. Nothing is ever in the way either,
+    // since a spline does not collide, so the climb bought nothing. A seat on a flying mount moves by flight
+    // spline whenever it moves at all, so the mount is the honest condition.
+    bool const aloft = mounted;
     if (aloft == bot->HasUnitMovementFlag(MOVEMENTFLAG_FLYING))
         return;
 
