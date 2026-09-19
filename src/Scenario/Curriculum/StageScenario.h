@@ -238,6 +238,9 @@ namespace Animus::Curriculum
         /// What the seat's actions aim at: the dummy or creature, the selected pack enemy, the enemy player. Null
         /// between gauntlet pulls.
         [[nodiscard]] Unit* CurrentTarget(Env const& env, uint32 seat);
+        /// What SeatReward last resolved as this seat's target (SeatState::CurrentTargetGuid), for the const readers
+        /// -- episode info, state -- that cannot ask the encounters again. Falls back to the first target slot.
+        [[nodiscard]] Unit* SeatTarget(Env const& env, uint32 seat) const;
         /// Remember where the seat last saw its target, while it can see it.
         static void TrackTarget(Env const& env, SeatState& seat, Player* bot, Unit* target);
         /// The seat's view. Enemies the bot can neither see nor detect are left out of it, the target included
@@ -253,11 +256,11 @@ namespace Animus::Curriculum
         /// Whether the seat's decision matched the goal it is pursuing (SeatGoal): damage for Fight, an enemy other
         /// than its target held for Control, healing or resting itself for Recover, healing or shielding the owner or
         /// a teammate for Protect, its spec's range for Position, a buff, summon or stealth out of combat for Prepare.
-        [[nodiscard]] bool GoalHeld(Env const& env, uint32 seatIndex, Player* bot) const;
+        [[nodiscard]] bool GoalHeld(Env const& env, uint32 seatIndex, Player* bot, Unit const* target) const;
         /// Before a seat's reward: what its absorbs on itself and its friends soaked since the last one (into the
         /// step's protection stats), and whether any friend is low.
         /// Count an enemy cast the seat could have interrupted, once per cast (interruptible_casts_seen).
-    void TrackInterruptibleCast(Env const& env, SeatState& seat, Player* bot);
+    void TrackInterruptibleCast(Env const& env, SeatState& seat, Player* bot, Unit* target);
 
     /// The nearest hazard the seat is not standing in, cached and refreshed about once a second.
     void TrackHazards(Env const& env, SeatState& seat, Player* bot);
