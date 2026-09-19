@@ -615,15 +615,20 @@ void Animus::EnvPool::RecordTargetInterrupted(Unit const* caster, Spell* spell, 
     if (env == _envByInstance.end())
         return;
 
+    // A target slot holds a creature or the scripted enemy player; in self-play the enemy is another seat's bot and
+    // is in no slot, so matching only the slots left every interrupt in stage7_arena and stage11_flag unrecorded --
+    // and so unpaid and uncounted, however well the seat played it.
     Env& owner = _envs[env->second];
-    if (caster->GetMapId() == owner.MapId
-        && std::find(owner.Targets.begin(), owner.Targets.end(), caster->GetGUID()) != owner.Targets.end())
+    ObjectGuid const casterGuid = caster->GetGUID();
+    bool const known = std::find(owner.Targets.begin(), owner.Targets.end(), casterGuid) != owner.Targets.end()
+        || std::find(owner.Bots.begin(), owner.Bots.end(), casterGuid) != owner.Bots.end();
+    if (caster->GetMapId() == owner.MapId && known)
     {
         // What the interrupt was worth is decided here, while the cast still exists to be read.
         uint32 const castMs = spell && spell->GetCastTime() > 0 ? uint32(spell->GetCastTime()) : 0;
         Curriculum::IncomingSpell::Prevented const prevented =
             Curriculum::IncomingSpell::Classify(spell ? spell->m_spellInfo : nullptr, castMs);
-        owner.StepInterruptedTargets.push_back({ caster->GetGUID(), uint8(prevented) });
+        owner.StepInterruptedTargets.push_back({ casterGuid, uint8(prevented) });
     }
 }
 
