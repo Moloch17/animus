@@ -75,6 +75,16 @@ void Animus::Curriculum::TravelEncounter::AddEpisodeInfo(EpisodeInfoTable& table
         EnvTravel const& travel = _envs[env.Index];
         return travel.FlightMs ? float(travel.FlightDistance / (double(travel.FlightMs) / 1000.0)) : 0.0f;
     });
+    table.Add("flight_yps_peak", [this](Env const& env, uint32)
+    {
+        return _envs[env.Index].FlightPeakYps;
+    });
+    // Is MOVEMENTFLAG_FLYING actually set while the seat is in the air? 1 = always, 0 = never.
+    table.Add("flying_flag_share", [this](Env const& env, uint32)
+    {
+        EnvTravel const& travel = _envs[env.Index];
+        return travel.AloftSteps ? float(travel.AloftFlagged) / float(travel.AloftSteps) : 0.0f;
+    });
     table.Add("flight_height", [this](Env const& env, uint32)
     {
         EnvTravel const& travel = _envs[env.Index];
@@ -224,10 +234,19 @@ void Animus::Curriculum::TravelEncounter::Reward(Env& env, uint32 seatIndex, Pla
     // Measured between two decisions that were both aloft, so nothing but flight is counted.
     bool const aloft = bot->IsMounted() && bot->CanFly()
         && TravelBlock::HeightAboveGround(bot) > 2.0f;
+    if (aloft)
+    {
+        ++travel.AloftSteps;
+        if (bot->HasUnitMovementFlag(MOVEMENTFLAG_FLYING))
+            ++travel.AloftFlagged;
+    }
     if (aloft && travel.LastAloft)
     {
-        travel.FlightDistance += double(bot->GetExactDist2d(&travel.LastPos));
+        float const step = bot->GetExactDist2d(&travel.LastPos);
+        travel.FlightDistance += double(step);
         travel.FlightMs += stepMs;
+        if (stepMs)
+            travel.FlightPeakYps = std::max(travel.FlightPeakYps, step / (float(stepMs) / 1000.0f));
     }
     travel.LastPos.Relocate(bot);
     travel.LastAloft = aloft;
