@@ -43,6 +43,19 @@ namespace
 
     thread_local PendingSpellDamage Pending;
 
+    /// The heal this thread is about to land, and whether it is a tick of a heal over time. OnHeal reports what was
+    /// actually gained but not which spell gained it, and the two are needed together: a tick that lands on a full
+    /// bar is waste, while the same tick on a hurt one is the whole point of casting it early. ModifyHealReceived
+    /// runs first for the same heal, which is where the kind is known.
+    struct PendingHeal
+    {
+        Unit const* Healer = nullptr;
+        Unit const* Receiver = nullptr;
+        bool Periodic = false;
+    };
+
+    thread_local PendingHeal PendingHealing;
+
     class AnimusLibUnitScript : public UnitScript
     {
     public:
@@ -89,6 +102,7 @@ namespace
 
             Unit* healer = periodic ? second : first;
             Unit* receiver = periodic ? first : second;
+            PendingHealing = { healer, receiver, periodic };
             for (Animus::EnvPool* pool : Animus::PoolRegistry::Pools())
                 pool->RecordHealCast(healer, receiver, heal);
         }
@@ -96,8 +110,12 @@ namespace
         /// Called for every heal, on map threads, with the health actually gained (overhealing excluded).
         void OnHeal(Unit* healer, Unit* receiver, uint32& gain) override
         {
+            bool const periodic = PendingHealing.Healer == healer && PendingHealing.Receiver == receiver
+                && PendingHealing.Periodic;
+            PendingHealing = {};
+
             for (Animus::EnvPool* pool : Animus::PoolRegistry::Pools())
-                pool->RecordHeal(healer, receiver, gain);
+                pool->RecordHeal(healer, receiver, gain, periodic);
         }
     };
 

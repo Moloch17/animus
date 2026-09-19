@@ -498,7 +498,7 @@ void Animus::EnvPool::IndexEnv(Env const& env)
         _envByInstance[env.InstanceId] = env.Index;
 }
 
-void Animus::EnvPool::RecordHeal(Unit const* healer, Unit const* receiver, uint32 gain)
+void Animus::EnvPool::RecordHeal(Unit const* healer, Unit const* receiver, uint32 gain, bool periodic)
 {
     if (!healer || !receiver || !gain)
         return;
@@ -515,6 +515,8 @@ void Animus::EnvPool::RecordHeal(Unit const* healer, Unit const* receiver, uint3
             stats.SelfHealing += gain;
         else if (patient->second.Agent < MAX_AGENTS)
             stats.AgentHealingBy[patient->second.Agent] += gain;
+        if (periodic)
+            stats.PeriodicHealing += gain;
         return;
     }
 
@@ -530,6 +532,8 @@ void Animus::EnvPool::RecordHeal(Unit const* healer, Unit const* receiver, uint3
     AgentStats& stats = _envs[agent->second.Env].StepStats[agent->second.Agent];
     stats.AllyHealing += gain;
     stats.AllyHealingBy[ally->second.Agent] += gain;
+    if (periodic)
+        stats.PeriodicHealing += gain;
 }
 
 void Animus::EnvPool::RecordHealCast(Unit const* healer, Unit const* receiver, uint32 heal)

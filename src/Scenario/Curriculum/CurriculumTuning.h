@@ -210,6 +210,13 @@ namespace Animus::Curriculum
             /// Kept well below SelfHealing on purpose: the failure to avoid is a seat that heals too little and
             /// dies, which costs 10. Watch deaths before efficiency when this moves.
             float HealingMana = 0.1f;
+            /// The same charge where the episode already prices mana honestly: a gauntlet pays readiness for what a
+            /// seat brings to the next pull (SoloGauntletReadiness, OwnerReadiness), so mana spent healing already
+            /// costs it there, and charging again would price the same mana twice. HealingMana is a stand-in for an
+            /// opportunity cost, needed only where there is no later fight to have it -- a duel ends at the kill and
+            /// leftover mana is worth nothing, which is where efficiency has to be taught. 0 leaves the gauntlet's
+            /// own accounting to do the work.
+            float HealingManaWithReadiness = 0.0f;
             /// Gauntlets: engaging a pull pays this times the share of the layout's buff groups up on the seat (and on
             /// the owner, averaged, with one), next to readiness.
             float BuffCoverage = 0.3f;
@@ -599,6 +606,7 @@ namespace Animus::Curriculum
 
             f("Support.SelfHealing", tuning.Support.SelfHealing);
             f("Support.HealingMana", tuning.Support.HealingMana);
+            f("Support.HealingManaWithReadiness", tuning.Support.HealingManaWithReadiness);
             f("Support.BuffCoverage", tuning.Support.BuffCoverage);
             f("Support.PetReady", tuning.Support.PetReady);
 

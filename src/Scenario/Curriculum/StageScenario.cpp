@@ -788,6 +788,18 @@ void Animus::Curriculum::StageScenario::AddCoreEpisodeInfo()
         uint64 const spent = seat(env, index).HealingPowerSpent;
         return spent ? float(healed) / float(spent) : 0.0f;
     });
+    // How much of the healing arrived as ticks of a heal over time. A mana charge lands the moment a heal over time
+    // is cast while its healing arrives over the next ten to twenty seconds, discounted and mostly past the GAE
+    // trace, so the two are not paid symmetrically: if that tilts a policy off them, this is where it shows.
+    _info.Add("hot_healing_share", [](Env const& env, uint32 index)
+    {
+        AgentStats const& stats = env.EpisodeStats[index];
+        uint64 healed = stats.SelfHealing + stats.AllyHealing;
+        for (uint64 agent : stats.AgentHealingBy)
+            healed += agent;
+        return healed ? float(stats.PeriodicHealing) / float(healed) : 0.0f;
+    });
+
     _info.Add("healing_mana_spent", [seat](Env const& env, uint32 index)
     {
         Player const* bot = env.FindBot(index);
@@ -2124,8 +2136,17 @@ float Animus::Curriculum::StageScenario::SeatReward(Env& env, uint32 seatIndex)
             * float(step.SelfHealing + step.SelfProtection) / float(std::max<uint32>(1, bot->GetMaxHealth())));
 
         if (uint32 const spent = seat.StepHealingPowerSpent; spent && bot->getPowerType() == POWER_MANA)
-            seat.Rewards.Add(RewardTerm::HealingMana, -_tuning.Support.HealingMana
-                * float(spent) / float(std::max<uint32>(1, bot->GetMaxPower(POWER_MANA))));
+        {
+            // Pull after pull, the mana a heal costs is already paid for at the next engagement (readiness), so
+            // charging it here as well prices the same mana twice. The charge is a stand-in for an opportunity cost
+            // and belongs where there is no later fight to have one.
+            PullSchedule const schedule = Arena(env).Schedule;
+            bool const readiness = schedule == PullSchedule::Gauntlet || schedule == PullSchedule::Sequence;
+            float const weight = readiness ? _tuning.Support.HealingManaWithReadiness : _tuning.Support.HealingMana;
+            if (weight > 0.0f)
+                seat.Rewards.Add(RewardTerm::HealingMana,
+                    -weight * float(spent) / float(std::max<uint32>(1, bot->GetMaxPower(POWER_MANA))));
+        }
         seat.StepHealingPowerSpent = 0;
     }
 
