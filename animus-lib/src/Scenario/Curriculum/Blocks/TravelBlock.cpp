@@ -243,14 +243,32 @@ void Animus::Curriculum::TravelBlock::AllowFlight(Player* bot)
     // flying mount (60%) against Journeyman Riding's 100%, which is why every seat sensibly rode the ground one.
     // The aura says what the flag should be -- IsFreeFlying() is the core's own aura-side answer -- so keep the
     // flag with it, exactly as SetCanFly does for a unit no client controls.
-    bool const flying = bot->IsFreeFlying();
-    if (flying == bot->CanFly())
+    bool const mounted = bot->IsFreeFlying();
+    if (mounted != bot->CanFly())
+    {
+        if (mounted)
+            bot->AddUnitMovementFlag(MOVEMENTFLAG_CAN_FLY);
+        else
+            bot->RemoveUnitMovementFlag(MOVEMENTFLAG_CAN_FLY);
+    }
+
+    // CAN_FLY is only permission. The speed comes from MOVEMENTFLAG_FLYING: MoveSplineInit::Launch asks
+    // MovementInfo::GetSpeedType for the spline's velocity, and that returns MOVE_FLIGHT only when FLYING is set,
+    // falling through to MOVE_RUN otherwise. A client sets it on take-off; a seat has none, so every flight was
+    // launched at run speed with the gryphon's ground bonus -- 11.2 yd/s against a ground mount's 14, which is
+    // why riding beat flying and the policy kept choosing it. The core works around the same thing for charmed
+    // flyers: "Xinef: If creature can fly, add normal player flying flag (fixes speed)", Unit.cpp.
+    //
+    // Set it as the game does: on a flying mount and off the ground. A gryphon on the ground is a slow mount,
+    // which is what makes ascending worth an action.
+    bool const aloft = mounted && HeightAboveGround(bot) > AIRBORNE_ABOVE;
+    if (aloft == bot->HasUnitMovementFlag(MOVEMENTFLAG_FLYING))
         return;
 
-    if (flying)
-        bot->AddUnitMovementFlag(MOVEMENTFLAG_CAN_FLY);
+    if (aloft)
+        bot->AddUnitMovementFlag(MOVEMENTFLAG_FLYING);
     else
-        bot->RemoveUnitMovementFlag(MOVEMENTFLAG_CAN_FLY);
+        bot->RemoveUnitMovementFlag(MOVEMENTFLAG_FLYING);
 }
 
 void Animus::Curriculum::TravelBlock::Apply(SeatView& view, uint32 local, SeatActionResult& result) const
