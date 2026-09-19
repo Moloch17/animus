@@ -200,6 +200,16 @@ namespace Animus::Curriculum
             /// DamageTaken, so a heal recovers part of what the hit cost and taking damage to heal it back never pays.
             /// (Healing and protecting the owner and teammates pay through Owner.Healing and Party.TeammateHealing.)
             float SelfHealing = 0.5f;
+            /// Per fraction of the mana pool spent on healing, charged wherever the healing reward is paid. Healing
+            /// is worth what it restores for what it costs, and the cost was never priced: an effective heal of 3%
+            /// of a health bar cost the same as one of 20%, so a rank choice (CoreBlock::ACTION_RANK_TIERS) bought
+            /// nothing and heals over time could be stacked on a full bar for free. With it, the objective is
+            /// healing per mana -- a heal landing 20% for 15% of the pool pays 0.085, the same heal landing 3%
+            /// pays nothing.
+            ///
+            /// Kept well below SelfHealing on purpose: the failure to avoid is a seat that heals too little and
+            /// dies, which costs 10. Watch deaths before efficiency when this moves.
+            float HealingMana = 0.1f;
             /// Gauntlets: engaging a pull pays this times the share of the layout's buff groups up on the seat (and on
             /// the owner, averaged, with one), next to readiness.
             float BuffCoverage = 0.3f;
@@ -588,6 +598,7 @@ namespace Animus::Curriculum
             f("Goals.Match", tuning.Goals.Match);
 
             f("Support.SelfHealing", tuning.Support.SelfHealing);
+            f("Support.HealingMana", tuning.Support.HealingMana);
             f("Support.BuffCoverage", tuning.Support.BuffCoverage);
             f("Support.PetReady", tuning.Support.PetReady);
 

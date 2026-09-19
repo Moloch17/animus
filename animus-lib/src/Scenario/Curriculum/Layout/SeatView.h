@@ -283,6 +283,7 @@ namespace Animus::Curriculum
         uint32 DefensiveCasts = 0;                  // short damage reductions and immunities started
         uint32 HealingCasts = 0;                    // heals, HoTs and absorbs started ...
         uint32 DownrankedCasts = 0;                 // ... below the highest known rank
+        uint32 HealingPowerSpent = 0;               // ... and the mana they cost (SpellInfo::CalcPowerCost)
         uint32 FoodFailed = 0;                      // eat or drink pressed and allowed, but nothing was consumed
         uint32 DrinkFailed = 0;
         bool StealthOpener = false;                 // a harmful spell that breaks stealth started from stealth

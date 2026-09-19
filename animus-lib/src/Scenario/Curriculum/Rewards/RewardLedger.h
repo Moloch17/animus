@@ -70,6 +70,7 @@ namespace Animus::Curriculum
         GoalMatch,
         Repeat,
         Hazard,
+        HealingMana,
         Count
     };
 

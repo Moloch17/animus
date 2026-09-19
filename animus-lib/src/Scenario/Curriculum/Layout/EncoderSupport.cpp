@@ -282,6 +282,12 @@ namespace Animus::Curriculum::Encoding
             SpellInfo const* top = view.KnownRanks && def.Index < view.KnownRanks->size()
                 ? (*view.KnownRanks)[def.Index] : nullptr;
             result.DownrankedCasts += top && top != info ? 1 : 0;
+
+            // What the heal cost, read from the spell rather than from the power bar: a bar reading also moves with
+            // regeneration, another spell's cost and the fight's own drains. Healing is judged by what it restores
+            // for what it spends, and the cost is the half nothing measured until now.
+            if (bot->getPowerType() == POWER_MANA)
+                result.HealingPowerSpent += uint32(std::max(0, info->CalcPowerCost(bot, info->GetSchoolMask())));
         }
 
         // Getting ready before a fight: a buff, a form or stance, stealth, a pet summoned, something conjured. What it

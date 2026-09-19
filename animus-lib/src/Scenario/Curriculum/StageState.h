@@ -161,6 +161,11 @@ namespace Animus::Curriculum
         uint32 HealsOnFull = 0;
         uint32 DefensiveCasts = 0;
         uint32 HealingCasts = 0;
+        /// Mana spent on healing over the episode. Healing is worth what it restores for what it costs, and only
+        /// the restoring half was ever measured: an effective heal of 3% of a health bar and one of 20% paid the
+        /// same, so nothing made down-ranking worth the press.
+        uint64 HealingPowerSpent = 0;
+        uint32 StepHealingPowerSpent = 0;       // ... of it spent since the last reward
         uint32 DownrankedCasts = 0;
         /// Standing in a hostile ground effect: how long, and what it cost. A seat that never learns to step out
         /// pays for it here, and the two numbers say whether it is learning to (hazard_seconds falling while the
@@ -244,6 +249,8 @@ namespace Animus::Curriculum
             HealsOnFull = 0;
             DefensiveCasts = 0;
             HealingCasts = 0;
+            HealingPowerSpent = 0;
+            StepHealingPowerSpent = 0;
             DownrankedCasts = 0;
             HazardMs = 0;
             HazardDamage = 0;
