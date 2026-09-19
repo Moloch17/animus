@@ -312,12 +312,15 @@ void Animus::Curriculum::TravelBlock::Apply(SeatView& view, uint32 local, SeatAc
             Position const& objective = view.Objective;
             if (bot->CanFly())
             {
-                // Straight at it, never lower than now: climbing over what is in the way is the seat's call.
+                // Straight at it, down to landing height. Holding the seat's altitude instead was a one-way
+                // ratchet: a seat that drifted up stayed up through every move after it and could only come down
+                // by choosing DESCEND often enough to satisfy AtObjective, and altitude costs the whole trip --
+                // 1 yd up flew at 16 yd/s and saved 0.39, 69 yd up saved nothing. The clamp was there to clear
+                // what is in the way, and a spline does not collide, so nothing ever was.
                 float const ground = bot->GetMapHeight(objective.GetPositionX(), objective.GetPositionY(),
                     objective.GetPositionZ(), true, MAX_GROUND_SEARCH);
                 float const landing = (ground > INVALID_HEIGHT ? ground : objective.GetPositionZ()) + 1.0f;
-                FlyTo(bot, objective.GetPositionX(), objective.GetPositionY(),
-                    std::max(landing, HeightAboveGround(bot) > AIRBORNE_ABOVE ? z : landing));
+                FlyTo(bot, objective.GetPositionX(), objective.GetPositionY(), landing);
             }
             else
                 Encoding::MoveTo(bot, TRAVEL_MOVE_POINT_ID, objective.GetPositionX(), objective.GetPositionY(),
