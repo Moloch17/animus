@@ -381,7 +381,7 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
     // encounter, so they are listed here: a term no encounter claims has no column, and a charge with no column is
     // invisible in exactly the run where it matters.
     for (RewardTerm term : { RewardTerm::Repeat, RewardTerm::SelfHealing, RewardTerm::GoalMatch,
-        RewardTerm::Hazard })
+        RewardTerm::Hazard, RewardTerm::HealingMana })
         _info.Add("reward_" + std::string(RewardTermName(term)), [this, term](Env const& env, uint32 seat)
         {
             return Data(env).Seats[seat].Rewards.Episode(term);
@@ -775,6 +775,26 @@ void Animus::Curriculum::StageScenario::AddCoreEpisodeInfo()
         Player* bot = SeatBot(env, index);
         return float(std::max<uint32>(1, bot ? bot->GetMaxHealth() : 1));
     };
+    // What healing is actually worth: what it restored for what it cost. Neither half says it alone -- healing_done
+    // rewards a seat for spending its whole pool, and overheal counted at the cast misreads every heal over time,
+    // whose ticks are only waste if they land on a full bar.
+    _info.Add("healing_per_mana", [seat, health](Env const& env, uint32 index)
+    {
+        AgentStats const& stats = env.EpisodeStats[index];
+        uint64 healed = stats.SelfHealing + stats.AllyHealing;
+        for (uint64 agent : stats.AgentHealingBy)
+            healed += agent;
+
+        uint64 const spent = seat(env, index).HealingPowerSpent;
+        return spent ? float(healed) / float(spent) : 0.0f;
+    });
+    _info.Add("healing_mana_spent", [seat](Env const& env, uint32 index)
+    {
+        Player const* bot = env.FindBot(index);
+        uint32 const pool = bot ? std::max<uint32>(1, bot->GetMaxPower(POWER_MANA)) : 1;
+        return float(seat(env, index).HealingPowerSpent) / float(pool);
+    });
+
     _info.Add("healing_done", [health](Env const& env, uint32 index)
     {
         AgentStats const& stats = env.EpisodeStats[index];
@@ -1710,6 +1730,8 @@ void Animus::Curriculum::StageScenario::ApplySeatAction(Env& env, uint32 seatInd
     seat.HealsOnFull += result.HealsOnFull;
     seat.DefensiveCasts += result.DefensiveCasts;
     seat.HealingCasts += result.HealingCasts;
+    seat.HealingPowerSpent += result.HealingPowerSpent;
+    seat.StepHealingPowerSpent += result.HealingPowerSpent;
     seat.DownrankedCasts += result.DownrankedCasts;
     seat.SpellCasts += result.SpellCasts;
     seat.TrinketUses += result.TrinketUses;
@@ -2091,12 +2113,20 @@ float Animus::Curriculum::StageScenario::SeatReward(Env& env, uint32 seatIndex)
 
     seat.StepPreparationMs = 0;
 
-    // Looking after itself, in every stage: effective healing, and what its own absorbs and reductions kept off.
+    // Looking after itself, in every stage: effective healing, and what its own absorbs and reductions kept off,
+    // less what the healing cost. Effective healing is already all the reward pays -- overhealing, a heal over time
+    // ticking on a full bar included, earns nothing as it lands -- so what was missing was never a penalty for
+    // waste but a price for mana. With one, the objective is healing per mana and a cheaper rank can win.
     if (bot)
     {
         AgentStats const& step = env.StepStats[seatIndex];
         seat.Rewards.Add(RewardTerm::SelfHealing, _tuning.Support.SelfHealing
             * float(step.SelfHealing + step.SelfProtection) / float(std::max<uint32>(1, bot->GetMaxHealth())));
+
+        if (uint32 const spent = seat.StepHealingPowerSpent; spent && bot->getPowerType() == POWER_MANA)
+            seat.Rewards.Add(RewardTerm::HealingMana, -_tuning.Support.HealingMana
+                * float(spent) / float(std::max<uint32>(1, bot->GetMaxPower(POWER_MANA))));
+        seat.StepHealingPowerSpent = 0;
     }
 
     if (bot)
