@@ -53,6 +53,14 @@ void Animus::Curriculum::CreatureEncounter::AddEpisodeInfo(EpisodeInfoTable& tab
     // The fight's difficulty tier, and whether its opponent was an elite.
     table.Add("difficulty", [this](Env const& env, uint32) { return float(_envs[env.Index].Tier); });
     table.Add("opponent_elite", [this](Env const& env, uint32) { return _envs[env.Index].Elite ? 1.0f : 0.0f; });
+
+    // The duel has paid RewardTerm::Interrupt since the term was added, with no column to show for it -- so the one
+    // stage where a class first meets an interruptible cast reported nothing about whether it ever kicked one.
+    table.Add("interrupts", [this](Env const& env, uint32) { return float(_envs[env.Index].Interrupts); });
+    table.Add("control_seconds", [this](Env const& env, uint32)
+    {
+        return float(_envs[env.Index].ControlMs) / 1000.0f;
+    });
 }
 
 bool Animus::Curriculum::CreatureEncounter::Build(Env& env, Map* map, uint8 /*level*/)
@@ -120,14 +128,22 @@ void Animus::Curriculum::CreatureEncounter::Reward(Env& env, uint32 seat, Player
         auto const stopped = std::find_if(env.StepInterruptedTargets.begin(), env.StepInterruptedTargets.end(),
             [&pending](Env::InterruptedCast const& cast) { return cast.Caster == pending.PendingInterrupt; });
         if (stopped != env.StepInterruptedTargets.end())
+        {
             ledger.Add(RewardTerm::Interrupt, duel.Interrupt
                 * PreventedScale(duel.InterruptHeal, duel.InterruptArea, duel.InterruptLong, stopped->Prevented));
+            ++pending.Interrupts;
+        }
 
         pending.PendingInterrupt.Clear();
     }
 
     Unit* opponent = env.FindTargetUnit(0);
     CombatReward::OneOnOne(_scenario, env, seat, bot, opponent, ledger);
+
+    // Measured, not paid: the duel's reward stays as trained, but a class that wins by holding the opponent stunned
+    // is now visible as such rather than only as a shorter fight.
+    if (opponent && PullsEncounter::Controlled(opponent))
+        pending.ControlMs += _scenario.DecisionMs();
 
     SeatState& seatState = _scenario.Data(env).Seats[seat];
     CombatTally& tally = seatState.Combat;
