@@ -74,6 +74,10 @@ namespace Animus
         std::array<uint64, MAX_AGENTS> AgentHealingBy{};    // effective healing on the env's other agents, by agent
         uint64 SelfHealing = 0;         // effective healing the agent (or its pets) did on itself
         uint64 HealingRaw = 0;          // healing the agent cast on itself, its allies and agents, overhealing included
+        /// Of the effective healing above, what arrived as ticks of a heal over time. A heal over time is judged by
+        /// where its ticks land, not by the cast: the same Rejuvenation is the right call on a target about to be
+        /// hit and waste on a full one, and only the ticks can tell the two apart.
+        uint64 PeriodicHealing = 0;
         // Protection: damage the agent's own absorbs soaked (Scenario-polled) and its own damage-taken reductions
         // prevented (Pain Suppression on a friend, Barkskin on itself), on itself, per ally and per other agent.
         uint64 SelfProtection = 0;
@@ -119,6 +123,7 @@ namespace Animus
             }
             SelfHealing += other.SelfHealing;
             HealingRaw += other.HealingRaw;
+            PeriodicHealing += other.PeriodicHealing;
             SelfProtection += other.SelfProtection;
             CastsCompleted += other.CastsCompleted;
             CastsCancelled += other.CastsCancelled;

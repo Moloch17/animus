@@ -100,7 +100,7 @@ namespace Animus
 
         /// Heal hook, called from map threads with the health actually gained. Counts healing an agent
         /// (or its pets) does on itself, its env's allies and its other agents.
-        void RecordHeal(Unit const* healer, Unit const* receiver, uint32 gain);
+        void RecordHeal(Unit const* healer, Unit const* receiver, uint32 gain, bool periodic = false);
 
         /// Heal hook, called from map threads with the healing before it is applied (overhealing included): what an
         /// agent cast on itself, its env's allies and agents, for the overheal share.
