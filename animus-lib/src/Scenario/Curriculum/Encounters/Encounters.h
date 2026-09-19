@@ -515,6 +515,12 @@ namespace Animus::Curriculum
             uint32 FlyingMs = 0;                // ... on a flying mount in the air
             bool KnowsFlyer = false;            // the seat knows a flying mount spell at all
             bool CouldMountFlyer = false;       // ... and the mask would have offered it at the start
+            // Diagnostic: the cached area the seat is judged in, and the flying mount's SpellCastResult, taken
+            // before and after a forced UpdatePositionData at the start of the episode.
+            uint32 AreaBefore = 0;
+            uint32 AreaAfter = 0;
+            uint32 FlyerRefusalBefore = 0;
+            uint32 FlyerRefusalAfter = 0;
             uint32 LastRewardMs = 0;
         };
 

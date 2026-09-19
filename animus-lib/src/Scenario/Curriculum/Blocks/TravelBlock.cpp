@@ -139,6 +139,19 @@ bool Animus::Curriculum::TravelBlock::CanSummonFlying(Player* bot)
     return CanSummon(bot, FlyingMount(bot));
 }
 
+uint32 Animus::Curriculum::TravelBlock::FlyingMountRefusal(Player* bot)
+{
+    SpellInfo const* mount = FlyingMount(bot);
+    if (!mount)
+        return uint32(SPELL_FAILED_SPELL_UNAVAILABLE);
+
+    SpellCastTargets targets;
+    targets.SetUnitTarget(bot);
+    uint32 reason = uint32(SPELL_CAST_OK);
+    (void)Animus::SpellChecks::CheckCast(bot, mount, targets, nullptr, &reason);
+    return reason;
+}
+
 SpellInfo const* Animus::Curriculum::TravelBlock::FlyingMount(Player const* bot)
 {
     return FastestMount(bot, true);
