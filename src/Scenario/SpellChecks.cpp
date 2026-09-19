@@ -48,7 +48,7 @@ float Animus::SpellChecks::AuraFraction(Unit const* unit, uint32 spellId, Object
 }
 
 bool Animus::SpellChecks::CheckCast(Player* bot, SpellInfo const* info, SpellCastTargets const& targets,
-    Item* castItem)
+    Item* castItem, uint32* reason)
 {
     // Build the spell, validate it, throw it away.
     Spell* spell = new Spell(bot, info, TRIGGERED_NONE);
@@ -68,6 +68,9 @@ bool Animus::SpellChecks::CheckCast(Player* bot, SpellInfo const* info, SpellCas
     if (stunsPet && result == SPELL_CAST_OK)
         result = bot->GetGlobalCooldownMgr().HasGlobalCooldown(info) ? SPELL_FAILED_NOT_READY
             : info->CheckShapeshift(bot->GetShapeshiftForm());
+
+    if (reason)
+        *reason = uint32(result);
 
     return result == SPELL_CAST_OK;
 }

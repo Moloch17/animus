@@ -67,6 +67,16 @@ void Animus::Curriculum::TravelEncounter::AddEpisodeInfo(EpisodeInfoTable& table
     {
         return _envs[env.Index].CouldMountFlyer ? 1.0f : 0.0f;
     });
+    table.Add("area_before", [this](Env const& env, uint32) { return float(_envs[env.Index].AreaBefore); });
+    table.Add("area_after", [this](Env const& env, uint32) { return float(_envs[env.Index].AreaAfter); });
+    table.Add("flyer_refusal_before", [this](Env const& env, uint32)
+    {
+        return float(_envs[env.Index].FlyerRefusalBefore);
+    });
+    table.Add("flyer_refusal_after", [this](Env const& env, uint32)
+    {
+        return float(_envs[env.Index].FlyerRefusalAfter);
+    });
     table.Add("flying_mount_fraction", [this](Env const& env, uint32)
     {
         return env.EpisodeElapsedMs ? float(_envs[env.Index].FlyingMountMs) / float(env.EpisodeElapsedMs) : 0.0f;
@@ -156,6 +166,13 @@ bool Animus::Curriculum::TravelEncounter::Build(Env& env, Map* map, uint8 /*leve
     travel.StartDistance = bot->GetExactDist2d(&travel.Objective);
     travel.WalkDistance = walk > 0.0f ? walk : travel.StartDistance;
     travel.KnowsFlyer = TravelBlock::FlyingMount(bot) != nullptr;
+    // Does the seat get judged in the area it is standing in? Read the cached area and the flying mount's refusal,
+    // refresh the position data the way a map update would, then read both again.
+    travel.AreaBefore = bot->GetAreaId();
+    travel.FlyerRefusalBefore = TravelBlock::FlyingMountRefusal(bot);
+    bot->UpdatePositionData();
+    travel.AreaAfter = bot->GetAreaId();
+    travel.FlyerRefusalAfter = TravelBlock::FlyingMountRefusal(bot);
     travel.CouldMountFlyer = TravelBlock::CanSummonFlying(bot);
     _scenario.PrepareFighter(bot, data.Seats[0]);
     return true;

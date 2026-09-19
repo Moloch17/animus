@@ -50,8 +50,9 @@ namespace Animus::SpellChecks
     [[nodiscard]] float AuraFraction(Unit const* unit, uint32 spellId, ObjectGuid caster, float* stacks = nullptr);
 
     /// The core's own cast validation (Spell::CheckCast) for `targets`, without casting: the PetAI pattern.
+    /// `reason`, when given, takes the core's SpellCastResult as a number -- SPELL_CAST_OK (255) when it passed.
     [[nodiscard]] bool CheckCast(Player* bot, SpellInfo const* info, SpellCastTargets const& targets,
-        Item* castItem = nullptr);
+        Item* castItem = nullptr, uint32* reason = nullptr);
 }
 
 #endif
