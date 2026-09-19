@@ -477,6 +477,9 @@ namespace Animus::Curriculum
             float FlyingMin = 350.0f;           // flying arenas: yards from the start
             float FlyingMax = 700.0f;
             float Progress = 1.0f;              // potential shaping: per 100 yd closed (taken back for leaving)
+            /// Episodes a seat flies through before a flying arena also offers it the ground mount: long enough
+            /// to have a value for flight, short enough that most of the stage is spent choosing between them.
+            uint32 FlyingOnlyEpisodes = 150;
             float Arrive = 3.0f;
             float FastArrive = 6.0f;            // times the fraction of the walk the trip saved (mounting)
             float DamageTaken = 1.0f;           // fraction of the bot's health (falls, what it rode past)
@@ -724,6 +727,7 @@ namespace Animus::Curriculum
             f("Travel.FlyingMin", tuning.Travel.FlyingMin);
             f("Travel.FlyingMax", tuning.Travel.FlyingMax);
             f("Travel.Progress", tuning.Travel.Progress);
+            f("Travel.FlyingOnlyEpisodes", tuning.Travel.FlyingOnlyEpisodes);
             f("Travel.Arrive", tuning.Travel.Arrive);
             f("Travel.FastArrive", tuning.Travel.FastArrive);
             f("Travel.DamageTaken", tuning.Travel.DamageTaken);
