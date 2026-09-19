@@ -164,6 +164,11 @@ namespace
 
         // Travel: getting somewhere, off the duel. Characters of 20 and up ride; the policy learns when a trip is worth
         // a mount's cast time, and to arrive on foot, ready to fight.
+        //
+        // The Barrens, not the arena the fighting stages spawn in: a trip needs open, pathable ground in every
+        // direction for a few hundred yards, and that arena is a corner pocket with none -- the nearest walkable
+        // ground outside it is 350 yd off and 50 yd up a hillside, past the objective search's reach, so no episode
+        // could ever be built there. The envs share the continent, each in its own phase, spread over the flats.
         stages.push_back({
             .Name = "stage9_travel",
             .Suffix = "_travel",
@@ -171,6 +176,13 @@ namespace
             .Summary = "a place 60-320 yd away by path: mount when it pays, get there, arrive on foot",
             .Blocks = { Core, Duel, Pet, Travel },
             .Arenas = { { .Name = "travel", .Against = Opposition::Travel, .EpisodeSeconds = 150 } },
+            .MapId = MAP_KALIMDOR,
+            .SpawnPoints = {
+                { -872.0f, -2642.0f, 92.0f, 0.0f }, { -2298.0f, -1948.0f, 96.0f, 0.0f },
+                { -1967.0f, -2544.0f, 94.0f, 0.0f }, { -2605.0f, -2286.0f, 92.0f, 0.0f },
+                { -609.0f, -1614.0f, 94.0f, 0.0f }, { -881.0f, -3221.0f, 92.0f, 0.0f },
+                { -3077.0f, -1786.0f, 92.0f, 0.0f }, { -3115.0f, -2352.0f, 94.0f, 0.0f },
+            },
             .MinLevel = 20,
         });
 
@@ -196,6 +208,9 @@ namespace
         // Warsong Gulch's rules between two learned seats (self-play): take the other side's flag home, return one's
         // own, stop the carrier. Mounting between the bases and being dismounted by the flag come from travel; the
         // fight from the arena.
+        //
+        // The Barrens, for stage 9's reason: the second base is placed by the same objective search, 100-180 yd from
+        // the first, and only open ground has room for it.
         stages.push_back({
             .Name = "stage11_flag",
             .Suffix = "_flag",
@@ -205,6 +220,13 @@ namespace
             .Blocks = { Core, Duel, Pet, Pvp, Travel, Flag },
             .Arenas = { { .Name = "flag", .Seats = SeatPlan::Mirror, .Against = Opposition::Flag, .Pvp = true,
                 .EpisodeSeconds = 300 } },
+            .MapId = MAP_KALIMDOR,
+            .SpawnPoints = {
+                { -872.0f, -2642.0f, 92.0f, 0.0f }, { -2298.0f, -1948.0f, 96.0f, 0.0f },
+                { -1967.0f, -2544.0f, 94.0f, 0.0f }, { -2605.0f, -2286.0f, 92.0f, 0.0f },
+                { -609.0f, -1614.0f, 94.0f, 0.0f }, { -881.0f, -3221.0f, 92.0f, 0.0f },
+                { -3077.0f, -1786.0f, 92.0f, 0.0f }, { -3115.0f, -2352.0f, 94.0f, 0.0f },
+            },
             .MinLevel = 20,
         });
 
