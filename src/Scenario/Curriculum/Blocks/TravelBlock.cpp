@@ -77,10 +77,14 @@ namespace
         return best;
     }
 
+    /// Whether `bot` could summon `mount` -- running included: choosing it stops the bot and casts, as pressing
+    /// the key does. Gating this on a finished spline instead made mounting unreachable on the only trips worth
+    /// mounting for: the seat moves every decision, so the spline is live from the first one to the last, and the
+    /// action was masked out of every decision but the one before the bot had started.
     bool CanSummon(Player* bot, SpellInfo const* mount)
     {
         if (!mount || bot->IsMounted() || !bot->IsAlive() || Encoding::CastInProgress(bot)
-            || bot->GetGlobalCooldownMgr().HasGlobalCooldown(mount) || !bot->movespline->Finalized())
+            || bot->GetGlobalCooldownMgr().HasGlobalCooldown(mount))
             return false;
 
         SpellCastTargets targets;
@@ -241,6 +245,9 @@ void Animus::Curriculum::TravelBlock::Apply(SeatView& view, uint32 local, SeatAc
         case ACTION_MOUNT_FLYING:
         {
             SpellInfo const* mount = local == ACTION_MOUNT_GROUND ? GroundMount(bot) : FlyingMount(bot);
+            // A mount has a cast time, and Spell::prepare refuses one from a moving caster: stand still first.
+            bot->GetMotionMaster()->Clear();
+            bot->StopMoving();
             SpellCastTargets targets;
             targets.SetUnitTarget(bot);
             Spell* spell = new Spell(bot, mount, TRIGGERED_NONE);
