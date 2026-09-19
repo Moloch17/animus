@@ -85,9 +85,6 @@ namespace Animus::Curriculum
         [[nodiscard]] static SpellInfo const* FlyingMount(Player const* bot);
         /// Whether ACTION_MOUNT_FLYING would be offered right now: the same check the mask makes.
         [[nodiscard]] static bool CanSummonFlying(Player* bot);
-        /// The core's SpellCastResult for the flying mount (SPELL_CAST_OK = 255 when it would cast,
-        /// SPELL_FAILED_SPELL_UNAVAILABLE = 107 when the seat knows none).
-        [[nodiscard]] static uint32 FlyingMountRefusal(Player* bot);
         /// Yards between `bot` and the ground below it (0 when the ground cannot be found).
         [[nodiscard]] static float HeightAboveGround(Player const* bot);
         /// Whether `bot` stands within ARRIVE_DISTANCE of `objective`, on the ground.

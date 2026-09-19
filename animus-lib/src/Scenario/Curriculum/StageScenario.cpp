@@ -1389,6 +1389,12 @@ Player* Animus::Curriculum::StageScenario::BuildSeat(Env& env, uint32 seatIndex,
     if (_continent)
         bot->SetPhaseMask(EnvPhase(env), true);
 
+    // A bot placed by the sim never runs the map update that works out where it is standing, so until this it
+    // counts as indoors wherever it is: IsOutdoors() is false, and every outdoor-only spell is refused. Stage 10's
+    // seats sat in the open in Nagrand and could not summon a gryphon (SPELL_FAILED_ONLY_OUTDOORS) while ground
+    // mounts, which carry no such attribute, worked and hid it. Read after the phase: terrain status is per phase.
+    bot->UpdatePositionData();
+
     // Talent points depend on the map for death knights (Ebon Hold, where Create put the bot, only counts
     // quest-rewarded points); recompute them on the spawn map.
     bot->InitTalentForLevel();
