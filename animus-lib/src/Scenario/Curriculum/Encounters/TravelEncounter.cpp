@@ -67,12 +67,6 @@ void Animus::Curriculum::TravelEncounter::AddEpisodeInfo(EpisodeInfoTable& table
     {
         return _envs[env.Index].CouldMountFlyer ? 1.0f : 0.0f;
     });
-    // 0 while a flying arena withholds the ground mount, 1 once the seat chooses between the two.
-    table.Add("ground_mount_offered", [this](Env const& env, uint32)
-    {
-        return !_scenario.Arena(env).Flying
-            || env.EpisodesCompleted >= _scenario.Tuning().Travel.FlyingOnlyEpisodes ? 1.0f : 0.0f;
-    });
     table.Add("flying_mount_fraction", [this](Env const& env, uint32)
     {
         return env.EpisodeElapsedMs ? float(_envs[env.Index].FlyingMountMs) / float(env.EpisodeElapsedMs) : 0.0f;
@@ -179,8 +173,6 @@ void Animus::Curriculum::TravelEncounter::View(Env const& env, uint32 /*seat*/, 
     EnvTravel const& travel = _envs[env.Index];
     view.HasObjective = travel.HasObjective;
     view.Objective = travel.Objective;
-    view.GroundMountAllowed = !_scenario.Arena(env).Flying
-        || env.EpisodesCompleted >= _scenario.Tuning().Travel.FlyingOnlyEpisodes;
 }
 
 void Animus::Curriculum::TravelEncounter::Reward(Env& env, uint32 seatIndex, Player* bot, RewardLedger& ledger)

@@ -112,7 +112,7 @@ namespace
         switch (action)
         {
             case TravelBlock::ACTION_MOUNT_GROUND:
-                return view.GroundMountAllowed && CanSummon(bot, TravelBlock::GroundMount(bot));
+                return CanSummon(bot, TravelBlock::GroundMount(bot));
             case TravelBlock::ACTION_MOUNT_FLYING:
                 return CanSummon(bot, TravelBlock::FlyingMount(bot));
             case TravelBlock::ACTION_DISMOUNT:
@@ -230,8 +230,27 @@ void Animus::Curriculum::TravelBlock::Observe(SeatView const& view, float* obs, 
 
 void Animus::Curriculum::TravelBlock::BeforeApply(SeatView& view, SeatActionResult& /*result*/) const
 {
+    AllowFlight(view.Bot);
     // A cast, a dismount or a lost flying mount leaves no one hanging in the air.
     FallIfAirborne(view.Bot);
+}
+
+void Animus::Curriculum::TravelBlock::AllowFlight(Player* bot)
+{
+    // Unit::SetCanFly hands a client-controlled unit the flag by packet and waits to be told it took; a seat on an
+    // idle session never answers, so MOVEMENTFLAG_CAN_FLY was never set and CanFly() stayed false for its whole
+    // life. A gryphon was then a mount that could not fly: no FlyTo, no ascending, and the ground speed of a
+    // flying mount (60%) against Journeyman Riding's 100%, which is why every seat sensibly rode the ground one.
+    // The aura says what the flag should be -- IsFreeFlying() is the core's own aura-side answer -- so keep the
+    // flag with it, exactly as SetCanFly does for a unit no client controls.
+    bool const flying = bot->IsFreeFlying();
+    if (flying == bot->CanFly())
+        return;
+
+    if (flying)
+        bot->AddUnitMovementFlag(MOVEMENTFLAG_CAN_FLY);
+    else
+        bot->RemoveUnitMovementFlag(MOVEMENTFLAG_CAN_FLY);
 }
 
 void Animus::Curriculum::TravelBlock::Apply(SeatView& view, uint32 local, SeatActionResult& result) const
