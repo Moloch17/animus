@@ -233,10 +233,6 @@ namespace Animus::Curriculum
         // Travel: where the seat is going.
         bool HasObjective = false;
         Position Objective;
-        /// Whether the ground mount is on offer. A flying arena withholds it while the seat is new, so flight is
-        /// learned before the choice between the two is: a policy seeded from a stage that had no flying mount
-        /// never samples one, and a ground mount up masks the flyer for the rest of the trip.
-        bool GroundMountAllowed = true;
 
         // Flag match: the seat's flag and the other side's, from the seat's side.
         enum class FlagState : uint8 { AtBase, Carried, Dropped };

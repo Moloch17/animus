@@ -85,6 +85,8 @@ namespace Animus::Curriculum
         [[nodiscard]] static SpellInfo const* FlyingMount(Player const* bot);
         /// Whether ACTION_MOUNT_FLYING would be offered right now: the same check the mask makes.
         [[nodiscard]] static bool CanSummonFlying(Player* bot);
+        /// Keep MOVEMENTFLAG_CAN_FLY with the seat's flying aura: nothing else sets it without a client.
+        static void AllowFlight(Player* bot);
         /// Yards between `bot` and the ground below it (0 when the ground cannot be found).
         [[nodiscard]] static float HeightAboveGround(Player const* bot);
         /// Whether `bot` stands within ARRIVE_DISTANCE of `objective`, on the ground.
