@@ -578,6 +578,9 @@ Animus.Curriculum.Travel.FlyingMin = 350.0
 Animus.Curriculum.Travel.FlyingMax = 700.0
 #   potential shaping: per 100 yd closed (taken back for leaving)
 Animus.Curriculum.Travel.Progress = 1.0
+#   a flying arena offers no ground mount until the seat has this many
+#   episodes, so flight is learned before the choice between the two is
+Animus.Curriculum.Travel.FlyingOnlyEpisodes = 150
 Animus.Curriculum.Travel.Arrive = 3.0
 #   times the fraction of the walk the trip saved: 0 on foot, ~0.3 mounted over
 #   a few hundred yards. This is what pays for a mount, so it has to be worth
