@@ -22,6 +22,7 @@
 #include "BotAccounts.h"
 #include "Config.h"
 #include "Containers.h"
+#include "ObjectAccessor.h"
 #include "CoreBlock.h"
 #include "Creature.h"
 #include "DBCStores.h"
@@ -677,15 +678,15 @@ void Animus::Curriculum::StageScenario::AddCoreEpisodeInfo()
         CombatTally const& combat = tally(env, index);
         return float(combat.Engaged ? combat.EngageMs : env.EpisodeElapsedMs) / 1000.0f;
     });
-    _info.Add("target_health_left", [](Env const& env, uint32)
+    _info.Add("target_health_left", [this](Env const& env, uint32 index)
     {
-        Unit* target = env.FindTargetUnit(0);
+        Unit* target = SeatTarget(env, index);
         return target && target->IsAlive() ? target->GetHealthPct() / 100.0f : 0.0f;
     });
-    _info.Add("distance_at_end", [](Env const& env, uint32 index)
+    _info.Add("distance_at_end", [this](Env const& env, uint32 index)
     {
         Player* bot = env.FindBot(index);
-        Unit* target = env.FindTargetUnit(0);
+        Unit* target = SeatTarget(env, index);
         return bot && target && bot->IsInMap(target) ? bot->GetDistance(target) : 0.0f;
     });
     // ShapeshiftForm: 0 none, 1 cat, 2 tree, 5 bear, 8 dire bear, 17-19 warrior stances, 28 shadowform, 30 stealth,
@@ -1527,7 +1528,8 @@ void Animus::Curriculum::StageScenario::ApplyGoals(Env& env, int32 const* goals)
     }
 }
 
-bool Animus::Curriculum::StageScenario::GoalHeld(Env const& env, uint32 seatIndex, Player* bot) const
+bool Animus::Curriculum::StageScenario::GoalHeld(Env const& env, uint32 seatIndex, Player* bot,
+    Unit const* target) const
 {
     SeatState const& seat = Data(env).Seats[seatIndex];
     AgentStats const& step = env.StepStats[seatIndex];
@@ -1540,7 +1542,6 @@ bool Animus::Curriculum::StageScenario::GoalHeld(Env const& env, uint32 seatInde
             return step.Damage > 0;
         case SeatGoal::Control:
         {
-            Unit const* target = env.FindTargetUnit(seat.TargetSlot);
             for (uint32 slot = 0; slot < env.Targets.size(); ++slot)
             {
                 Unit const* enemy = env.FindTargetUnit(slot);
@@ -1567,7 +1568,6 @@ bool Animus::Curriculum::StageScenario::GoalHeld(Env const& env, uint32 seatInde
         }
         case SeatGoal::Position:
         {
-            Unit const* target = env.FindTargetUnit(seat.TargetSlot);
             if (!target || !target->IsAlive() || !seat.L)
                 return false;
 
@@ -1598,6 +1598,17 @@ void Animus::Curriculum::StageScenario::ApplyActions(Env& env, int32 const* acti
 
     for (uint32 seat = 0; seat < _seatCount; ++seat)
         ApplySeatAction(env, seat, actions[seat]);
+}
+
+Unit* Animus::Curriculum::StageScenario::SeatTarget(Env const& env, uint32 seat) const
+{
+    EnvState const& data = Data(env);
+    if (seat < data.Seats.size())
+        if (ObjectGuid const guid = data.Seats[seat].CurrentTargetGuid)
+            if (Player* bot = env.FindBot(seat))
+                return ObjectAccessor::GetUnit(*bot, guid);
+
+    return env.FindTargetUnit(0);
 }
 
 Unit* Animus::Curriculum::StageScenario::CurrentTarget(Env const& env, uint32 seat)
@@ -1924,9 +1935,9 @@ void Animus::Curriculum::StageScenario::TrackHazards(Env const& env, SeatState& 
         - bot->GetOrientation();
 }
 
-void Animus::Curriculum::StageScenario::TrackInterruptibleCast(Env const& env, SeatState& seat, Player* bot)
+void Animus::Curriculum::StageScenario::TrackInterruptibleCast(Env const& /*env*/, SeatState& seat, Player* bot,
+    Unit* target)
 {
-    Unit* target = env.FindTargetUnit(seat.TargetSlot);
     if (!target || !target->IsAlive() || !bot->IsWithinDistInMap(target, INTERRUPTIBLE_CAST_RANGE))
     {
         seat.LastInterruptibleCaster.Clear();
@@ -2036,6 +2047,11 @@ float Animus::Curriculum::StageScenario::SeatReward(Env& env, uint32 seatIndex)
     Player* bot = env.FindBot(seatIndex);
     seat.LastStepDamage = float(env.StepStats[seatIndex].Damage) / seat.DamageScale;
 
+    // Who this seat is actually fighting, asked of the encounters once a decision and remembered for the const
+    // readers. It is the other seat in self-play, which no target slot holds.
+    Unit* target = CurrentTarget(env, seatIndex);
+    seat.CurrentTargetGuid = target ? target->GetGUID() : ObjectGuid::Empty;
+
     // Before any encounter's reward: several read it (the pulls' and duel's damage taken, the owner's tank refund).
     seat.LastStepDamageTaken = bot
         ? float(env.StepStats[seatIndex].DamageTaken) / float(std::max<uint32>(1, bot->GetMaxHealth())) : 0.0f;
@@ -2069,7 +2085,7 @@ float Animus::Curriculum::StageScenario::SeatReward(Env& env, uint32 seatIndex)
         }
 
         // Enemy casts there was something to do about: counted once each, when one the seat could interrupt starts.
-        TrackInterruptibleCast(env, seat, bot);
+        TrackInterruptibleCast(env, seat, bot, target);
         TrackHazards(env, seat, bot);
     }
 
@@ -2107,7 +2123,7 @@ float Animus::Curriculum::StageScenario::SeatReward(Env& env, uint32 seatIndex)
     if (seat.Goal != NO_GOAL)
     {
         ++seat.GoalDecisions[std::size_t(seat.Goal)];
-        if (GoalHeld(env, seatIndex, bot))
+        if (GoalHeld(env, seatIndex, bot, target))
         {
             ++seat.GoalMatches[std::size_t(seat.Goal)];
 

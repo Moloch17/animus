@@ -180,6 +180,10 @@ namespace Animus::Curriculum
         /// Enemy casts the seat could have interrupted: counted when one starts, so the press-to-interrupt ratio
         /// can be read against what was actually there to interrupt rather than against presses alone.
         uint32 InterruptibleCastsSeen = 0;
+        /// The unit this seat is actually fighting, resolved once a decision (StageScenario::CurrentTarget). The
+        /// env's target slots hold creatures and the scripted enemy player; in self-play the opponent is the other
+        /// seat and is in no slot at all, so anything that looked a seat's target up by slot was blind there.
+        ObjectGuid CurrentTargetGuid;
         ObjectGuid LastInterruptibleCaster;     // ... the caster of the one last counted, so a cast counts once
         uint32 LastInterruptibleSpell = 0;
         uint32 LowHealthMs = 0;
@@ -257,6 +261,7 @@ namespace Animus::Curriculum
             NearestHazard = Hazard();
             HazardSearchMs = 0;
             InterruptibleCastsSeen = 0;
+            CurrentTargetGuid.Clear();
             LastInterruptibleCaster.Clear();
             LastInterruptibleSpell = 0;
             LowHealthMs = 0;
