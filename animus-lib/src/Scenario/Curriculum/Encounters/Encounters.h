@@ -106,6 +106,8 @@ namespace Animus::Curriculum
             bool Counts = false;        // a training fight at its class/role's current tier: its outcome moves it
             bool Recorded = false;      // the outcome is in
             ObjectGuid PendingInterrupt;// a casting opponent the seat just cast an interrupt at
+            uint32 Interrupts = 0;      // landed this episode: the duel paid for these but never reported them
+            uint32 ControlMs = 0;       // the opponent held out of the fight (not paid here, only measured)
         };
 
         void OnSeatAction(Env& env, uint32 seat, SeatActionResult const& result) override;
@@ -140,6 +142,10 @@ namespace Animus::Curriculum
         void AfterRewards(Env& env) override;
         void WriteState(Env const& env, float* state) const override;
         [[nodiscard]] bool IsTerminal(Env const& env) const override;
+
+        /// Whether an enemy is held out of the fight: stunned, incapacitated, asleep, polymorphed, feared, or rooted
+        /// out of melee reach of what it was fighting and not casting at it.
+        [[nodiscard]] static bool Controlled(Unit const* enemy);
 
     private:
         struct SeatPull
@@ -241,10 +247,6 @@ namespace Animus::Curriculum
         /// member is alive: `perSecond` per enemy-second, up to `perPull` a pull.
         void ControlTerm(Env& env, SeatState const& seat, SeatPull& pull, float perSecond, float perPull,
             RewardLedger& ledger);
-        /// Whether an enemy is held out of the fight: stunned, incapacitated, asleep, polymorphed, feared, or rooted
-        /// out of melee reach of what it was fighting and not casting at it.
-        [[nodiscard]] static bool Controlled(Unit const* enemy);
-
         /// The stall grace earned by preparing for the current pull (SeatPull::PreparationBaseMs).
         [[nodiscard]] static uint32 PreparationRefundMs(CurriculumTuning::PullTuning const& tuning,
             CombatTally const& tally, SeatPull const& pull);
@@ -380,6 +382,7 @@ namespace Animus::Curriculum
         bool Build(Env& env, Map* map, uint8 level) override;
         void Update(Env& env) override;
         bool SelectTarget(Env const& env, uint32 seat, Unit*& target) override;
+        void OnSeatAction(Env& env, uint32 seat, SeatActionResult const& result) override;
         void View(Env const& env, uint32 seat, SeatView& view) const override;
         void Reward(Env& env, uint32 seat, Player* bot, RewardLedger& ledger) override;
         [[nodiscard]] bool IsTerminal(Env const& env) const override;
@@ -393,6 +396,13 @@ namespace Animus::Curriculum
             uint8 Class = 0;
             Role PlayRole = Role::Dps;
             ScriptedPlayer::State Script;
+            /// Per seat: a casting opponent the seat just cast an interrupt at, how many it has landed, and how long
+            /// the opponent has been held out of the fight. A scripted player casts and heals -- 3 interruptible
+            /// casts an episode in stage6_pvp -- so stopping one matters at least as much as it does against a
+            /// creature, and until now none of it was paid or even counted here.
+            std::array<ObjectGuid, MAX_SEATS> PendingInterrupt{};
+            std::array<uint32, MAX_SEATS> Interrupts{};
+            std::array<uint32, MAX_SEATS> ControlMs{};
         };
 
         /// Whether the env's opponent is the other seat.
@@ -405,6 +415,7 @@ namespace Animus::Curriculum
         {
             return _scenario.Arena(env).Against == Opposition::Flag;
         }
+        void TrackInterrupt(Env& env, uint32 seat, Unit const* opponent, RewardLedger& ledger);
         [[nodiscard]] Player* Find(Env const& env, uint32 seat) const;
         bool RebuildScripted(Env& env, Player* bot, Map* map);
 

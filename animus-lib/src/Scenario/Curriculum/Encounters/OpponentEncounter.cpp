@@ -50,11 +50,64 @@ std::vector<Animus::Curriculum::RewardTerm> Animus::Curriculum::OpponentEncounte
 {
     return { RewardTerm::StepCost, RewardTerm::DamageDealt, RewardTerm::DamageTaken, RewardTerm::Casting,
         RewardTerm::Approach, RewardTerm::StealthOpener, RewardTerm::StealthUtility, RewardTerm::Kill,
-        RewardTerm::HealthKept, RewardTerm::Death };
+        RewardTerm::HealthKept, RewardTerm::Death, RewardTerm::Interrupt };
+}
+
+/// An interrupt counts when the opponent it was cast at had its cast cut short since, and is paid by what it stopped
+/// (IncomingSpell::Prevented) at the duel's weights, which CombatReward::OneOnOne already uses here.
+///
+/// A scripted enemy player casts and heals -- stage6_pvp at 13.7M saw 3.0 interruptible casts an episode -- so
+/// stopping one is worth at least what it is worth against a creature. Until now nothing in a PvP stage paid for an
+/// interrupt or counted one: the term belonged to the pulls and the duel, so the seats arrived with cast identity,
+/// threat and the hold_interrupt option and no reason to use any of them.
+void Animus::Curriculum::OpponentEncounter::TrackInterrupt(Env& env, uint32 seat, Unit const* opponent,
+    RewardLedger& ledger)
+{
+    EnvOpponent& state = _envs[env.Index];
+    if (seat >= state.PendingInterrupt.size())
+        return;
+
+    // Held out of the fight: stunned, feared, rooted away, polymorphed. Counted as the pulls count it, per decision.
+    if (opponent && PullsEncounter::Controlled(opponent))
+        state.ControlMs[seat] += _scenario.DecisionMs();
+
+    ObjectGuid& pending = state.PendingInterrupt[seat];
+    if (pending.IsEmpty())
+        return;
+
+    auto const stopped = std::find_if(env.StepInterruptedTargets.begin(), env.StepInterruptedTargets.end(),
+        [&pending](Env::InterruptedCast const& cast) { return cast.Caster == pending; });
+    if (stopped != env.StepInterruptedTargets.end())
+    {
+        CurriculumTuning::DuelTuning const& duel = _scenario.Tuning().Duel;
+        ledger.Add(RewardTerm::Interrupt, duel.Interrupt
+            * PreventedScale(duel.InterruptHeal, duel.InterruptArea, duel.InterruptLong, stopped->Prevented));
+        ++state.Interrupts[seat];
+    }
+
+    pending.Clear();
+}
+
+void Animus::Curriculum::OpponentEncounter::OnSeatAction(Env& env, uint32 seat, SeatActionResult const& result)
+{
+    EnvOpponent& state = _envs[env.Index];
+    if (!result.PendingInterrupt.IsEmpty() && seat < state.PendingInterrupt.size())
+        state.PendingInterrupt[seat] = result.PendingInterrupt;
 }
 
 void Animus::Curriculum::OpponentEncounter::AddEpisodeInfo(EpisodeInfoTable& table)
 {
+    table.Add("interrupts", [this](Env const& env, uint32 seat)
+    {
+        EnvOpponent const& state = _envs[env.Index];
+        return seat < state.Interrupts.size() ? float(state.Interrupts[seat]) : 0.0f;
+    });
+    table.Add("control_seconds", [this](Env const& env, uint32 seat)
+    {
+        EnvOpponent const& state = _envs[env.Index];
+        return seat < state.ControlMs.size() ? float(state.ControlMs[seat]) / 1000.0f : 0.0f;
+    });
+
     table.Add("won", [this](Env const& env, uint32 seat)
     {
         CombatTally const& tally = _scenario.Data(env).Seats[seat].Combat;
@@ -96,6 +149,11 @@ Player* Animus::Curriculum::OpponentEncounter::Find(Env const& env, uint32 seat)
 bool Animus::Curriculum::OpponentEncounter::Build(Env& env, Map* map, uint8 /*level*/)
 {
     EnvState& data = _scenario.Data(env);
+
+    EnvOpponent& state = _envs[env.Index];
+    state.PendingInterrupt.fill(ObjectGuid::Empty);
+    state.Interrupts.fill(0);
+    state.ControlMs.fill(0);
 
     for (uint32 seat = 0; seat < data.ActiveSeats; ++seat)
         _scenario.PrepareFighter(_scenario.SeatBot(env, seat), data.Seats[seat]);
@@ -188,7 +246,10 @@ void Animus::Curriculum::OpponentEncounter::Reward(Env& env, uint32 seat, Player
 
     // No opponent in the world (a far teleport, a failed rebuild): nothing to score, not even the step cost.
     if (Player* opponent = Find(env, seat); bot && opponent)
+    {
         CombatReward::OneOnOne(_scenario, env, seat, bot, opponent, ledger);
+        TrackInterrupt(env, seat, opponent, ledger);
+    }
 }
 
 bool Animus::Curriculum::OpponentEncounter::IsTerminal(Env const& env) const
