@@ -579,6 +579,12 @@ void Animus::EnvPool::RecordCastCancelled(Unit const* caster, Spell* spell, bool
         return;
     }
 
+    // A seat's own cast stopped is also an interrupt landed by whoever stopped it. Against a creature or the scripted
+    // enemy player that is the branch above, because neither is an agent; in self-play the enemy is another seat, so
+    // without this an interrupt in a mirror match was filed only as the victim's cancelled cast and never recorded,
+    // paid or counted.
+    RecordTargetInterrupted(caster, spell, bySelf);
+
     // Only a cast still in its cast time: a cancelled channel has already paid out its ticks.
     if (spell->getState() != SPELL_STATE_PREPARING || spell->GetCastTime() <= 0)
         return;
