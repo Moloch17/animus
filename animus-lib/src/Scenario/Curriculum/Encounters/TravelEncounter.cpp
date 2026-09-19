@@ -57,6 +57,24 @@ void Animus::Curriculum::TravelEncounter::AddEpisodeInfo(EpisodeInfoTable& table
     });
     table.Add("start_distance", [this](Env const& env, uint32) { return _envs[env.Index].StartDistance; });
     table.Add("walk_distance", [this](Env const& env, uint32) { return _envs[env.Index].WalkDistance; });
+    // Flying against not, split per episode: an update's mean mixes a handful of flights into a hundred rides, so
+    // divide each conditional sum by `flew` (or 1 - flew) to read what a trip of that kind actually cost.
+    table.Add("flew", [this](Env const& env, uint32) { return _envs[env.Index].Flew ? 1.0f : 0.0f; });
+    table.Add("saved_if_flew", [this](Env const& env, uint32)
+    {
+        return _envs[env.Index].Flew ? Saved(_envs[env.Index]) : 0.0f;
+    });
+    table.Add("saved_if_ground", [this](Env const& env, uint32)
+    {
+        return _envs[env.Index].Flew ? 0.0f : Saved(_envs[env.Index]);
+    });
+    // Does a flying mount actually fly at flight speed, and how high does the seat take it?
+    table.Add("flight_speed", [this](Env const& env, uint32) { return _envs[env.Index].FlightSpeedSeen; });
+    table.Add("flight_height", [this](Env const& env, uint32)
+    {
+        EnvTravel const& travel = _envs[env.Index];
+        return travel.HeightSamples ? float(travel.HeightSum / travel.HeightSamples) : 0.0f;
+    });
     // Why a flying arena does or does not fly, in three steps: does the seat know a flying mount, would the mask
     // have offered it at the start, and did the seat ride one (in the air or not, unlike flying_fraction).
     table.Add("knows_flying_mount", [this](Env const& env, uint32)
@@ -190,7 +208,13 @@ void Animus::Curriculum::TravelEncounter::Reward(Env& env, uint32 seatIndex, Pla
     if (bot->IsMounted())
         travel.MountedMs += stepMs;
     if (bot->IsMounted() && bot->CanFly())
+    {
         travel.FlyingMountMs += stepMs;
+        travel.Flew = true;
+        travel.FlightSpeedSeen = std::max(travel.FlightSpeedSeen, bot->GetSpeed(MOVE_FLIGHT));
+        travel.HeightSum += double(TravelBlock::HeightAboveGround(bot));
+        ++travel.HeightSamples;
+    }
     if (bot->IsMounted() && bot->CanFly() && TravelBlock::HeightAboveGround(bot) > 2.0f)
         travel.FlyingMs += stepMs;
 
