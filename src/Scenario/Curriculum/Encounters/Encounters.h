@@ -519,6 +519,12 @@ namespace Animus::Curriculum
             float FlightSpeedSeen = 0.0f;       // the fastest MOVE_FLIGHT speed it had while on one
             double HeightSum = 0.0;             // height above ground while on one, summed over the samples
             uint32 HeightSamples = 0;
+            // Ground covered while aloft, against the time it took: what the spline actually flies at, which no
+            // metric taken from GetSpeed() can answer and no policy can confound.
+            Position LastPos;
+            bool LastAloft = false;
+            double FlightDistance = 0.0;
+            uint32 FlightMs = 0;
             uint32 LastRewardMs = 0;
         };
 
