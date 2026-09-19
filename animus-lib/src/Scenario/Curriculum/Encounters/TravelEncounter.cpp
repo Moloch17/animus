@@ -70,6 +70,11 @@ void Animus::Curriculum::TravelEncounter::AddEpisodeInfo(EpisodeInfoTable& table
     });
     // Does a flying mount actually fly at flight speed, and how high does the seat take it?
     table.Add("flight_speed", [this](Env const& env, uint32) { return _envs[env.Index].FlightSpeedSeen; });
+    table.Add("flight_yps", [this](Env const& env, uint32)
+    {
+        EnvTravel const& travel = _envs[env.Index];
+        return travel.FlightMs ? float(travel.FlightDistance / (double(travel.FlightMs) / 1000.0)) : 0.0f;
+    });
     table.Add("flight_height", [this](Env const& env, uint32)
     {
         EnvTravel const& travel = _envs[env.Index];
@@ -215,6 +220,17 @@ void Animus::Curriculum::TravelEncounter::Reward(Env& env, uint32 seatIndex, Pla
         travel.HeightSum += double(TravelBlock::HeightAboveGround(bot));
         ++travel.HeightSamples;
     }
+
+    // Measured between two decisions that were both aloft, so nothing but flight is counted.
+    bool const aloft = bot->IsMounted() && bot->CanFly()
+        && TravelBlock::HeightAboveGround(bot) > 2.0f;
+    if (aloft && travel.LastAloft)
+    {
+        travel.FlightDistance += double(bot->GetExactDist2d(&travel.LastPos));
+        travel.FlightMs += stepMs;
+    }
+    travel.LastPos.Relocate(bot);
+    travel.LastAloft = aloft;
     if (bot->IsMounted() && bot->CanFly() && TravelBlock::HeightAboveGround(bot) > 2.0f)
         travel.FlyingMs += stepMs;
 
