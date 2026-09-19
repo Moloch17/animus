@@ -1225,6 +1225,11 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
             for (uint32 seat = 0; seat < data.ActiveSeats; ++seat)
                 roles[seat] = RollRole(_tuning.Party.RoleTankChance, _tuning.Party.RoleHealerChance);
 
+        // A drill arena fixes the seats it is about, after the makeup is drawn, so the rest of the group is still
+        // whatever the party would have been.
+        for (uint32 seat = 0; seat < arena.SeatRoles.size() && seat < data.ActiveSeats; ++seat)
+            roles[seat] = arena.SeatRoles[seat];
+
         for (uint32 seat = 0; seat < _seatCount; ++seat)
             data.Seats[seat].L = seat < data.ActiveSeats ? &DrawLayout(env, seat, roles[seat]) : nullptr;
     }
