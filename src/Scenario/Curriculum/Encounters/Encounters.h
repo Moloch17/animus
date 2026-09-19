@@ -525,6 +525,9 @@ namespace Animus::Curriculum
             bool LastAloft = false;
             double FlightDistance = 0.0;
             uint32 FlightMs = 0;
+            float FlightPeakYps = 0.0f;         // the fastest single step while aloft: what the spline can do
+            uint32 AloftSteps = 0;              // decisions aloft, and how many of them had the FLYING flag set
+            uint32 AloftFlagged = 0;
             uint32 LastRewardMs = 0;
         };
 
