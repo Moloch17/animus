@@ -66,6 +66,7 @@ namespace Animus::Curriculum
         };
 
         static constexpr float ARRIVE_DISTANCE = 6.0f;
+        static constexpr float BASE_RUN_SPEED = 7.0f;   // yards a second, unmounted and unhasted
         static constexpr float CLIMB_STEP = 15.0f;
         static constexpr float MAX_ALTITUDE = 150.0f;   // above the ground
 

@@ -478,7 +478,7 @@ namespace Animus::Curriculum
             float FlyingMax = 700.0f;
             float Progress = 1.0f;              // potential shaping: per 100 yd closed (taken back for leaving)
             float Arrive = 3.0f;
-            float FastArrive = 3.0f;            // times the fraction of the episode still left
+            float FastArrive = 6.0f;            // times the fraction of the walk the trip saved (mounting)
             float DamageTaken = 1.0f;           // fraction of the bot's health (falls, what it rode past)
             float Death = 3.0f;
             float StepCost = 0.0002f;           // per decision
