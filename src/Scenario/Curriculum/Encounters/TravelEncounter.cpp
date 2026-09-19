@@ -218,8 +218,16 @@ void Animus::Curriculum::TravelEncounter::Reward(Env& env, uint32 seatIndex, Pla
     if (bot->IsMounted() && bot->CanFly() && TravelBlock::HeightAboveGround(bot) > 2.0f)
         travel.FlyingMs += stepMs;
 
-    // Potential-based: what is closed pays, what is given back costs, so wandering cannot be farmed.
-    float const distance = bot->GetExactDist2d(&travel.Objective);
+    // Potential-based: what is closed pays, what is given back costs, so wandering cannot be farmed. A flying
+    // arena shapes on the distance in three dimensions, because there the objective is a point in space and the
+    // last part of the trip is downwards: arriving wants AtObjective's AIRBORNE_ABOVE as well as its six yards,
+    // and a seat shaped on the ground distance alone flew to directly above the marker and hovered there until
+    // the clock ran out. Every episode that flew failed to arrive, so flight paid 0.009 against a ground mount's
+    // 0.388, and the policy sensibly stopped flying. The climb costs here and the descent pays it back, which
+    // telescopes to nothing over the trip -- the point is that the seat can see the axis it has to close.
+    bool const flyingArena = _scenario.Arena(env).Flying;
+    float const distance = flyingArena ? bot->GetExactDist(&travel.Objective)
+        : bot->GetExactDist2d(&travel.Objective);
     if (travel.LastDistance >= 0.0f && !travel.Arrived)
         ledger.Add(RewardTerm::Progress, tuning.Progress * (travel.LastDistance - distance) / 100.0f);
     travel.LastDistance = distance;
