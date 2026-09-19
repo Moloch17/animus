@@ -495,8 +495,10 @@ namespace Animus::Curriculum
         [[nodiscard]] bool IsTerminal(Env const& env) const override;
 
         /// A place `nearest`-`furthest` yd from `bot` on ground that is not water; on foot (`flying` false) one it can
-        /// walk to by a path not much longer than the straight line. False if none was found.
-        static bool FindPlace(Player* bot, Map* map, float nearest, float furthest, bool flying, Position& place);
+        /// walk to by a path not much longer than the straight line. False if none was found. `walk`, when given,
+        /// takes the length of that path -- the straight line when there is none (a flying arena).
+        static bool FindPlace(Player* bot, Map* map, float nearest, float furthest, bool flying, Position& place,
+            float* walk = nullptr);
 
     private:
         struct EnvTravel
@@ -504,6 +506,7 @@ namespace Animus::Curriculum
             bool HasObjective = false;
             Position Objective;
             float StartDistance = 0.0f;         // yards on the ground at the start
+            float WalkDistance = 0.0f;          // yards of path to the objective: what covering it on foot costs
             float LastDistance = -1.0f;         // shaping: yards at the last reward; < 0 = none yet
             bool Arrived = false;
             uint32 ArriveMs = 0;
@@ -511,6 +514,10 @@ namespace Animus::Curriculum
             uint32 FlyingMs = 0;                // ... on a flying mount in the air
             uint32 LastRewardMs = 0;
         };
+
+        /// How much of the walk the trip saved, 0 (no faster than walking, or slower) to 1. Mounting is worth what
+        /// it saves: nothing over a hop too short to pay for the cast, most of it over a long haul.
+        [[nodiscard]] static float Saved(EnvTravel const& travel);
 
         std::vector<EnvTravel> _envs;
     };

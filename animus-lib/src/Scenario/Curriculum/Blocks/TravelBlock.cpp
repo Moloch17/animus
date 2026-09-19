@@ -37,7 +37,6 @@ namespace
     using namespace Animus::Curriculum;
 
     constexpr uint32 TRAVEL_MOVE_POINT_ID = 6;
-    constexpr float BASE_RUN_SPEED = 7.0f;
     constexpr float MAX_GROUND_SEARCH = 200.0f;
     constexpr float AIRBORNE_ABOVE = 2.0f;      // higher than this without flight is falling
 
@@ -198,7 +197,7 @@ void Animus::Curriculum::TravelBlock::Observe(SeatView const& view, float* obs, 
     obs[OBS_MOVING] = bot->movespline->Finalized() ? 0.0f : 1.0f;
 
     UnitMoveType const moveType = bot->CanFly() ? MOVE_FLIGHT : MOVE_RUN;
-    obs[OBS_SPEED] = std::min(1.0f, bot->GetSpeed(moveType) / BASE_RUN_SPEED / 4.0f);
+    obs[OBS_SPEED] = std::min(1.0f, bot->GetSpeed(moveType) / TravelBlock::BASE_RUN_SPEED / 4.0f);
 
     if (view.HasObjective)
     {

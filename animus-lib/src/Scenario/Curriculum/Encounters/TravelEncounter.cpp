@@ -17,7 +17,6 @@
  */
 
 #include "Encounters.h"
-#include "CombatReward.h"
 #include "Env.h"
 #include "EpisodeInfoTable.h"
 #include "Map.h"
@@ -26,6 +25,7 @@
 #include "Random.h"
 #include "SeatView.h"
 #include "TravelBlock.h"
+#include <algorithm>
 #include <cmath>
 
 namespace
@@ -56,6 +56,9 @@ void Animus::Curriculum::TravelEncounter::AddEpisodeInfo(EpisodeInfoTable& table
         return float(travel.Arrived ? travel.ArriveMs : env.EpisodeElapsedMs) / 1000.0f;
     });
     table.Add("start_distance", [this](Env const& env, uint32) { return _envs[env.Index].StartDistance; });
+    table.Add("walk_distance", [this](Env const& env, uint32) { return _envs[env.Index].WalkDistance; });
+    // What the trip beat the walk by: 0 walked it, 0.3 arrived in 70% of the time walking would have taken.
+    table.Add("saved", [this](Env const& env, uint32) { return Saved(_envs[env.Index]); });
     table.Add("mounted_fraction", [this](Env const& env, uint32)
     {
         return env.EpisodeElapsedMs ? float(_envs[env.Index].MountedMs) / float(env.EpisodeElapsedMs) : 0.0f;
@@ -66,13 +69,23 @@ void Animus::Curriculum::TravelEncounter::AddEpisodeInfo(EpisodeInfoTable& table
     });
 }
 
+float Animus::Curriculum::TravelEncounter::Saved(EnvTravel const& travel)
+{
+    if (!travel.Arrived || travel.WalkDistance <= 0.0f)
+        return 0.0f;
+
+    float const walkSeconds = travel.WalkDistance / TravelBlock::BASE_RUN_SPEED;
+    float const tripSeconds = float(travel.ArriveMs) / 1000.0f;
+    return std::clamp((walkSeconds - tripSeconds) / walkSeconds, 0.0f, 1.0f);
+}
+
 void Animus::Curriculum::TravelEncounter::ResetEpisode(Env& env)
 {
     _envs[env.Index] = EnvTravel();
 }
 
 bool Animus::Curriculum::TravelEncounter::FindPlace(Player* bot, Map* map, float nearest, float furthest, bool flying,
-    Position& place)
+    Position& place, float* walk)
 {
     for (uint32 attempt = 0; attempt < OBJECTIVE_ATTEMPTS; ++attempt)
     {
@@ -90,15 +103,20 @@ bool Animus::Curriculum::TravelEncounter::FindPlace(Player* bot, Map* map, float
             continue;
 
         // On the ground it has to be reachable on foot, by a path not much longer than the straight line.
+        float walked = distance;
         if (!flying)
         {
             PathGenerator path(bot);
             if (!path.CalculatePath(x, y, z) || !(path.GetPathType() & PATHFIND_NORMAL)
                 || path.getPathLength() > distance * MAX_PATH_DETOUR)
                 continue;
+
+            walked = path.getPathLength();
         }
 
         place.Relocate(x, y, z);
+        if (walk)
+            *walk = walked;
         return true;
     }
 
@@ -115,12 +133,14 @@ bool Animus::Curriculum::TravelEncounter::Build(Env& env, Map* map, uint8 /*leve
 
     CurriculumTuning::TravelTuning const& tuning = _scenario.Tuning().Travel;
     bool const flying = _scenario.Arena(env).Flying;
+    float walk = 0.0f;
     if (!FindPlace(bot, map, flying ? tuning.FlyingMin : tuning.ObjectiveMin,
-        flying ? tuning.FlyingMax : tuning.ObjectiveMax, flying, travel.Objective))
+        flying ? tuning.FlyingMax : tuning.ObjectiveMax, flying, travel.Objective, &walk))
         return false;
 
     travel.HasObjective = true;
     travel.StartDistance = bot->GetExactDist2d(&travel.Objective);
+    travel.WalkDistance = walk > 0.0f ? walk : travel.StartDistance;
     _scenario.PrepareFighter(bot, data.Seats[0]);
     return true;
 }
@@ -169,7 +189,7 @@ void Animus::Curriculum::TravelEncounter::Reward(Env& env, uint32 seatIndex, Pla
     {
         travel.Arrived = true;
         travel.ArriveMs = env.EpisodeElapsedMs;
-        ledger.Add(RewardTerm::Arrive, tuning.Arrive + tuning.FastArrive * CombatReward::TimeLeftSince(env, 0));
+        ledger.Add(RewardTerm::Arrive, tuning.Arrive + tuning.FastArrive * Saved(travel));
     }
 
     CombatTally& tally = seat.Combat;
