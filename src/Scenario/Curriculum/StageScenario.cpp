@@ -779,7 +779,7 @@ void Animus::Curriculum::StageScenario::AddCoreEpisodeInfo()
     // What healing is actually worth: what it restored for what it cost. Neither half says it alone -- healing_done
     // rewards a seat for spending its whole pool, and overheal counted at the cast misreads every heal over time,
     // whose ticks are only waste if they land on a full bar.
-    _info.Add("healing_per_mana", [seat, health](Env const& env, uint32 index)
+    _info.Add("healing_per_mana", [seat](Env const& env, uint32 index)
     {
         AgentStats const& stats = env.EpisodeStats[index];
         uint64 healed = stats.SelfHealing + stats.AllyHealing;
@@ -1914,9 +1914,6 @@ void Animus::Curriculum::StageScenario::Reward(Env& env, float* reward)
         encounter->AfterRewards(env);
 }
 
-/// Count an enemy cast the seat could have interrupted, once per cast. The press-to-interrupt ratio alone cannot
-/// say whether a policy is pressing too often or whether there was simply nothing to interrupt; this is the
-/// denominator. The seat's own target is the one it could act on, so that is the one counted.
 /// The nearest ground effect the seat is not in yet, so it can be walked around rather than only walked out of.
 /// The grid search runs every HAZARD_SEARCH_MS; between searches the cached hazard is measured against the seat's
 /// own position again, which is exact because a ground effect stays where it was cast.
@@ -1927,7 +1924,7 @@ void Animus::Curriculum::StageScenario::TrackHazards(Env const& env, SeatState& 
     {
         seat.HazardSearchMs = env.EpisodeElapsedMs;
         nearest = Hazard();
-        Encoding::FindNearestHazard(bot, HAZARD_SEARCH_RANGE, nearest);
+        nearest.Present = Encoding::FindNearestHazard(bot, HAZARD_SEARCH_RANGE, nearest);
         return;
     }
 
@@ -1940,6 +1937,9 @@ void Animus::Curriculum::StageScenario::TrackHazards(Env const& env, SeatState& 
         - bot->GetOrientation();
 }
 
+/// Count an enemy cast the seat could have interrupted, once per cast. The press-to-interrupt ratio alone cannot
+/// say whether a policy is pressing too often or whether there was simply nothing to interrupt; this is the
+/// denominator. The seat's own target is the one it could act on, so that is the one counted.
 void Animus::Curriculum::StageScenario::TrackInterruptibleCast(Env const& /*env*/, SeatState& seat, Player* bot,
     Unit* target)
 {
