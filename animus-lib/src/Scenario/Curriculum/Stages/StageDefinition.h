@@ -20,6 +20,7 @@
 #define ANIMUS_LIB_CURRICULUM_STAGE_DEFINITION_H
 
 #include "Block.h"
+#include "ClassRoleProfile.h"
 #include "Position.h"
 #include <string>
 #include <string_view>
@@ -79,6 +80,14 @@ namespace Animus::Curriculum
         /// Most scripted enemy players that ambush the owner (1 to this many, MAX_AMBUSHERS at most): mid-episode
         /// beside pulls, or from the start against Opposition::Ambush. 0 = none.
         uint32 Ambushers = 0;
+        /// Roles the first seats must play (entry i is seat i); the rest are drawn as usual. A drill stage fixes
+        /// the seat it is about -- a tank that has to hold what it pulls, a healer that has to keep a group up --
+        /// where the ordinary party draws every role and the lesson is smeared over whoever happened to play it.
+        std::vector<Role> SeatRoles{};
+        /// Every pull contains a creature that puts something on the ground (OpponentPool::RandomHazardCaster),
+        /// whatever rung the ladder is on. The pack ladder only reaches hazards at rung 3, so a class/role that
+        /// stalls below it never meets one; this makes stepping out of a hazard learnable on its own.
+        bool Hazards = false;
         /// Travel: the objective is far enough that flying beats riding (the stage's map must allow flight).
         bool Flying = false;
 

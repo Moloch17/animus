@@ -224,6 +224,66 @@ namespace
             .InDefaultQueue = false,
         });
 
+        // Drill stages: one skill each, trained by name and never queued. The curriculum teaches these skills
+        // inside stages whose win condition is something else, so the credit for them is smeared over the clear.
+        // Each drill fixes what the episode is about and leaves everything else as it was.
+
+        // Something on the ground, in every pull. Hazards exist already -- the pack ladder draws a hazard caster
+        // from rung 3 and self-play produces them by the spell (stage7_arena measured 3.1 s of hazard an episode,
+        // stage3_gauntlet 1.1 s) -- but a class/role that stalls below rung 3 never meets one, and a second an
+        // episode is thin to learn from. Here every pull has one, at stage 2's difficulty, so walking out of it is
+        // the thing being learned rather than a detail of a harder fight.
+        stages.push_back({
+            .Name = "stage15_hazards",
+            .Suffix = "_hazards",
+            .Extends = "stage2_pack",
+            .Summary = "a pack with something on the ground in every pull: see it, and walk out of it",
+            .Blocks = { Core, Duel, Pet, Pack, Support },
+            .Arenas = { { .Name = "hazards", .Against = Opposition::Pulls, .Schedule = PullSchedule::SinglePack,
+                .EpisodeSeconds = 120, .Hazards = true } },
+            .InDefaultQueue = false,
+        });
+
+        // Holding what the group pulls. Tanks exist in stages 5, 8, 13 and 14, but the stage is won by the clear,
+        // so a tank that loses an add to the healer and takes it back is scored the same as one that never lost it.
+        // Here seat 0 is always the tank (ArenaDefinition::SeatRoles) and the pulls are a party's, so what the
+        // episode is about is the threat table -- which the seat can now read (Encoding::ThreatShare).
+        //
+        // Read its scores knowing that the hazard charge lands about four times harder on a tank than on a ranged
+        // seat (stage7_arena: paladin_tank -0.834 an episode against priest_dps -0.198), because a tank cannot walk
+        // out of what it is holding an enemy in. That is Hazards.Standing being tuned for a seat with a choice.
+        stages.push_back({
+            .Name = "stage16_tanking",
+            .Suffix = "_tanking",
+            .Extends = "stage5_party",
+            .Summary = "a fixed tank seat beside its group: hold what the pull brings, and keep it off the others",
+            .Blocks = { Core, Duel, Pet, Pack, Gauntlet, Companion, Party, Support },
+            .Arenas = { { .Name = "tanking", .Weight = 1, .Seats = SeatPlan::Party, .Against = Opposition::Pulls,
+                .Schedule = PullSchedule::Gauntlet, .Owner = true, .PartyGroup = true, .EpisodeSeconds = 300,
+                .SeatRoles = { Role::Tank } } },
+            .InDefaultQueue = false,
+        });
+
+        // Keeping a group up when the damage outruns one heal. Stage 5 has healers, but its win is the clear and
+        // stage 4 measured the seat putting 13% of its healing into the owner: triage is never the episode.
+        //
+        // Before reading its numbers, know that stage 5 carries a resurrection exploit this drill inherits: nothing
+        // clears m_resurrectGUID, so one landed Rebirth makes every later death of that ally an instant free
+        // resurrect that pays RewardTerm::Revive again (stage4_companion measured druid_dps at 38.4 revives an
+        // episode, 88% of its return). A forced healer seat will find it faster than anything else in the
+        // curriculum. Fix that before trusting a triage score.
+        stages.push_back({
+            .Name = "stage17_triage",
+            .Suffix = "_triage",
+            .Extends = "stage5_party",
+            .Summary = "a fixed healer seat beside its group: keep the hurt one up, and spend mana to do it",
+            .Blocks = { Core, Duel, Pet, Pack, Gauntlet, Companion, Party, Support },
+            .Arenas = { { .Name = "triage", .Weight = 1, .Seats = SeatPlan::Party, .Against = Opposition::Pulls,
+                .Schedule = PullSchedule::Gauntlet, .Owner = true, .PartyGroup = true, .EpisodeSeconds = 300,
+                .SeatRoles = { Role::Heal } } },
+            .InDefaultQueue = false,
+        });
+
         // The raid branch: MAX_SEATS learned seats as RAID_GROUPS groups of GROUP_SEATS, each group with its own
         // tank and healer (SeatPlan::Raid). A raid is not a bigger party -- it is many seats around one large enemy,
         // which is why the opponents are an elite and its adds rather than a pack per seat, and why the mechanics a
