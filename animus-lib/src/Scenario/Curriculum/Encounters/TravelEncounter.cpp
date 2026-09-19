@@ -57,6 +57,20 @@ void Animus::Curriculum::TravelEncounter::AddEpisodeInfo(EpisodeInfoTable& table
     });
     table.Add("start_distance", [this](Env const& env, uint32) { return _envs[env.Index].StartDistance; });
     table.Add("walk_distance", [this](Env const& env, uint32) { return _envs[env.Index].WalkDistance; });
+    // Why a flying arena does or does not fly, in three steps: does the seat know a flying mount, would the mask
+    // have offered it at the start, and did the seat ride one (in the air or not, unlike flying_fraction).
+    table.Add("knows_flying_mount", [this](Env const& env, uint32)
+    {
+        return _envs[env.Index].KnowsFlyer ? 1.0f : 0.0f;
+    });
+    table.Add("could_mount_flying", [this](Env const& env, uint32)
+    {
+        return _envs[env.Index].CouldMountFlyer ? 1.0f : 0.0f;
+    });
+    table.Add("flying_mount_fraction", [this](Env const& env, uint32)
+    {
+        return env.EpisodeElapsedMs ? float(_envs[env.Index].FlyingMountMs) / float(env.EpisodeElapsedMs) : 0.0f;
+    });
     // What the trip beat the walk by: 0 walked it, 0.3 arrived in 70% of the time walking would have taken.
     table.Add("saved", [this](Env const& env, uint32) { return Saved(_envs[env.Index]); });
     table.Add("mounted_fraction", [this](Env const& env, uint32)
@@ -141,6 +155,8 @@ bool Animus::Curriculum::TravelEncounter::Build(Env& env, Map* map, uint8 /*leve
     travel.HasObjective = true;
     travel.StartDistance = bot->GetExactDist2d(&travel.Objective);
     travel.WalkDistance = walk > 0.0f ? walk : travel.StartDistance;
+    travel.KnowsFlyer = TravelBlock::FlyingMount(bot) != nullptr;
+    travel.CouldMountFlyer = TravelBlock::CanSummonFlying(bot);
     _scenario.PrepareFighter(bot, data.Seats[0]);
     return true;
 }
@@ -173,6 +189,8 @@ void Animus::Curriculum::TravelEncounter::Reward(Env& env, uint32 seatIndex, Pla
     travel.LastRewardMs = env.EpisodeElapsedMs;
     if (bot->IsMounted())
         travel.MountedMs += stepMs;
+    if (bot->IsMounted() && bot->CanFly())
+        travel.FlyingMountMs += stepMs;
     if (bot->IsMounted() && bot->CanFly() && TravelBlock::HeightAboveGround(bot) > 2.0f)
         travel.FlyingMs += stepMs;
 

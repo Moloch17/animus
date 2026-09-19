@@ -511,7 +511,10 @@ namespace Animus::Curriculum
             bool Arrived = false;
             uint32 ArriveMs = 0;
             uint32 MountedMs = 0;               // episode time spent mounted
+            uint32 FlyingMountMs = 0;           // ... of it on a flying mount, in the air or not
             uint32 FlyingMs = 0;                // ... on a flying mount in the air
+            bool KnowsFlyer = false;            // the seat knows a flying mount spell at all
+            bool CouldMountFlyer = false;       // ... and the mask would have offered it at the start
             uint32 LastRewardMs = 0;
         };
 
