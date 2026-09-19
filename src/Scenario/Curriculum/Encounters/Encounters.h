@@ -515,6 +515,10 @@ namespace Animus::Curriculum
             uint32 FlyingMs = 0;                // ... on a flying mount in the air
             bool KnowsFlyer = false;            // the seat knows a flying mount spell at all
             bool CouldMountFlyer = false;       // ... and the mask would have offered it at the start
+            bool Flew = false;                  // the seat rode a flying mount at some point this episode
+            float FlightSpeedSeen = 0.0f;       // the fastest MOVE_FLIGHT speed it had while on one
+            double HeightSum = 0.0;             // height above ground while on one, summed over the samples
+            uint32 HeightSamples = 0;
             uint32 LastRewardMs = 0;
         };
 
