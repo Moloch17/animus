@@ -134,6 +134,11 @@ SpellInfo const* Animus::Curriculum::TravelBlock::GroundMount(Player const* bot)
     return FastestMount(bot, false);
 }
 
+bool Animus::Curriculum::TravelBlock::CanSummonFlying(Player* bot)
+{
+    return CanSummon(bot, FlyingMount(bot));
+}
+
 SpellInfo const* Animus::Curriculum::TravelBlock::FlyingMount(Player const* bot)
 {
     return FastestMount(bot, true);
