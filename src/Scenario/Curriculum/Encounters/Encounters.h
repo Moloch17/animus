@@ -592,6 +592,8 @@ namespace Animus::Curriculum
             bool Dead = false;
             uint32 RespawnMs = 0;
             uint32 StepDeaths = 0;              // charged to the seat that died, not to its side
+            uint32 ReachSteps = 0;              // decisions with a flag close enough to use
+            uint32 Steps = 0;                   // decisions, to divide it by
             float LastDistance = -1.0f;         // shaping toward the current goal; < 0 = none yet
             Goal LastGoal = Goal::None;
         };

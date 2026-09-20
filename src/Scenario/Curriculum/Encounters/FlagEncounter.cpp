@@ -76,6 +76,11 @@ void Animus::Curriculum::FlagEncounter::AddEpisodeInfo(EpisodeInfoTable& table)
         return side(env, seat).Captures >= _scenario.Tuning().Flag.CapturesToWin ? 1.0f : 0.0f;
     });
     table.Add("team_seat", [this](Env const& env, uint32 seat) { return float(SideOf(env, seat)); });
+    table.Add("flag_in_reach", [this](Env const& env, uint32 seat)
+    {
+        SeatFlagState const& state = _envs[env.Index].Seats[std::min<uint32>(seat, TEAM_MATCH_SEATS - 1)];
+        return state.Steps ? float(state.ReachSteps) / float(state.Steps) : 0.0f;
+    });
 }
 
 void Animus::Curriculum::FlagEncounter::ResetEpisode(Env& env)
@@ -567,6 +572,13 @@ void Animus::Curriculum::FlagEncounter::View(Env const& env, uint32 seat, SeatVi
                 break;
             }
     }
+
+    // Was a flag ever close enough to use? If this stays at zero the seats never reach one and the action is
+    // beside the point; if it does not, the action is offered and never taken, which is a different problem.
+    SeatFlagState& counting = const_cast<EnvFlags&>(flags).Seats[std::min<uint32>(seat, TEAM_MATCH_SEATS - 1)];
+    ++counting.Steps;
+    if (match.Usable)
+        ++counting.ReachSteps;
 
     // What its side is doing. Ten seats that cannot see each other play as ten individuals: this is the same
     // RaidView a party reads, over the seat's own team -- how much of it is standing, how much of it is fighting,
