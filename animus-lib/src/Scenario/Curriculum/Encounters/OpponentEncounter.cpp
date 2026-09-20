@@ -133,6 +133,17 @@ void Animus::Curriculum::OpponentEncounter::AddEpisodeInfo(EpisodeInfoTable& tab
     {
         return float(_scenario.Data(env).Seats[seat].Combat.LineOfSightBreaks);
     });
+    // Getting back out of sight after being found, which every class can do and only four can do with a
+    // stealth aura. The first break is getting away; the ones after it are hiding again, which is the harder
+    // half and the one a hunter that is already looking for you makes you earn.
+    table.Add("re_hides", [this](Env const& env, uint32 seat)
+    {
+        uint32 const breaks = _scenario.Data(env).Seats[seat].Combat.ContactBreaks;
+        return breaks > 1 ? float(breaks - 1) : 0.0f;
+    });
+    // The stealth-aura version of the same thing: reported because it is what a rogue or a druid (or any night
+    // elf, through Shadowmeld) actually presses, never gated, because fourteen class/roles have no such button
+    // and hide with terrain, distance and their own escapes instead.
     table.Add("re_stealths", [this](Env const& env, uint32 seat)
     {
         return float(_scenario.Data(env).Seats[seat].Combat.ReStealths);

@@ -46,7 +46,6 @@
 #include "SpellAuraEffects.h"
 #include "SpellChecks.h"
 #include "SpellInfo.h"
-#include "SpellMgr.h"
 #include "StageDefinition.h"
 #include <cmath>
 #include <numeric>
@@ -85,25 +84,6 @@ namespace
     /// the cached one is simply measured again: the search is a grid visit, the measurement is arithmetic.
     constexpr uint32 HAZARD_SEARCH_MS = 1000;
 
-    /// Whether a class/role can get out of sight on purpose: anything in its catalog that makes it stealthed.
-    /// Whether the class itself can hide, asked of its trainers' spell list.
-    ///
-    /// Not of the action catalog, which is the union over every race the class may be: that union contains
-    /// Shadowmeld (58984), the night elf racial, which carries a stealth aura and is learnable by eleven of the
-    /// eighteen class/roles. A warrior that rolled a human would then play a stealth stage with no stealth at
-    /// all. The kit is the class trainers' list, so what it holds is true of every member of the class.
-    bool CanStealth(Animus::Curriculum::ClassRoleAssets const& assets)
-    {
-        if (!assets.Kit)
-            return false;
-
-        for (Animus::Curriculum::ClassKit::KitSpell const& kitSpell : assets.Kit->Spells())
-            if (SpellInfo const* spell = sSpellMgr->GetSpellInfo(kitSpell.SpellId);
-                spell && spell->HasAura(SPELL_AURA_MOD_STEALTH))
-                return true;
-
-        return false;
-    }
     /// How long an accepted resurrection is given to land before the offer may be taken again. A delayed
     /// teleport reschedules the resurrect (Player::ProcessDelayedOperations), so it does not always finish on
     /// the decision it was accepted on.
@@ -259,11 +239,6 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
 
         ClassRoleAssets const& assets = ClassRoleAssets::For(profile);
         if (assets.Races.empty())
-            continue;
-
-        // A stage about hiding is played only by class/roles that can hide. Asked of the catalog, which is
-        // built from the spells the class actually knows, so no list here has to be kept in step with a spec.
-        if (_stage.NeedsStealth && !CanStealth(assets))
             continue;
 
         Layout layout = Layout::Build(profile, _stage);
@@ -1199,8 +1174,7 @@ bool Animus::Curriculum::StageScenario::Setup(Env& env)
 {
     if (_layouts.empty())
     {
-        LOG_ERROR("module.animus", "{}: no class/role to play (check the host's class/role list{})", Name(),
-            _stage.NeedsStealth ? ", and this stage is played only by class/roles that can stealth" : "");
+        LOG_ERROR("module.animus", "{}: no class/role to play (check the host's class/role list)", Name());
         return false;
     }
 
