@@ -300,6 +300,18 @@ namespace
             // of contact (RewardTerm::BrokeContact, once per break with a cooldown).
             .Arenas = { { .Name = "evade", .Against = Opposition::ScriptedPlayer, .Pvp = true,
                 .EpisodeSeconds = 120, .OpponentLevelBonus = 6 } },
+            // Cover is the whole point, and the default spawn is open field: the first run of this stage read
+            // exactly 0.000 contact breaks for twelve of the eighteen class/roles, because on flat ground
+            // nothing but stealth can break line of sight. These are walkable ground inside Durnholde Keep
+            // (walls, towers, two levels) and among the Southshore farms (buildings, fences, trees), on the
+            // same instance map the PvP line already fights on.
+            .MapId = 560,
+            .SpawnPoints = {
+                { 2141.5f, 174.7f, 66.2f, 0.0f }, { 2124.1f, 183.3f, 52.8f, 0.0f },
+                { 2256.8f, 264.1f, 64.9f, 0.0f }, { 2186.1f, 272.1f, 52.8f, 0.0f },
+                { 1816.0f, 1128.5f, 14.7f, 0.0f }, { 1777.7f, 1058.6f, 7.1f, 0.0f },
+                { 1808.7f, 1108.3f, 13.4f, 0.0f }, { 1803.0f, 1041.4f, 11.7f, 0.0f },
+            },
         });
 
         // Stealth, for the classes that have it (NeedsStealth drops the layouts whose kit has no stealth aura, so
@@ -318,6 +330,18 @@ namespace
             // from stealth and unwinnable head-on.
             .Arenas = { { .Name = "stealth", .Against = Opposition::ScriptedPlayer, .Pvp = true,
                 .EpisodeSeconds = 120, .OpponentLevelBonus = 4 } },
+            // Cover is the whole point, and the default spawn is open field: the first run of this stage read
+            // exactly 0.000 contact breaks for twelve of the eighteen class/roles, because on flat ground
+            // nothing but stealth can break line of sight. These are walkable ground inside Durnholde Keep
+            // (walls, towers, two levels) and among the Southshore farms (buildings, fences, trees), on the
+            // same instance map the PvP line already fights on.
+            .MapId = 560,
+            .SpawnPoints = {
+                { 2141.5f, 174.7f, 66.2f, 0.0f }, { 2124.1f, 183.3f, 52.8f, 0.0f },
+                { 2256.8f, 264.1f, 64.9f, 0.0f }, { 2186.1f, 272.1f, 52.8f, 0.0f },
+                { 1816.0f, 1128.5f, 14.7f, 0.0f }, { 1777.7f, 1058.6f, 7.1f, 0.0f },
+                { 1808.7f, 1108.3f, 13.4f, 0.0f }, { 1803.0f, 1041.4f, 11.7f, 0.0f },
+            },
         });
 
         stages.push_back({
