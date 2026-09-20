@@ -235,6 +235,14 @@ Animus.Curriculum.Duel.StallGraceMs = 15000
 #   ... which grows by the time spent starting buffs, forms, stances, stealth and pet summons out of combat (each its
 #   cast time, at least a global cooldown), up to this much (ms)
 Animus.Curriculum.Duel.PreparationRefundMaxMs = 15000
+#   duel: stopping the opponent's cast, priced by what was stopped as the pack's is (a heal undoes damage already
+#   dealt, an area spell would have hit everyone, a long cast was a large part of the caster's output). The duel
+#   meets casters now (Difficulty.CasterChance), and one enemy casting one spell is the cheapest place in the
+#   curriculum to learn what an interrupt is for
+Animus.Curriculum.Duel.Interrupt = 0.3
+Animus.Curriculum.Duel.InterruptHeal = 3.0
+Animus.Curriculum.Duel.InterruptArea = 2.0
+Animus.Curriculum.Duel.InterruptLong = 1.5
 #   creature duel, ranged specs: per second the opponent stands in melee range hitting the bot
 Animus.Curriculum.Duel.Spacing = 0.03
 #   the range the approach shaping aims for, melee specs
@@ -295,6 +303,15 @@ Animus.Curriculum.Goals.Match = 0.02
 #   is worth about 0.5, a tenth of the kill
 Animus.Curriculum.Order.Focus = 0.001
 Animus.Curriculum.Support.SelfHealing = 0.5
+#   per fraction of the mana pool spent on healing. Healing is worth what it restores for what it costs, and the cost
+#   was never priced: an effective heal of 3% of a health bar cost the same as one of 20%, so choosing a cheaper rank
+#   bought nothing and a heal over time could be stacked on a full bar for free. With it the objective is healing per
+#   mana. Kept well below SelfHealing -- the failure to avoid is a seat that heals too little and dies
+Animus.Curriculum.Support.HealingMana = 0.1
+#   the same charge in the schedules that pay readiness (the gauntlet, a planned run), where mana spent healing
+#   already costs the seat what it brings to the next pull. 0 leaves that accounting to do the work: the charge is a
+#   stand-in for an opportunity cost and is only needed where there is no later fight to have one
+Animus.Curriculum.Support.HealingManaWithReadiness = 0.0
 #   gauntlets: engaging a pull pays this times the share of the class's buff groups up on the bot (and the owner)
 Animus.Curriculum.Support.BuffCoverage = 0.3
 #   a class that keeps a pet (hunter, warlock, death knight, mage) with it out when a fight starts, paid once at the
@@ -400,6 +417,29 @@ Animus.Curriculum.Pulls.TimeoutFloor = 0.5
 #   overtime left; a timeout alone, 150 s away, is too discounted to stop kiting out the clock
 Animus.Curriculum.Pulls.Overtime = 0.1
 Animus.Curriculum.Pulls.OvertimeGraceMs = 60000
+#   pack: crowd control paid as the damage it prevents, not as time held. Each add kept out of the fight is credited
+#   its own measured damage rate over the decision, divided by the seat's health now (floored at ControlHealthFloor of
+#   its maximum), so a prevented hit is worth more the less health there is to lose -- the same currency DamageTaken is
+#   charged in, which is why the two weights are comparable and control no longer loses to the overtime clock.
+#   Half DamageTaken: what a held add would have dealt is estimated, not observed, and the health floor can multiply
+#   it fivefold, so control is paid less than the damage it is credited with preventing. Measured at 0 until
+#   2026-09-18 (stage2_pack at 30M: control_prevented 0.03 healths a fight, reward_control 0.00 -- nothing was
+#   controlled because nothing paid for it).
+Animus.Curriculum.Pulls.SinglePackControl = 0.5
+#   ... at most this much a pull, a guard against a sim quirk rather than a shaping knob
+Animus.Curriculum.Pulls.SinglePackControlMax = 1.0
+#   the health divisor's floor, as a fraction of maximum health, so control's value cannot run away near death
+Animus.Curriculum.Pulls.ControlHealthFloor = 0.2
+#   what an add that never got to act is assumed to have prevented, in maximum healths per second: a pack sapped
+#   before it swings has no measured rate of its own, and pre-pull control is the most valuable kind
+Animus.Curriculum.Pulls.ControlFallbackDps = 0.02
+#   how long an add must be loose before its own measured rate is trusted over the pull's mean (ms)
+Animus.Curriculum.Pulls.ControlRateMinMs = 3000
+#   pack: the overtime grace grows by the wall time at least one add was held, up to this much (ms), so holding an add
+#   is not charged as dragging the fight out: with the grace alone, the overtime charge took back what the control
+#   paid. 0 leaves the grace alone. Bounded on purpose -- Overtime is what stops kiting the clock, and an unbounded
+#   pause would hand that back
+Animus.Curriculum.Pulls.ControlGraceMaxMs = 15000
 Animus.Curriculum.Pulls.Stall = 0.08
 Animus.Curriculum.Pulls.StallGraceMs = 15000
 #   pack: the grace grows by the time spent starting buffs, forms, stances, stealth and pet summons out of combat (each
