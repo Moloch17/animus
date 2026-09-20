@@ -103,6 +103,11 @@ namespace Animus::Curriculum
         bool Hazards = false;
         /// Travel: the objective is far enough that flying beats riding (the stage's map must allow flight).
         bool Flying = false;
+        /// Travel: no mount may be summoned, so the trip is made on the seat's own legs. What is left to learn
+        /// is what a player does before it can ride: the speed cooldowns (Sprint, Dash, Travel Form, Aspect of
+        /// the Cheetah), not stopping, and not wandering off the path. Mounting is masked, not merely unpaid,
+        /// because a masked action cannot be explored into and the lesson stays clean.
+        bool OnFoot = false;
 
         [[nodiscard]] uint32 SeatCount() const;
     };

@@ -230,9 +230,11 @@ namespace Animus::Curriculum
 
         RaidView Raid;
 
-        // Travel: where the seat is going.
+        // Travel: where the seat is going, and whether it may ride there.
         bool HasObjective = false;
         Position Objective;
+        /// False in an on-foot arena (ArenaDefinition::OnFoot): the mount actions are masked out.
+        bool MountsAllowed = true;
 
         // Flag match: the seat's flag and the other side's, from the seat's side.
         enum class FlagState : uint8 { AtBase, Carried, Dropped };

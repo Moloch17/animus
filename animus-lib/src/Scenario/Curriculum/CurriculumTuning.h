@@ -503,6 +503,11 @@ namespace Animus::Curriculum
         {
             float ObjectiveMin = 60.0f;         // ground: yards from the start (by path, reachable on foot)
             float ObjectiveMax = 320.0f;
+            /// On foot (ArenaDefinition::OnFoot): shorter, because the lesson is how well the seat covers
+            /// ground with what it has rather than whether a ride is worth summoning. Long enough that a
+            /// speed cooldown pays for itself and short enough that the trip is not simply a wait.
+            float FootMin = 40.0f;
+            float FootMax = 160.0f;
             float FlyingMin = 350.0f;           // flying arenas: yards from the start
             float FlyingMax = 700.0f;
             float Progress = 1.0f;              // potential shaping: per 100 yd closed (taken back for leaving)
@@ -752,6 +757,8 @@ namespace Animus::Curriculum
 
             f("Travel.ObjectiveMin", tuning.Travel.ObjectiveMin);
             f("Travel.ObjectiveMax", tuning.Travel.ObjectiveMax);
+            f("Travel.FootMin", tuning.Travel.FootMin);
+            f("Travel.FootMax", tuning.Travel.FootMax);
             f("Travel.FlyingMin", tuning.Travel.FlyingMin);
             f("Travel.FlyingMax", tuning.Travel.FlyingMax);
             f("Travel.Progress", tuning.Travel.Progress);

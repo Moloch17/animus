@@ -179,10 +179,14 @@ bool Animus::Curriculum::TravelEncounter::Build(Env& env, Map* map, uint8 /*leve
         return false;
 
     CurriculumTuning::TravelTuning const& tuning = _scenario.Tuning().Travel;
-    bool const flying = _scenario.Arena(env).Flying;
+    ArenaDefinition const& arena = _scenario.Arena(env);
+    bool const flying = arena.Flying;
     float walk = 0.0f;
-    if (!FindPlace(bot, map, flying ? tuning.FlyingMin : tuning.ObjectiveMin,
-        flying ? tuning.FlyingMax : tuning.ObjectiveMax, flying, travel.Objective, &walk))
+    // On foot the trip is shorter: the lesson is how well the seat covers ground with what it has, not
+    // whether a ride is worth summoning.
+    float const least = flying ? tuning.FlyingMin : arena.OnFoot ? tuning.FootMin : tuning.ObjectiveMin;
+    float const most = flying ? tuning.FlyingMax : arena.OnFoot ? tuning.FootMax : tuning.ObjectiveMax;
+    if (!FindPlace(bot, map, least, most, flying, travel.Objective, &walk))
         return false;
 
     travel.HasObjective = true;
@@ -206,6 +210,7 @@ void Animus::Curriculum::TravelEncounter::View(Env const& env, uint32 /*seat*/, 
     EnvTravel const& travel = _envs[env.Index];
     view.HasObjective = travel.HasObjective;
     view.Objective = travel.Objective;
+    view.MountsAllowed = !_scenario.Arena(env).OnFoot;
 }
 
 void Animus::Curriculum::TravelEncounter::Reward(Env& env, uint32 seatIndex, Player* bot, RewardLedger& ledger)
