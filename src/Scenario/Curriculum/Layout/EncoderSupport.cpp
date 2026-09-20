@@ -686,6 +686,11 @@ namespace Animus::Curriculum::Encoding
         return true;
     }
 
+    bool CanSee(WorldObject const* watcher, WorldObject const* target)
+    {
+        return watcher && target && watcher->CanSeeOrDetect(target) && watcher->IsWithinLOSInMap(target);
+    }
+
     void MoveTo(Player* bot, uint32 pointId, float x, float y, float z)
     {
         bot->GetMotionMaster()->Clear();

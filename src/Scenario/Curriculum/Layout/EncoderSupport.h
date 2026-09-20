@@ -210,6 +210,15 @@ namespace Animus::Curriculum::Encoding
     [[nodiscard]] bool SnapToGround(Map const* map, uint32 phaseMask, Position& at, float fromZ,
         float maxStep = 6.0f);
 
+    /// Whether `watcher` actually has eyes on `target`: it can detect it *and* nothing is in the way.
+    ///
+    /// `CanSeeOrDetect` alone is grid visibility plus stealth and invisibility -- it does not raycast, so it
+    /// stays true through a wall. Anything whose meaning is "is being watched right now" has to add the line
+    /// of sight, or breaking it changes nothing: a hunter keeps tracking its quarry around a pillar, and an
+    /// evade drill reads zero for every class that has no stealth. The cheap test runs first, so the raycast
+    /// only happens for something already detectable.
+    [[nodiscard]] bool CanSee(WorldObject const* watcher, WorldObject const* target);
+
     void MoveTo(Player* bot, uint32 pointId, float x, float y, float z);
 
     /// Send the bot's pets and guardians at `target`, as the pet bar's Attack does. True if any was ordered.

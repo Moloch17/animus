@@ -2030,7 +2030,7 @@ bool Animus::Curriculum::StageScenario::SideCanSee(Env const& env, uint32 side, 
 
     for (uint32 seat = 0; seat < _seatCount; ++seat)
         if (SideOf(env, seat) == side)
-            if (Player const* bot = SeatBot(env, seat); bot && bot->IsAlive() && bot->CanSeeOrDetect(unit))
+            if (Player const* bot = SeatBot(env, seat); bot && bot->IsAlive() && Encoding::CanSee(bot, unit))
                 return true;
 
     return false;
