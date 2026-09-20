@@ -254,6 +254,19 @@ namespace Animus::Curriculum
             ObjectGuid Usable;
         } Flags;
 
+        /// What the side's director asked of this seat. Advice, not a lever: the seat reads it and still chooses
+        /// its own actions. Inactive in an arena with no director, where every field below is ignored.
+        struct TeamOrder
+        {
+            bool Active = false;
+            TeamPosture Posture = TeamPosture::Attack;
+            TeamRally Rally = TeamRally::None;
+            Position RallyPlace;                    // where Rally resolved to, when it names a place
+            bool HasRallyPlace = false;
+            Unit* Focus = nullptr;                  // the enemy the side concentrates on, when one is called
+            bool IsDuty = false;                    // this seat owes the next interrupt or control
+        } Order;
+
         // PvP: the enemy player.
         Player* Opponent = nullptr;
         bool OpponentHidden = false;                // the bot can neither see nor detect it
