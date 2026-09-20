@@ -539,6 +539,48 @@ namespace Animus::Curriculum
         std::vector<EnvTravel> _envs;
     };
 
+    /// The side's director: what the team holds to, who it concentrates on, what shape it takes, and whose turn
+    /// the next duty is. Written into every seat's SeatView::TeamOrder, read by the order block, and binding on
+    /// nobody -- an order is advice.
+    ///
+    /// Scripted for now, and deliberately legible: the lowest enemy is the focus, the duty goes round the side in
+    /// turn, and the rally follows the objective. A seat learns that following a sensible order pays before a
+    /// learned director has to discover what a sensible order is -- the same order the curriculum already uses
+    /// when a scripted enemy player comes before a learned one.
+    class DirectorEncounter final : public Encounter
+    {
+    public:
+        DirectorEncounter(StageScenario& scenario, uint32 envs);
+
+        void AddEpisodeInfo(EpisodeInfoTable& table) override;
+        void ResetEpisode(Env& env) override;
+        void Update(Env& env) override;
+        void View(Env const& env, uint32 seat, SeatView& view) const override;
+
+    private:
+        struct SideOrder
+        {
+            TeamPosture Posture = TeamPosture::Attack;
+            TeamRally Rally = TeamRally::None;
+            Position Place;
+            bool HasPlace = false;
+            ObjectGuid Focus;
+            uint32 Duty = NO_SEAT;              // the seat that owes the next interrupt or control
+            uint32 Changes = 0;                 // how often the call moved, for the episode info
+        };
+
+        struct EnvDirector
+        {
+            std::array<SideOrder, TEAM_COUNT> Sides;
+            uint32 Steps = 0;
+        };
+
+        /// One side's orders, from what its seats and the enemy's are doing.
+        void Command(Env& env, uint32 side);
+
+        std::vector<EnvDirector> _envs;
+    };
+
     /// Warsong Gulch's rules between the two mirror seats: each has a flag at its base; touching the other's takes it
     /// (and dismounts the carrier, who cannot mount while carrying), touching one's own dropped flag returns it, and
     /// carrying the other's home while one's own is there captures it. A carrier who dies drops the flag where it fell;
