@@ -86,13 +86,19 @@ namespace
     constexpr uint32 HAZARD_SEARCH_MS = 1000;
 
     /// Whether a class/role can get out of sight on purpose: anything in its catalog that makes it stealthed.
+    /// Whether the class itself can hide, asked of its trainers' spell list.
+    ///
+    /// Not of the action catalog, which is the union over every race the class may be: that union contains
+    /// Shadowmeld (58984), the night elf racial, which carries a stealth aura and is learnable by eleven of the
+    /// eighteen class/roles. A warrior that rolled a human would then play a stealth stage with no stealth at
+    /// all. The kit is the class trainers' list, so what it holds is true of every member of the class.
     bool CanStealth(Animus::Curriculum::ClassRoleAssets const& assets)
     {
-        if (!assets.Catalog)
+        if (!assets.Kit)
             return false;
 
-        for (Animus::Curriculum::ActionCatalog::Action const& action : assets.Catalog->Actions())
-            if (SpellInfo const* spell = sSpellMgr->GetSpellInfo(action.FirstRank);
+        for (Animus::Curriculum::ClassKit::KitSpell const& kitSpell : assets.Kit->Spells())
+            if (SpellInfo const* spell = sSpellMgr->GetSpellInfo(kitSpell.SpellId);
                 spell && spell->HasAura(SPELL_AURA_MOD_STEALTH))
                 return true;
 
