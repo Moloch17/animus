@@ -112,9 +112,9 @@ namespace
         switch (action)
         {
             case TravelBlock::ACTION_MOUNT_GROUND:
-                return CanSummon(bot, TravelBlock::GroundMount(bot));
+                return view.MountsAllowed && CanSummon(bot, TravelBlock::GroundMount(bot));
             case TravelBlock::ACTION_MOUNT_FLYING:
-                return CanSummon(bot, TravelBlock::FlyingMount(bot));
+                return view.MountsAllowed && CanSummon(bot, TravelBlock::FlyingMount(bot));
             case TravelBlock::ACTION_DISMOUNT:
                 return bot->IsMounted();
             case TravelBlock::ACTION_MOVE_TO_OBJECTIVE:
