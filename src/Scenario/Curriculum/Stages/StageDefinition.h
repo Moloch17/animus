@@ -134,6 +134,13 @@ namespace Animus::Curriculum
         std::string Extends;            // the stage it builds on and seeds from (the trunk); empty for the first
         std::vector<std::string> Merges{}; // further stages it seeds the blocks only they have from
         std::string Summary;
+        /// Played only by the class/roles whose own kit can make them stealthed (StageScenario's CanStealth,
+        /// asked of ClassKit so the answer is true of every member of the class rather than of one race of
+        /// it). A stage that sets this is restricted, and a restricted stage must be a leaf: its checkpoint
+        /// holds only the layouts it played, and init_from: auto takes the first checkpoint in the chain that
+        /// exists, so anything seeding from it would start the rest from random weights in silence. Problem()
+        /// refuses any stage that extends or merges one.
+        bool NeedsStealth = false;
         std::vector<BlockId> Blocks;    // in layout order: every block any of its arenas needs
         std::vector<ArenaDefinition> Arenas;
         bool InDefaultQueue = true;     // trained by an empty AnimusForge.Queue (false: only when named)

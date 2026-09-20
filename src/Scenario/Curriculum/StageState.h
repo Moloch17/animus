@@ -71,7 +71,7 @@ namespace Animus::Curriculum
         uint32 CastsOther = 0;
         bool TimedOut = false;                  // creature duel: the clock ran out with neither side dead
         uint32 TargetEvadeMs = 0;               // creature duel: time the opponent spent evading (leashed, unreachable)
-        uint32 OutOfSightMs = 0;
+        uint32 OutOfSightMs = 0;                // creature duel: time engaged without line of sight to the opponent
         /// Hiding, for the stages that are about it. Unseen time is measured and never paid: the optimal
         /// policy for "seconds unseen" is to run to the far corner at the start and stand there, which is
         /// exactly the farmable shape animus.rewards exists to catch, and it would catch it only after a run
@@ -85,7 +85,19 @@ namespace Animus::Curriculum
         bool WasSeen = false;
         bool WasStealthed = false;
         bool PendingLosBreak = false;   // pressed break_line_of_sight; next decision says whether it worked
-        uint32 BreakPaidMs = 0;         // cooldown on the transition nudge                // creature duel: time engaged without line of sight to the opponent
+        uint32 BreakPaidMs = 0;         // cooldown on the transition nudge
+        /// Stalking, for the stealth stage: closing on someone while stealthed and unseen, and staying there.
+        /// Paid per decision inside StalkYards, which the evade reward deliberately is not -- the difference
+        /// is that this one is bounded (StalkMax) and that holding the position it pays for is the hard part,
+        /// not the trivial one. Standing stealthed inside melee range of something that is actively looking
+        /// is a skill; standing unseen in the far corner of the map is not.
+        uint32 StalkMs = 0;             // decisions spent stealthed, unseen and inside StalkYards
+        uint32 StalkStreakMs = 0;       // ... unbroken
+        uint32 LongestStalkMs = 0;
+        uint32 StalkApproaches = 0;     // times it came from outside StalkYards to inside, stealthed
+        float ClosestStealthedYards = 0.0f;     // nearest it got while stealthed and unseen; 0 = never stealthed
+        float StalkPaid = 0.0f;         // what the stalk nudge has paid this episode, against StalkMax
+        bool WasStalking = false;
         uint32 UnreachableMs = 0;               // creature duel: time the opponent had no path to its victim
         uint32 UnreachableStreakMs = 0;         // ... without a break, up to now
         uint32 OpponentTeleports = 0;           // ... times it was put back beside its victim for it

@@ -241,6 +241,23 @@ namespace Animus::Curriculum
             uint32 EscapeMs = 8000;
         } Evade;
 
+        /// Stalking: closing on someone while stealthed, and staying there. The stealth stage's own lesson,
+        /// and the one thing here that is paid per decision rather than on a transition.
+        struct StealthTuning
+        {
+            /// Paid each decision the seat is stealthed, unseen, and within StalkYards of its opponent, up to
+            /// StalkMax an episode. Per-decision shaping is what the order nudge had to be cut for, so this
+            /// one is capped outright: what it is worth is fixed no matter how long the episode runs, and the
+            /// opener it sets up (Combat.StealthOpener) stays the larger prize.
+            ///
+            /// Time unseen is still never paid. The difference is the distance condition: staying stealthed
+            /// inside StalkYards of something that is actively looking is the skill being taught, where
+            /// staying unseen in the far corner of the map is the absence of one.
+            float Stalk = 0.02f;
+            float StalkYards = 10.0f;
+            float StalkMax = 1.0f;
+        } Stealth;
+
         /// What the director's own calls mean in yards.
         struct DirectorTuning
         {
@@ -676,6 +693,9 @@ namespace Animus::Curriculum
             f("Evade.BrokeContact", tuning.Evade.BrokeContact);
             f("Evade.BreakCooldownMs", tuning.Evade.BreakCooldownMs);
             f("Evade.EscapeMs", tuning.Evade.EscapeMs);
+            f("Stealth.Stalk", tuning.Stealth.Stalk);
+            f("Stealth.StalkYards", tuning.Stealth.StalkYards);
+            f("Stealth.StalkMax", tuning.Stealth.StalkMax);
 
             f("Director.PlaceNearYards", tuning.Director.PlaceNearYards);
             f("Director.PlaceFarYards", tuning.Director.PlaceFarYards);
