@@ -283,6 +283,14 @@ Animus.Curriculum.Casting.Cancel = 0.05
 #   (fight, control, recover, protect, position, prepare). Small on purpose: it keeps the goals apart so a goal head
 #   cannot collapse into one goal, rather than paying for play the stage's own terms already price
 Animus.Curriculum.Goals.Match = 0.02
+#   every arena with a director, per decision a seat spends fighting the enemy its director called, while one is
+#   called and alive. Compliance shaping: an order is meant to be followed because following it wins fights, but a
+#   channel that correlates with nothing cannot bootstrap into that. stage19_duo_led ran 30M steps with the order
+#   paying nothing and order_focus_kept sat at chance the whole way, so the director's calls changed nothing in the
+#   world and it never left exploration. The same job Goals.Match does for the goal head; anneal towards 0 once
+#   order_focus_kept holds up without it. The director itself never earns this -- it is taken back out of its own
+#   reward, or it would learn to call whoever its seats were already fighting
+Animus.Curriculum.Order.Focus = 0.01
 Animus.Curriculum.Support.SelfHealing = 0.5
 #   gauntlets: engaging a pull pays this times the share of the class's buff groups up on the bot (and the owner)
 Animus.Curriculum.Support.BuffCoverage = 0.3
