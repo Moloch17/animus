@@ -289,8 +289,11 @@ Animus.Curriculum.Goals.Match = 0.02
 #   paying nothing and order_focus_kept sat at chance the whole way, so the director's calls changed nothing in the
 #   world and it never left exploration. The same job Goals.Match does for the goal head; anneal towards 0 once
 #   order_focus_kept holds up without it. The director itself never earns this -- it is taken back out of its own
-#   reward, or it would learn to call whoever its seats were already fighting
-Animus.Curriculum.Order.Focus = 0.01
+#   reward, or it would learn to call whoever its seats were already fighting.
+#   Small because a per-decision term adds up over a fight: at 0.01 it earned 5.01 an episode, 23.7% of gross and
+#   level with the kill and the death, which would buy tunnel vision on the called target. At 0.001 full compliance
+#   is worth about 0.5, a tenth of the kill
+Animus.Curriculum.Order.Focus = 0.001
 Animus.Curriculum.Support.SelfHealing = 0.5
 #   gauntlets: engaging a pull pays this times the share of the class's buff groups up on the bot (and the owner)
 Animus.Curriculum.Support.BuffCoverage = 0.3
