@@ -294,12 +294,17 @@ namespace
             .Extends = "stage15_pvp",
             .Summary = "a fight it cannot win: break away, break line of sight, and live to the end of it",
             .Blocks = { Core, Duel, Pet, Pvp },
-            // Six levels up is a fight no class wins straight: the win condition is being alive at 120 s, which is
-            // what makes running, cover and the escape cooldown the only policy that scores. Nothing pays time
-            // spent hidden -- that would be farmed by walking to the far corner at t=0 -- only the transition out
-            // of contact (RewardTerm::BrokeContact, once per break with a cooldown).
+            // Ten levels up. Six was chosen against the open-field arena and stopped being a losing fight once
+            // the spawn had cover: the `fight` baseline, which never tries to hide, went from winning 0.188 of
+            // these to winning 0.447, because terrain blocks the scripted opponent's casting as readily as it
+            // hides the seat. A drill about leaving a fight has to be a fight worth leaving.
+            //
+            // The win condition is being alive at 120 s, which is what makes running, cover and the escape
+            // cooldown the only policy that scores. Nothing pays time spent hidden -- that would be farmed by
+            // walking to the far corner at t=0 -- only the transition out of contact (RewardTerm::BrokeContact,
+            // once per break with a cooldown).
             .Arenas = { { .Name = "evade", .Against = Opposition::ScriptedPlayer, .Pvp = true,
-                .EpisodeSeconds = 120, .OpponentLevelBonus = 6 } },
+                .EpisodeSeconds = 120, .OpponentLevelBonus = 10 } },
             // Cover is the whole point, and the default spawn is open field: the first run of this stage read
             // exactly 0.000 contact breaks for twelve of the eighteen class/roles, because on flat ground
             // nothing but stealth can break line of sight. These are walkable ground inside Durnholde Keep
@@ -326,10 +331,10 @@ namespace
             .Summary = "open from stealth against a stronger enemy, and get back into it once the fight turns",
             .NeedsStealth = true,
             .Blocks = { Core, Duel, Pet, Pvp },
-            // Four levels up rather than six: the opener has to be worth taking, so the fight must be winnable
-            // from stealth and unwinnable head-on.
+            // Six levels up rather than the evade drill's ten: the opener has to be worth taking, so the fight
+            // must be winnable from stealth and unwinnable head-on.
             .Arenas = { { .Name = "stealth", .Against = Opposition::ScriptedPlayer, .Pvp = true,
-                .EpisodeSeconds = 120, .OpponentLevelBonus = 4 } },
+                .EpisodeSeconds = 120, .OpponentLevelBonus = 6 } },
             // Cover is the whole point, and the default spawn is open field: the first run of this stage read
             // exactly 0.000 contact breaks for twelve of the eighteen class/roles, because on flat ground
             // nothing but stealth can break line of sight. These are walkable ground inside Durnholde Keep
