@@ -22,6 +22,7 @@
 #include "ObjectAccessor.h"
 #include "Player.h"
 #include "SeatView.h"
+#include "EncoderSupport.h"
 #include "StageDefinition.h"
 #include "StageScenario.h"
 #include <algorithm>
@@ -43,7 +44,7 @@ Animus::Curriculum::DirectorEncounter::DirectorEncounter(StageScenario& scenario
 
 std::vector<Animus::Curriculum::RewardTerm> Animus::Curriculum::DirectorEncounter::RewardTerms() const
 {
-    return { RewardTerm::OrderMatch };
+    return { RewardTerm::OrderMatch, RewardTerm::PlaceMatch };
 }
 
 void Animus::Curriculum::DirectorEncounter::BeforeRewards(Env& env)
@@ -71,6 +72,8 @@ void Animus::Curriculum::DirectorEncounter::Reward(Env& env, uint32 seat, Player
     if (!focus || !focus->IsAlive())
         return;
 
+    RewardPlace(env, seat, bot, ledger);
+
     Unit const* target = _scenario.SeatTarget(env, seat);
     if (!target || target->GetGUID() != order.Focus)
         return;
@@ -78,6 +81,37 @@ void Animus::Curriculum::DirectorEncounter::Reward(Env& env, uint32 seat, Player
     float const paid = _scenario.Tuning().Order.Focus * _scenario.DecisionScale();
     ledger.Add(RewardTerm::OrderMatch, paid);
     _envs[env.Index].Shaping[seat] = paid;
+}
+
+/// Paid for arriving where the side was sent, once, on the crossing.
+///
+/// Never per decision. Nothing pays a seat for going where it is told today, so the place channel would stay
+/// as inert as it has been since it was written -- but a per-decision payment for standing in the right spot
+/// is the exact shape that made the focus nudge 23.7% of gross before it was cut, and a seat could farm it by
+/// stepping over the edge and back. A crossing with a cooldown can be earned once and then only by going
+/// somewhere else first.
+void Animus::Curriculum::DirectorEncounter::RewardPlace(Env& env, uint32 seat, Player* bot, RewardLedger& ledger)
+{
+    EnvDirector& state = _envs[env.Index];
+    SideOrder& order = state.Sides[_scenario.SideOf(env, seat)];
+    if (seat >= MAX_SEATS)
+        return;
+
+    bool const inside = bot && bot->IsAlive() && order.HasPlace && order.Rally == TeamRally::Point
+        && bot->GetExactDist2d(&order.Place) <= _scenario.Tuning().Order.PlaceRadius;
+    bool const arrived = inside && !order.WasAtPlace[seat];
+    order.WasAtPlace[seat] = inside ? 1 : 0;
+    if (!arrived)
+        return;
+
+    uint32 const cooldown = _scenario.Tuning().Order.PlaceCooldownMs;
+    if (order.PlacePaidMs[seat] && env.EpisodeElapsedMs < order.PlacePaidMs[seat] + cooldown)
+        return;
+
+    order.PlacePaidMs[seat] = std::max<uint32>(1, env.EpisodeElapsedMs);
+    float const paid = _scenario.Tuning().Order.PlaceMatch;
+    ledger.Add(RewardTerm::PlaceMatch, paid);
+    state.Shaping[seat] += paid;
 }
 
 void Animus::Curriculum::DirectorEncounter::AddEpisodeInfo(EpisodeInfoTable& table)
@@ -123,6 +157,21 @@ void Animus::Curriculum::DirectorEncounter::AddEpisodeInfo(EpisodeInfoTable& tab
     table.Add("director_enemies_seen", [share](Env const& env, uint32 seat)
     {
         return share(env, seat, [](SideOrder const& side) { return side.SeenSum; });
+    });
+    table.Add("order_place_called", [share](Env const& env, uint32 seat)
+    {
+        return share(env, seat, [](SideOrder const& side) { return float(side.PlaceCalled); });
+    });
+    // Seat-decisions spent inside the called place, against the decisions one was standing.
+    table.Add("order_place_reached", [this](Env const& env, uint32 seat)
+    {
+        SideOrder const& side = _envs[env.Index].Sides[_scenario.SideOf(env, seat)];
+        return side.PlaceCalled ? float(side.PlaceReached) / float(side.PlaceCalled) : 0.0f;
+    });
+    table.Add("order_place_distance", [this](Env const& env, uint32 seat)
+    {
+        SideOrder const& side = _envs[env.Index].Sides[_scenario.SideOf(env, seat)];
+        return side.PlaceCalled ? side.PlaceDistanceSum / float(side.PlaceCalled) : 0.0f;
     });
     // Whether the side was doing what it was told: the share of its seats on the called target.
     table.Add("order_focus_kept", [this](Env const& env, uint32 seat)
@@ -189,6 +238,141 @@ void Animus::Curriculum::DirectorEncounter::Observe(Env& env, uint32 side)
         if (seat.L)
             memory.PlayRole = seat.L->PlayRole();
     }
+}
+
+/// Rebuild the standing place from the three fields that name it.
+///
+/// Recomputed every decision rather than stored once, so a place hung on the focus or on the side's own centre
+/// follows them as they move -- "stay behind him" has to mean behind him now, not behind where he was when it
+/// was said. HasPlace is derived here and nowhere else.
+void Animus::Curriculum::DirectorEncounter::ResolvePlace(Env& env, uint32 side)
+{
+    EnvDirector& state = _envs[env.Index];
+    SideOrder& order = state.Sides[side];
+    SideKnowledge const& known = state.Knowledge[side];
+
+    order.HasPlace = false;
+    if (order.Rally != TeamRally::Point)
+        return;
+
+    std::array<uint32, TEAM_SEATS> mine{};
+    uint32 const own = _scenario.SideSeats(env, side, mine);
+
+    // The side's own centre, and a living seat to read the map and the phase from.
+    Player const* anySeat = nullptr;
+    float centreX = 0.0f, centreY = 0.0f, centreZ = 0.0f;
+    uint32 standing = 0;
+    for (uint32 slot = 0; slot < own; ++slot)
+        if (Player const* bot = _scenario.SeatBot(env, mine[slot]); bot && bot->IsAlive())
+        {
+            centreX += bot->GetPositionX();
+            centreY += bot->GetPositionY();
+            centreZ += bot->GetPositionZ();
+            anySeat = bot;
+            ++standing;
+        }
+
+    if (!standing || !anySeat)
+        return;
+
+    centreX /= float(standing);
+    centreY /= float(standing);
+    centreZ /= float(standing);
+
+    // Where the enemy is, as far as the side knows: the axis every offset is measured along, and the anchor
+    // for the two that name an enemy.
+    float enemyX = 0.0f, enemyY = 0.0f;
+    uint32 enemies = 0;
+    Position lastSeen;
+    uint32 lastSeenMs = 0;
+    bool haveLastSeen = false;
+    for (uint32 slot = 0; slot < PACK_SLOTS; ++slot)
+    {
+        EnemyMemory const& memory = known.Enemies[slot];
+        if (!memory.Known)
+            continue;
+
+        enemyX += memory.LastSeen.GetPositionX();
+        enemyY += memory.LastSeen.GetPositionY();
+        ++enemies;
+        if (!haveLastSeen || memory.LastSeenMs >= lastSeenMs)
+        {
+            lastSeen = memory.LastSeen;
+            lastSeenMs = memory.LastSeenMs;
+            haveLastSeen = true;
+        }
+    }
+
+    Position anchor;
+    switch (order.Anchor)
+    {
+        case PlaceAnchor::TeamCentre:
+            anchor.Relocate(centreX, centreY, centreZ);
+            break;
+        case PlaceAnchor::Focus:
+        {
+            bool found = false;
+            for (uint32 slot = 0; slot < PACK_SLOTS && !found; ++slot)
+                if (known.Enemies[slot].Known && known.Enemies[slot].Guid == order.Focus)
+                {
+                    anchor = known.Enemies[slot].LastSeen;
+                    found = true;
+                }
+
+            if (!found)
+                return;
+            break;
+        }
+        case PlaceAnchor::LastSeenEnemy:
+            if (!haveLastSeen)
+                return;
+            anchor = lastSeen;
+            break;
+        // The objective and the bases are the flag match's to know (Encounter::ViewDirector), and nothing
+        // fills them in yet. Naming one resolves to nothing rather than to somewhere wrong.
+        case PlaceAnchor::Objective:
+        case PlaceAnchor::OwnBase:
+        case PlaceAnchor::EnemyBase:
+        case PlaceAnchor::Count:
+            return;
+    }
+
+    // The axis: from the anchor towards where the enemy is. With no enemy known at all, the side's own facing
+    // is the only orientation it has.
+    float axis = anySeat->GetOrientation();
+    if (enemies)
+    {
+        float const dx = enemyX / float(enemies) - anchor.GetPositionX();
+        float const dy = enemyY / float(enemies) - anchor.GetPositionY();
+        if (dx != 0.0f || dy != 0.0f)
+            axis = std::atan2(dy, dx);
+    }
+
+    float const radius = order.Ring == PlaceRing::Far ? _scenario.Tuning().Director.PlaceFarYards
+        : _scenario.Tuning().Director.PlaceNearYards;
+
+    float bearing = axis;
+    switch (order.Offset)
+    {
+        case PlaceOffset::At:     break;
+        case PlaceOffset::Toward: break;
+        case PlaceOffset::Away:   bearing = axis + float(M_PI); break;
+        case PlaceOffset::Left:   bearing = axis + float(M_PI) / 2.0f; break;
+        case PlaceOffset::Right:  bearing = axis - float(M_PI) / 2.0f; break;
+        case PlaceOffset::Count:  return;
+    }
+
+    Position place = anchor;
+    if (order.Offset != PlaceOffset::At)
+        place.Relocate(anchor.GetPositionX() + radius * std::cos(bearing),
+            anchor.GetPositionY() + radius * std::sin(bearing), anchor.GetPositionZ());
+
+    // Somewhere the side could actually stand. An unsnapped point sends everyone into a wall.
+    if (!Encoding::SnapToGround(anySeat->FindMap(), anySeat->GetPhaseMask(), place, anchor.GetPositionZ()))
+        return;
+
+    order.Place = place;
+    order.HasPlace = true;
 }
 
 void Animus::Curriculum::DirectorEncounter::Forget(Env& env, uint32 side)
@@ -284,6 +468,24 @@ void Animus::Curriculum::DirectorEncounter::Measure(Env& env, uint32 side)
         seen += known.Seen[slot] ? 1 : 0;
     order.SeenSum += float(seen);
 
+    // Whether the place channel is being used at all, and whether anyone goes. It has never carried a value
+    // in its life, so its first non-zero reading is the test that it works.
+    if (order.HasPlace)
+    {
+        ++order.PlaceCalled;
+        std::array<uint32, TEAM_SEATS> mine{};
+        uint32 const own = _scenario.SideSeats(env, side, mine);
+        float const radius = _scenario.Tuning().Order.PlaceRadius;
+        for (uint32 slot = 0; slot < own; ++slot)
+            if (Player const* bot = _scenario.SeatBot(env, mine[slot]); bot && bot->IsAlive())
+            {
+                float const away = bot->GetExactDist2d(&order.Place);
+                order.PlaceDistanceSum += away;
+                if (away <= radius)
+                    ++order.PlaceReached;
+            }
+    }
+
     if (!focus)
         return;
 
@@ -303,6 +505,10 @@ void Animus::Curriculum::DirectorEncounter::Update(Env& env)
     // worth calling, and for a learned director that question has to be answered from what its side knows.
     for (uint32 side = 0; side < TEAM_COUNT; ++side)
         Observe(env, side);
+
+    // After the sighting and before anything reads the order: the place follows whatever it is anchored to.
+    for (uint32 side = 0; side < TEAM_COUNT; ++side)
+        ResolvePlace(env, side);
 
     // Before anything reads the order: a call at a corpse is not a call. The order stands between the
     // director's decisions -- ten of them, and longer still if it never spends another action on the focus --
@@ -349,12 +555,47 @@ void Animus::Curriculum::DirectorEncounter::Call(Env& env, uint32 side, int32 ac
         return;
     }
 
-    if (local < DirectorLayout::ACTION_FOCUS_FIRST)
+    if (local < DirectorLayout::ACTION_ANCHOR_FIRST)
     {
         TeamRally const rally = TeamRally(local - DirectorLayout::ACTION_RALLY_FIRST);
         if (rally != order.Rally)
         {
             order.Rally = rally;
+            Changed(order, state.Steps);
+        }
+        return;
+    }
+
+    // The three fields that name a place. Each is one call, so a whole place costs three of them -- which is
+    // what keeps the vocabulary at thirteen actions instead of one per reachable spot.
+    if (local < DirectorLayout::ACTION_OFFSET_FIRST)
+    {
+        PlaceAnchor const anchor = PlaceAnchor(local - DirectorLayout::ACTION_ANCHOR_FIRST);
+        if (anchor != order.Anchor)
+        {
+            order.Anchor = anchor;
+            Changed(order, state.Steps);
+        }
+        return;
+    }
+
+    if (local < DirectorLayout::ACTION_RING_FIRST)
+    {
+        PlaceOffset const offset = PlaceOffset(local - DirectorLayout::ACTION_OFFSET_FIRST);
+        if (offset != order.Offset)
+        {
+            order.Offset = offset;
+            Changed(order, state.Steps);
+        }
+        return;
+    }
+
+    if (local < DirectorLayout::ACTION_FOCUS_FIRST)
+    {
+        PlaceRing const ring = PlaceRing(local - DirectorLayout::ACTION_RING_FIRST);
+        if (ring != order.Ring)
+        {
+            order.Ring = ring;
             Changed(order, state.Steps);
         }
         return;
@@ -483,6 +724,11 @@ void Animus::Curriculum::DirectorEncounter::ViewSide(Env const& env, uint32 side
     view.Rally = order.Rally;
     view.HasFocus = bool(order.Focus);
     view.HasDuty = order.Duty != NO_SEAT;
+    view.Anchor = order.Anchor;
+    view.Offset = order.Offset;
+    view.Ring = order.Ring;
+    view.PlaceValid = order.HasPlace;
+    view.PlacesAllowed = _scenario.Arena(env).Places;
     view.SinceCall = std::min(1.0f,
         float(state.Steps - std::min(state.Steps, order.CalledStep)) / DirectorLayout::CALL_AGE_SCALE);
 
@@ -524,6 +770,32 @@ void Animus::Curriculum::DirectorEncounter::ViewSide(Env const& env, uint32 side
         return std::min(1.0f, std::sqrt(dx * dx + dy * dy) / DirectorLayout::DISTANCE_SCALE);
     };
 
+    // The side's own axis: its centre towards where it believes the enemy is. Every bearing below is measured
+    // about it, so the director reads its side's shape in terms of the fight rather than of the compass --
+    // which is what makes "left" and "away" mean anything to something with no idea which way north is.
+    float axis = 0.0f;
+    {
+        float enemyX = 0.0f, enemyY = 0.0f;
+        uint32 enemies = 0;
+        for (uint32 slot = 0; slot < PACK_SLOTS; ++slot)
+            if (EnemyMemory const& memory = state.Knowledge[side].Enemies[slot]; memory.Known)
+            {
+                enemyX += memory.LastSeen.GetPositionX();
+                enemyY += memory.LastSeen.GetPositionY();
+                ++enemies;
+            }
+
+        if (enemies)
+            axis = std::atan2(enemyY / float(enemies) - centreY, enemyX / float(enemies) - centreX);
+    }
+
+    auto const bearing = [&](Position const& at, float& out_sin, float& out_cos)
+    {
+        float const angle = std::atan2(at.GetPositionY() - centreY, at.GetPositionX() - centreX) - axis;
+        out_sin = std::sin(angle);
+        out_cos = std::cos(angle);
+    };
+
     view.SeatCount = own;
     float health = 0.0f;
     for (uint32 slot = 0; slot < own; ++slot)
@@ -543,7 +815,10 @@ void Animus::Curriculum::DirectorEncounter::ViewSide(Env const& env, uint32 side
         out.InCombat = bot->IsInCombat();
         out.Casting = bot->IsNonMeleeSpellCast(false, false, true);
         out.Spread = spread(*bot);
+        bearing(*bot, out.BearingSin, out.BearingCos);
         out.IsDuty = order.Duty == mine[slot];
+        out.AtPlace = order.HasPlace
+            && bot->GetExactDist2d(&order.Place) <= _scenario.Tuning().Order.PlaceRadius;
         if (focus)
         {
             out.ToFocus = std::min(1.0f, bot->GetExactDist2d(focus) / DirectorLayout::DISTANCE_SCALE);
@@ -580,6 +855,7 @@ void Animus::Curriculum::DirectorEncounter::ViewSide(Env const& env, uint32 side
         out.PlayRole = memory.PlayRole;
         out.IsFocus = memory.Guid == order.Focus;
         out.Spread = spread(memory.LastSeen);
+        bearing(memory.LastSeen, out.BearingSin, out.BearingCos);
         out.UnseenTime = out.Seen ? 0.0f
             : std::min(1.0f, float(env.EpisodeElapsedMs - std::min(env.EpisodeElapsedMs, memory.LastSeenMs))
                 / DirectorLayout::MAX_UNSEEN_TIME_MS);
@@ -604,6 +880,14 @@ void Animus::Curriculum::DirectorEncounter::ViewSide(Env const& env, uint32 side
     // decorative, since the side's average enemy health is most of what a focus call is chosen from.
     view.EnemyStanding = view.EnemyCount ? float(enemyStanding) / float(view.EnemyCount) : 0.0f;
     view.EnemyHealth = enemyStanding ? enemyHealth / float(enemyStanding) : 0.0f;
+
+    // How far the side is from where it was told to be.
+    if (order.HasPlace && standing)
+    {
+        float const dx = order.Place.GetPositionX() - centreX;
+        float const dy = order.Place.GetPositionY() - centreY;
+        view.PlaceDistance = std::min(1.0f, std::sqrt(dx * dx + dy * dy) / DirectorLayout::DISTANCE_SCALE);
+    }
 
     // The objective, from whichever encounter keeps one.
     for (Encounter* encounter : _scenario.ActiveEncounters(env))

@@ -123,6 +123,7 @@ std::string_view Animus::Curriculum::PostureName(TeamPosture posture)
         case TeamPosture::Protect: return "protect";
         case TeamPosture::Recover: return "recover";
         case TeamPosture::Regroup: return "regroup";
+        case TeamPosture::Hold:    return "hold";
         case TeamPosture::Count:   break;
     }
 
@@ -140,7 +141,51 @@ std::string_view Animus::Curriculum::RallyName(TeamRally rally)
         case TeamRally::Focus:     return "focus";
         case TeamRally::Spread:    return "spread";
         case TeamRally::Stack:     return "stack";
+        case TeamRally::Point:     return "point";
         case TeamRally::Count:     break;
+    }
+
+    return "unknown";
+}
+
+std::string_view Animus::Curriculum::AnchorName(PlaceAnchor anchor)
+{
+    switch (anchor)
+    {
+        case PlaceAnchor::TeamCentre:    return "team";
+        case PlaceAnchor::Focus:         return "focus";
+        case PlaceAnchor::LastSeenEnemy: return "last_seen";
+        case PlaceAnchor::Objective:     return "objective";
+        case PlaceAnchor::OwnBase:       return "own_base";
+        case PlaceAnchor::EnemyBase:     return "enemy_base";
+        case PlaceAnchor::Count:         break;
+    }
+
+    return "unknown";
+}
+
+std::string_view Animus::Curriculum::OffsetName(PlaceOffset offset)
+{
+    switch (offset)
+    {
+        case PlaceOffset::At:     return "at";
+        case PlaceOffset::Toward: return "toward";
+        case PlaceOffset::Away:   return "away";
+        case PlaceOffset::Left:   return "left";
+        case PlaceOffset::Right:  return "right";
+        case PlaceOffset::Count:  break;
+    }
+
+    return "unknown";
+}
+
+std::string_view Animus::Curriculum::RingName(PlaceRing ring)
+{
+    switch (ring)
+    {
+        case PlaceRing::Near:  return "near";
+        case PlaceRing::Far:   return "far";
+        case PlaceRing::Count: break;
     }
 
     return "unknown";

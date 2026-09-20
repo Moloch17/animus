@@ -672,6 +672,20 @@ namespace Animus::Curriculum::Encoding
             view.Bot->Attack(enemy, view.Bot->HasUnitState(UNIT_STATE_MELEE_ATTACKING));
     }
 
+    bool SnapToGround(Map const* map, uint32 phaseMask, Position& at, float fromZ, float maxStep)
+    {
+        if (!map)
+            return false;
+
+        float const z = map->GetHeight(phaseMask, at.GetPositionX(), at.GetPositionY(), fromZ + maxStep, true,
+            maxStep * 2.0f);
+        if (z <= INVALID_HEIGHT || std::fabs(z - fromZ) > maxStep)
+            return false;
+
+        at.Relocate(at.GetPositionX(), at.GetPositionY(), z);
+        return true;
+    }
+
     void MoveTo(Player* bot, uint32 pointId, float x, float y, float z)
     {
         bot->GetMotionMaster()->Clear();

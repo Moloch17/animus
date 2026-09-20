@@ -94,6 +94,10 @@ namespace Animus::Curriculum
         /// learned-directed arena carries the pair in every episode and marks them absent where they are not
         /// used. Ignored unless Directed.
         bool DirectorLearned = false;
+        /// The director may name a place to go to (PlaceAnchor, PlaceOffset, PlaceRing). Off by default: the
+        /// thirteen actions stay masked in an arena with nowhere worth sending anyone, so no stage pays
+        /// exploration for a vocabulary it cannot use. Ignored unless Directed.
+        bool Places = false;
         /// Seats a side in a Teams arena: 2 and 3 are the arena formats, 10 a battleground side. Ignored by
         /// every other seat plan.
         uint32 TeamSeats = TEAM_SEATS;

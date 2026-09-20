@@ -219,7 +219,25 @@ namespace Animus::Curriculum
             /// break the tie between fighting whoever and fighting the one called, and never enough to outbid
             /// the fight itself.
             float Focus = 0.001f;
+            /// Paid once to a seat that arrives where its director sent it (TeamRally::Point), never per
+            /// decision, and not again for PlaceCooldownMs. A transition with a cooldown cannot be farmed by
+            /// stepping back and forth across the edge of the radius, which is exactly what a per-decision
+            /// payment would buy -- the per-decision version of the focus nudge reached 23.7% of gross before
+            /// it was cut.
+            float PlaceMatch = 0.02f;
+            float PlaceRadius = 8.0f;           // yards: close enough to count as arrived
+            uint32 PlaceCooldownMs = 10000;
         } Order;
+
+        /// What the director's own calls mean in yards.
+        struct DirectorTuning
+        {
+            /// How far a place sits off its anchor, at each ring. The whole point of naming a ring rather
+            /// than a distance is that these two numbers are all that changes between an arena and a
+            /// continent: the thirteen place actions mean the same thing at any scale.
+            float PlaceNearYards = 20.0f;
+            float PlaceFarYards = 60.0f;
+        } Director;
 
         /// Looking after itself and its friends, in every stage.
         struct SupportTuning
@@ -639,6 +657,12 @@ namespace Animus::Curriculum
             f("Goals.Match", tuning.Goals.Match);
 
             f("Order.Focus", tuning.Order.Focus);
+            f("Order.PlaceMatch", tuning.Order.PlaceMatch);
+            f("Order.PlaceRadius", tuning.Order.PlaceRadius);
+            f("Order.PlaceCooldownMs", tuning.Order.PlaceCooldownMs);
+
+            f("Director.PlaceNearYards", tuning.Director.PlaceNearYards);
+            f("Director.PlaceFarYards", tuning.Director.PlaceFarYards);
 
             f("Support.SelfHealing", tuning.Support.SelfHealing);
             f("Support.HealingMana", tuning.Support.HealingMana);
