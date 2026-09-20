@@ -264,6 +264,20 @@ bool Animus::Curriculum::FlagEncounter::Build(Env& env, Map* map, uint8 /*level*
     // from here the script owns the match -- the score, the graveyards, the end.
     if (Battleground* match = flags.Match)
     {
+        // Where the flags are, before anything else: the goals and the seat view are built on these, and left at
+        // the origin every seat is told to run to (0, 0, 0). The battleground keeps its flags at the two arrival
+        // points the stage names, so the stage's bases are the script's bases.
+        std::vector<Position> const& bases = _scenario.Stage().FlagBases;
+        if (bases.size() < TEAM_COUNT)
+        {
+            LOG_ERROR("module.animus", "{}: a scripted match needs {} flag bases, the stage names {}",
+                _scenario.Name(), TEAM_COUNT, bases.size());
+            return false;
+        }
+
+        for (uint32 side = 0; side < TEAM_COUNT; ++side)
+            flags.Sides[side].Base = bases[side];
+
         match->SetBgMap(map->ToBattlegroundMap());
         for (uint32 seat = 0; seat < _scenario.SeatCount(); ++seat)
             if (Player* bot = _scenario.SeatBot(env, seat))
@@ -273,10 +287,11 @@ bool Animus::Curriculum::FlagEncounter::Build(Env& env, Map* map, uint8 /*level*
                 match->AddOrSetPlayerToCorrectBgGroup(bot, bot->GetBgTeamId());
             }
 
-        // Straight in: the sim has no queue and nobody to wait for, so the two minutes a real match spends
-        // behind its gates would be two minutes of an episode spent standing still.
-        match->SetStartTime(0);
-        match->SetStatus(STATUS_IN_PROGRESS);
+        // Left in STATUS_WAIT_JOIN on purpose, which is what the script needs: Battleground::_ProcessJoin runs
+        // only in that state, and it is what calls SetupBattleground -- the flags and the doors. Forcing the
+        // match straight to IN_PROGRESS skipped it, so 2,560 matches were played with no flag in either base and
+        // not one pickup among them. The countdown it starts is Battleground.PrepTime, which the sim host sets
+        // short: the sequence is the real one, it just does not spend two minutes of every episode behind a gate.
         flags.Built = true;
         return true;
     }
