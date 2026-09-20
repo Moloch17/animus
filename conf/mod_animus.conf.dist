@@ -302,6 +302,19 @@ Animus.Curriculum.Goals.Match = 0.02
 #   level with the kill and the death, which would buy tunnel vision on the called target. At 0.001 full compliance
 #   is worth about 0.5, a tenth of the kill
 Animus.Curriculum.Order.Focus = 0.001
+#   every arena whose director may name a place: paid once to a seat that arrives where it was sent, and not
+#   again for PlaceCooldownMs. Never per decision -- a per-decision payment for standing in the right spot is
+#   the shape that made the focus nudge 23.7% of gross before it was cut, and it could be farmed by stepping
+#   over the edge of the radius and back
+Animus.Curriculum.Order.PlaceMatch = 0.02
+#   yards: close enough to the called place to count as having arrived
+Animus.Curriculum.Order.PlaceRadius = 8
+#   milliseconds before the same seat can be paid for arriving again
+Animus.Curriculum.Order.PlaceCooldownMs = 10000
+#   how far a called place sits off its anchor, at each ring. These two numbers are all that changes between
+#   an arena and a continent: the director's thirteen place actions mean the same thing at any scale
+Animus.Curriculum.Director.PlaceNearYards = 20
+Animus.Curriculum.Director.PlaceFarYards = 60
 Animus.Curriculum.Support.SelfHealing = 0.5
 #   per fraction of the mana pool spent on healing. Healing is worth what it restores for what it costs, and the cost
 #   was never priced: an effective heal of 3% of a health bar cost the same as one of 20%, so choosing a cheaper rank
