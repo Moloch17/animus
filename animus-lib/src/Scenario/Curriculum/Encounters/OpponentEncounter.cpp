@@ -17,6 +17,7 @@
  */
 
 #include "Encounters.h"
+#include "EncoderSupport.h"
 #include "IncomingSpell.h"
 #include "BotAccounts.h"
 #include "CombatReward.h"
@@ -370,7 +371,7 @@ void Animus::Curriculum::OpponentEncounter::TrackHiding(Env& env, uint32 seat, P
     }
 
     CurriculumTuning::EvadeTuning const& tuning = _scenario.Tuning().Evade;
-    bool const seen = hunter->CanSeeOrDetect(bot);
+    bool const seen = Encoding::CanSee(hunter, bot);
     bool const stealthed = bot->HasStealthAura();
     uint32 const step = _scenario.DecisionMs();
 

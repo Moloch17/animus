@@ -494,7 +494,7 @@ void Animus::Curriculum::ScriptedPlayer::UpdateOpponent(Player* player, Player* 
         state.StealthDecided = false;
     }
 
-    bool const visible = player->CanSeeOrDetect(enemy);
+    bool const visible = Encoding::CanSee(player, enemy);
     if (visible)
     {
         state.QuarrySeen = true;
