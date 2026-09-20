@@ -19,6 +19,7 @@
 #include "StageScenario.h"
 #include "Baselines.h"
 #include "CharmInfo.h"
+#include "Battleground.h"
 #include "BotAccounts.h"
 #include "Config.h"
 #include "Containers.h"
@@ -1114,7 +1115,14 @@ bool Animus::Curriculum::StageScenario::IsTerminal(Env const& env) const
 
 bool Animus::Curriculum::StageScenario::IsOpponentSeat(Env const& env, uint32 agent) const
 {
-    return agent == 1 && Arena(env).Seats == SeatPlan::Mirror;
+    // Self-play: the far side of the match is the opponent. One seat a side in a Mirror, TEAM_SEATS of them in
+    // a Teams arena.
+    switch (Arena(env).Seats)
+    {
+        case SeatPlan::Mirror: return agent == 1;
+        case SeatPlan::Teams:  return agent >= TEAM_SEATS;
+        default:               return false;
+    }
 }
 
 bool Animus::Curriculum::StageScenario::Setup(Env& env)
@@ -1265,10 +1273,13 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
     // The new bots go on idle sessions and into the map before the old ones leave, so the instance always has a
     // bound player.
     Player* firstNew = nullptr;
+    for (Encounter* encounter : ActiveEncounters(env))
+        encounter->BeforeSeats(env, level);
+
     for (uint32 seat = 0; seat < data.ActiveSeats; ++seat)
     {
         Position start = SpawnPointFor(env);
-        if (arena.Seats == SeatPlan::Party || arena.Seats == SeatPlan::Raid)
+        if (arena.Seats == SeatPlan::Party || arena.Seats == SeatPlan::Raid || arena.Seats == SeatPlan::Teams)
         {
             // Within a group as a party has always spread; groups themselves step back in rows, so forty seats do
             // not spawn in one line forty spacings long.
@@ -1336,7 +1347,10 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
 
     for (Encounter* encounter : ActiveEncounters(env))
         if (!encounter->Build(env, map, level))
+        {
+            LOG_ERROR("module.animus", "{}: env {} could not build an encounter", Name(), env.Index);
             return false;
+        }
 
     StockSeats(env);
     GivePets(env);
@@ -1366,7 +1380,21 @@ Player* Animus::Curriculum::StageScenario::BuildSeat(Env& env, uint32 seatIndex,
     SeatState& seat = Data(env).Seats[seatIndex];
     Layout const& layout = *seat.L;
 
-    seat.Race = layout.Assets->Races[urand(0, uint32(layout.Assets->Races.size()) - 1)];
+    // A team match needs real factions, not labels: the battleground counts a side by GetBgTeamId, but whether
+    // two seats can fight each other comes from their races. Side 0 draws Alliance, side 1 Horde; every class has
+    // both in Wrath, so no layout is lost. Any other arena draws from the whole list as it always did.
+    std::vector<uint8> const& races = layout.Assets->Races;
+    std::vector<uint8> pool;
+    if (Arena(env).Seats == SeatPlan::Teams)
+    {
+        TeamId const want = seatIndex < TEAM_SEATS ? TEAM_ALLIANCE : TEAM_HORDE;
+        for (uint8 race : races)
+            if (Player::TeamIdForRace(race) == want)
+                pool.push_back(race);
+    }
+
+    std::vector<uint8> const& from = pool.empty() ? races : pool;
+    seat.Race = from[urand(0, uint32(from.size()) - 1)];
     seat.Level = level;
     seat.Spec = uint8(urand(0, uint32(layout.Profile->Specs.size()) - 1));
     seat.DamageScale = DamageScale(level);
@@ -1380,6 +1408,17 @@ Player* Animus::Curriculum::StageScenario::BuildSeat(Env& env, uint32 seatIndex,
     spec.Gender = uint8(urand(GENDER_MALE, GENDER_FEMALE));
     spec.Level = level;
     spec.AccountId = BotAccounts::Seat(env.Id, seatIndex, session);
+
+    // A battleground stage sends its seats to the match rather than to an instance of their own; the side is the
+    // one their race already belongs to.
+    for (Encounter const* encounter : ActiveEncounters(env))
+        if (Battleground* match = encounter->MatchFor(env))
+        {
+            spec.BattlegroundId = match->GetInstanceID();
+            spec.BattlegroundType = uint32(match->GetBgTypeID());
+            spec.BattlegroundTeam = uint8(seatIndex < TEAM_SEATS ? TEAM_ALLIANCE : TEAM_HORDE);
+            break;
+        }
 
     Player* bot = seat.Bot.CreateNext(spec, map, _spawnMapId, start);
     if (!bot)

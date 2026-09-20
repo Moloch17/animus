@@ -230,6 +230,30 @@ namespace
             .MinLevel = 20,
         });
 
+        // Warsong Gulch at its proper size: ten a side, both sides learned. The flag rules are stage 11's; what
+        // is new is that a side is ten seats and a group, so the objective has to be shared -- a carrier to escort
+        // home, a base somebody has to hold, and an enemy carrier ten of them can chase. Trained by name, after
+        // stage 11, which it seeds from.
+        stages.push_back({
+            .Name = "stage18_warsong",
+            .Suffix = "_warsong",
+            .Extends = "stage11_flag",
+            .Summary = "ten against ten for the flag: escort the carrier, hold the base, stop theirs",
+            .Blocks = { Core, Duel, Pet, Pvp, Travel, Flag, Party },
+            .Arenas = { { .Name = "warsong", .Seats = SeatPlan::Teams, .Against = Opposition::Flag, .Pvp = true,
+                .EpisodeSeconds = 420 } },
+            .InDefaultQueue = false,
+            .MapId = MAP_WARSONG_GULCH,
+            // Silverwing Hold and the Warsong Lumber Mill, as game_graveyard 769 and 770 put them: the real
+            // battleground's own arrival points, which are also where its flags stand.
+            .SpawnPoints = { { 1523.8f, 1481.8f, 352.0f, 3.1416f } },
+            .FlagBases = {
+                { 1523.8f, 1481.8f, 352.0f, 3.1416f },
+                { 933.3f, 1433.7f, 345.5f, 0.1516f },
+            },
+            .MinLevel = 20,
+        });
+
         // A planned run: the same eight pulls in the same order every episode, ending on an elite pack two levels
         // above. Nothing about the fights is left to learn -- stage 3 taught them -- so what is left is the plan:
         // what to spend on the opener, what to keep for the last pull, when the breather is a rest and when it is a
@@ -380,8 +404,13 @@ namespace
             return "an owner needs pulls or an ambush, and the companion block";
         if (arena.PartyGroup && (!arena.Owner || arena.Seats != SeatPlan::Party || !stage.Has(BlockId::Party)))
             return "a party group needs an owner, party seats and the party block";
-        if ((arena.Seats == SeatPlan::Mirror) != (arena.Against == Opposition::MirrorSeat || flag))
-            return "mirror seats go with fighting the mirror seat or a flag match, and only with them";
+        // Self-play: one seat a side in a Mirror, TEAM_SEATS of them in a Teams arena, and a team match is a
+        // flag match -- there is nothing else for two learned sides of ten to be playing.
+        bool const selfPlay = arena.Seats == SeatPlan::Mirror || arena.Seats == SeatPlan::Teams;
+        if (selfPlay != (arena.Against == Opposition::MirrorSeat || flag))
+            return "self-play seats go with fighting the mirror seat or a flag match, and only with them";
+        if (arena.Seats == SeatPlan::Teams && !flag)
+            return "team seats are for a flag match";
         if (arena.Ambushers > MAX_AMBUSHERS)
             return "at most " + std::to_string(MAX_AMBUSHERS) + " ambushers";
         if (arena.Ambushers > 0 && !(pulls || ambushOnly))
@@ -474,6 +503,7 @@ uint32 Animus::Curriculum::ArenaDefinition::SeatCount() const
         // returned when MAX_SEATS was 4 and is what it has to keep returning now that MAX_SEATS is a raid.
         case SeatPlan::Party:  return GROUP_MEMBERS;
         case SeatPlan::Raid:   return MAX_SEATS;
+        case SeatPlan::Teams:  return TEAM_MATCH_SEATS;
         case SeatPlan::Mirror: return 2;
         case SeatPlan::Solo:   break;
     }

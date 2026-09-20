@@ -35,6 +35,7 @@ namespace Animus::Curriculum
         Party,          // one group (1-GROUP_SEATS with a character each episode): a tank, a healer and damage
         Mirror,         // two seats that fight each other (self-play)
         Raid,           // the arena's seats as RAID_GROUPS groups of GROUP_SEATS: a tank and a healer per group
+        Teams,          // TEAM_COUNT sides of TEAM_SEATS against each other (self-play), each side a group
     };
 
     /// What the seats fight.
@@ -115,6 +116,9 @@ namespace Animus::Curriculum
         /// instanceable) is shared by every env, so each env gets its own phase and one of SpawnPoints by env index.
         uint32 MapId = 0;
         std::vector<Position> SpawnPoints{};
+        /// Where a flag arena's bases are, one per side. Empty: the second base is searched for, BaseMin-BaseMax
+        /// from the first, which is what a stage with no map of its own has to do. Warsong Gulch has real ones.
+        std::vector<Position> FlagBases{};
         /// The lowest level its characters may be (flying needs 60), raising a host's fixed level too.
         uint8 MinLevel = 0;
 

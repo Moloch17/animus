@@ -17,6 +17,8 @@
  */
 
 #include "BotSlot.h"
+#include "Player.h"
+#include "SharedDefines.h"
 #include "DBCStores.h"
 #include "Player.h"
 #include "Position.h"
@@ -52,6 +54,12 @@ Player* Animus::BotSlot::CreateNext(BotFactory::BotSpec spec, Map*& map, uint32 
     Player* bot = BotFactory::Create(spec, _sessions[session].get());
     if (!bot)
         return nullptr;
+
+    // Told before it is placed: the map it lands on is the battleground's, and MapInstanced reaches that
+    // through the invitation this records.
+    if (spec.BattlegroundId)
+        bot->SetBattlegroundId(spec.BattlegroundId, BattlegroundTypeId(spec.BattlegroundType), 0, true, false,
+            TeamId(spec.BattlegroundTeam));
 
     // Create made a session if the slot had none; the slot owns it either way.
     if (_sessions[session].get() != bot->GetSession())

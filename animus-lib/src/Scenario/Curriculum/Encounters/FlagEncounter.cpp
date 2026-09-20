@@ -19,7 +19,15 @@
 #include "Encounters.h"
 #include "BotFactory.h"
 #include "Env.h"
+#include "Battleground.h"
+#include "BattlegroundMgr.h"
+#include "BattlegroundWS.h"
+#include "CoreHooks.h"
+#include "DBCStores.h"
 #include "EpisodeInfoTable.h"
+#include "Group.h"
+#include "GroupMgr.h"
+#include "Log.h"
 #include "Map.h"
 #include "Player.h"
 #include "SeatView.h"
@@ -27,6 +35,8 @@
 namespace
 {
     using State = Animus::Curriculum::SeatView::FlagState;
+
+    constexpr float BASE_SPREAD = 4.0f;     // yards between a side's seats where they start
 }
 
 Animus::Curriculum::FlagEncounter::FlagEncounter(StageScenario& scenario, uint32 envs)
@@ -40,11 +50,18 @@ std::vector<Animus::Curriculum::RewardTerm> Animus::Curriculum::FlagEncounter::R
         RewardTerm::CarrierKill, RewardTerm::FlagLost, RewardTerm::Progress, RewardTerm::Death };
 }
 
+uint32 Animus::Curriculum::FlagEncounter::SideOf(Env const& env, uint32 seat) const
+{
+    // A Teams arena splits its seats down the middle; anything else has a seat a side, as Mirror does.
+    uint32 const perSide = _scenario.Arena(env).Seats == SeatPlan::Teams ? TEAM_SEATS : 1;
+    return std::min<uint32>(seat / perSide, TEAM_COUNT - 1);
+}
+
 void Animus::Curriculum::FlagEncounter::AddEpisodeInfo(EpisodeInfoTable& table)
 {
     auto const side = [this](Env const& env, uint32 seat) -> Side const&
     {
-        return _envs[env.Index].Sides[seat < 2 ? seat : 0];
+        return _envs[env.Index].Sides[SideOf(env, seat)];
     };
 
     table.Add("flag_captures", [side](Env const& env, uint32 seat) { return float(side(env, seat).Captures); });
@@ -54,13 +71,178 @@ void Animus::Curriculum::FlagEncounter::AddEpisodeInfo(EpisodeInfoTable& table)
     table.Add("flag_deaths", [side](Env const& env, uint32 seat) { return float(side(env, seat).Deaths); });
     table.Add("match_won", [this, side](Env const& env, uint32 seat)
     {
-        return seat < 2 && side(env, seat).Captures >= _scenario.Tuning().Flag.CapturesToWin ? 1.0f : 0.0f;
+        return side(env, seat).Captures >= _scenario.Tuning().Flag.CapturesToWin ? 1.0f : 0.0f;
     });
+    table.Add("team_seat", [this](Env const& env, uint32 seat) { return float(SideOf(env, seat)); });
 }
 
 void Animus::Curriculum::FlagEncounter::ResetEpisode(Env& env)
 {
+    Disband(env);
+    EndMatch(env);
     _envs[env.Index] = EnvFlags();
+}
+
+void Animus::Curriculum::FlagEncounter::EndMatch(Env& env)
+{
+    Battleground*& match = _envs[env.Index].Match;
+    if (!match)
+        return;
+
+    // The seats are rebuilt from scratch every episode, so the match leaves with them: take the players out
+    // without the script's own leave path, which would teleport them to an entry point they never came from.
+    match->SetStatus(STATUS_WAIT_LEAVE);
+    for (auto const& [guid, player] : match->GetPlayers())
+        if (player)
+            player->SetBattlegroundId(0, BATTLEGROUND_TYPE_NONE, 0, false, false, TEAM_NEUTRAL);
+
+    sBattlegroundMgr->RemoveBattleground(match->GetBgTypeID(), match->GetInstanceID());
+    match = nullptr;
+}
+
+void Animus::Curriculum::FlagEncounter::ReadMatch(Env& env)
+{
+    EnvFlags& flags = _envs[env.Index];
+    BattlegroundWS* match = static_cast<BattlegroundWS*>(flags.Match);
+    if (!match)
+        return;
+
+    // The script's score and flag state, turned into the side view the seats already read. A capture is the
+    // score going up; the step counters are what the reward pays on, and Reward clears nothing, so both sides
+    // of a decision see the same events.
+    for (Side& side : flags.Sides)
+    {
+        side.StepCaptures = side.StepPickups = side.StepReturns = 0;
+        side.StepCarrierKills = side.StepLost = 0;
+    }
+
+    for (uint32 side = 0; side < TEAM_COUNT; ++side)
+    {
+        TeamId const team = side == 0 ? TEAM_ALLIANCE : TEAM_HORDE;
+        Side& own = flags.Sides[side];
+
+        uint32 const score = match->GetTeamScore(team);
+        own.StepCaptures = score > own.Captures ? score - own.Captures : 0;
+        own.Captures = score;
+
+        // A side's own flag: at its base, carried off by the enemy, or lying where the carrier fell. The script
+        // reports a state, not events, so the events are the changes in it -- and a side's own flag being taken
+        // is the other side's pickup.
+        uint8 const state = match->GetFlagState(team);
+        State const was = own.State;
+        own.State = state == BG_WS_FLAG_STATE_ON_PLAYER ? State::Carried
+            : state == BG_WS_FLAG_STATE_ON_GROUND ? State::Dropped : State::AtBase;
+
+        Side& enemy = flags.Sides[1 - side];
+        if (was != State::Carried && own.State == State::Carried)
+            ++enemy.StepPickups;
+        if (was == State::Carried && own.State == State::Dropped)
+            ++enemy.StepCarrierKills;
+        if (was == State::Dropped && own.State == State::AtBase)
+            ++own.StepReturns;
+
+        // Who has it, as a seat rather than a guid, so the goals can escort or chase them.
+        ObjectGuid const keeper = match->GetFlagPickerGUID(team);
+        own.CarriedBy = NO_SEAT;
+        if (keeper)
+            for (uint32 seat = 0; seat < _scenario.SeatCount(); ++seat)
+                if (Player const* bot = _scenario.SeatBot(env, seat); bot && bot->GetGUID() == keeper)
+                {
+                    own.CarriedBy = seat;
+                    break;
+                }
+    }
+}
+
+Battleground* Animus::Curriculum::FlagEncounter::Match(Env const& env) const
+{
+    return _envs[env.Index].Match;
+}
+
+void Animus::Curriculum::FlagEncounter::BeforeSeats(Env& env, uint8 level)
+{
+    if (_scenario.Arena(env).Seats != SeatPlan::Teams)
+        return;
+
+    EnvFlags& flags = _envs[env.Index];
+    if (flags.Match)
+        return;
+
+    // The real thing: a Warsong Gulch of this env's own, from the template the server loaded, with its doors,
+    // its flags, its graveyards and its score. BattlegroundMgr::Update already runs on the sim's world tick
+    // (ForgeWorld), so once this exists the script plays the match.
+    PvPDifficultyEntry const* bracket = GetBattlegroundBracketByLevel(MAP_WARSONG_GULCH, level);
+    if (!bracket)
+    {
+        LOG_ERROR("module.animus", "{}: env {} has no Warsong bracket for level {}", _scenario.Name(), env.Index,
+            level);
+        return;
+    }
+
+    Battleground* match = sBattlegroundMgr->CreateNewBattleground(BATTLEGROUND_WS, bracket, 0, false);
+    if (!match)
+    {
+        LOG_ERROR("module.animus", "{}: env {} could not create its battleground", _scenario.Name(), env.Index);
+        return;
+    }
+
+    sBattlegroundMgr->AddBattleground(match);
+    flags.Match = match;
+}
+
+void Animus::Curriculum::FlagEncounter::FormTeams(Env& env)
+{
+    EnvFlags& flags = _envs[env.Index];
+    if (_scenario.Arena(env).Seats != SeatPlan::Teams)
+        return;
+
+    uint32 const seats = _scenario.SeatCount();
+    for (uint32 side = 0; side < TEAM_COUNT; ++side)
+    {
+        if (flags.Groups[side])
+            continue;
+
+        // The side's first living seat leads it; the rest join.
+        Player* leader = nullptr;
+        for (uint32 seat = side * TEAM_SEATS; seat < seats && SideOf(env, seat) == side && !leader; ++seat)
+            leader = _scenario.SeatBot(env, seat);
+
+        if (!leader)
+            continue;
+
+        Group* group = new Group();
+        CoreHooks::MarkSimGroup(group);
+        if (!group->Create(leader))
+        {
+            LOG_ERROR("module.animus", "{}: env {} could not create team {}", _scenario.Name(), env.Index, side);
+            delete group;
+            continue;
+        }
+
+        sGroupMgr->AddGroup(group);
+        for (uint32 seat = 0; seat < seats; ++seat)
+        {
+            Player* bot = _scenario.SeatBot(env, seat);
+            if (!bot || bot == leader || SideOf(env, seat) != side)
+                continue;
+
+            if (!group->AddMember(bot))
+                LOG_ERROR("module.animus", "{}: env {} could not add seat {} to team {}", _scenario.Name(),
+                    env.Index, seat, side);
+        }
+
+        flags.Groups[side] = group;
+    }
+}
+
+void Animus::Curriculum::FlagEncounter::Disband(Env& env)
+{
+    for (Group*& group : _envs[env.Index].Groups)
+    {
+        if (group)
+            group->Disband(true);
+        group = nullptr;
+    }
 }
 
 bool Animus::Curriculum::FlagEncounter::Build(Env& env, Map* map, uint8 /*level*/)
@@ -68,19 +250,92 @@ bool Animus::Curriculum::FlagEncounter::Build(Env& env, Map* map, uint8 /*level*
     CurriculumTuning::FlagTuning const& tuning = _scenario.Tuning().Flag;
     EnvFlags& flags = _envs[env.Index];
     Player* first = _scenario.SeatBot(env, 0);
-    Player* second = _scenario.SeatBot(env, 1);
-    if (!first || !second || !map)
+    if (!first || !map)
+    {
+        LOG_ERROR("module.animus", "{}: env {} flag build has no seat 0 ({}) or map ({})", _scenario.Name(),
+            env.Index, first != nullptr, map != nullptr);
         return false;
+    }
 
     // The first seat's base is where it stands; the other's a walk away, where it goes now.
-    flags.Sides[0].Base.Relocate(first);
-    if (!TravelEncounter::FindPlace(first, map, tuning.BaseMin, tuning.BaseMax, false, flags.Sides[1].Base))
-        return false;
+    // A scripted match: hand the seats to the battleground and let it start. Its own SetupBattleground has
+    // already put the doors and the flags where they belong, BattlegroundMgr::Update runs on the world tick, and
+    // from here the script owns the match -- the score, the graveyards, the end.
+    if (Battleground* match = flags.Match)
+    {
+        match->SetBgMap(map->ToBattlegroundMap());
+        for (uint32 seat = 0; seat < _scenario.SeatCount(); ++seat)
+            if (Player* bot = _scenario.SeatBot(env, seat))
+            {
+                match->AddPlayer(bot);
+                // The battleground makes its own raid of each side, which is what a healer needs to see.
+                match->AddOrSetPlayerToCorrectBgGroup(bot, bot->GetBgTeamId());
+            }
 
-    flags.Sides[1].Base.SetOrientation(flags.Sides[1].Base.GetAngle(&flags.Sides[0].Base));
-    if (!BotFactory::TeleportWithinMap(second, flags.Sides[1].Base))
-        return false;
+        // Straight in: the sim has no queue and nobody to wait for, so the two minutes a real match spends
+        // behind its gates would be two minutes of an episode spent standing still.
+        match->SetStartTime(0);
+        match->SetStatus(STATUS_IN_PROGRESS);
+        flags.Built = true;
+        return true;
+    }
 
+    // A stage that knows where its bases are says so; Warsong Gulch's are the battleground's own. Otherwise the
+    // first seat stands on base 0 and base 1 is searched for, which is what a stage without a map of its own does.
+    std::vector<Position> const& bases = _scenario.Stage().FlagBases;
+    if (bases.size() >= TEAM_COUNT)
+    {
+        for (uint32 side = 0; side < TEAM_COUNT; ++side)
+            flags.Sides[side].Base = bases[side];
+
+        if (!BotFactory::TeleportWithinMap(first, flags.Sides[0].Base))
+        {
+            LOG_ERROR("module.animus", "{}: env {} could not put seat 0 on base 0", _scenario.Name(), env.Index);
+            return false;
+        }
+    }
+    else
+    {
+        flags.Sides[0].Base.Relocate(first);
+        if (!TravelEncounter::FindPlace(first, map, tuning.BaseMin, tuning.BaseMax, false, flags.Sides[1].Base))
+            return false;
+
+        flags.Sides[1].Base.SetOrientation(flags.Sides[1].Base.GetAngle(&flags.Sides[0].Base));
+    }
+
+    // Every seat starts at its own base, spread so ten do not stand in one another. Seat 0 is already at base 0,
+    // which is where it was built.
+    uint32 const seats = _scenario.SeatCount();
+    for (uint32 seat = 1; seat < seats; ++seat)
+    {
+        Player* bot = _scenario.SeatBot(env, seat);
+        if (!bot)
+        {
+            LOG_ERROR("module.animus", "{}: env {} has no seat {} of {}", _scenario.Name(), env.Index, seat, seats);
+            return false;
+        }
+
+        uint32 const mine = SideOf(env, seat);
+        uint32 const place = seat % TEAM_SEATS;
+        Position start = flags.Sides[mine].Base;
+        if (place)
+        {
+            // A ring a few yards out, facing the way the base faces.
+            float const angle = float(place) / float(TEAM_SEATS) * 2.0f * float(M_PI);
+            float const reach = BASE_SPREAD * (1.0f + float(place % 3) * 0.5f);
+            start.m_positionX += reach * std::cos(angle);
+            start.m_positionY += reach * std::sin(angle);
+        }
+
+        if (!BotFactory::TeleportWithinMap(bot, start))
+        {
+            LOG_ERROR("module.animus", "{}: env {} could not place seat {} at its base", _scenario.Name(),
+                env.Index, seat);
+            return false;
+        }
+    }
+
+    FormTeams(env);
     flags.Built = true;
     return true;
 }
@@ -91,45 +346,66 @@ void Animus::Curriculum::FlagEncounter::Update(Env& env)
     if (!flags.Built)
         return;
 
+    // A scripted match keeps its own flags, score and graveyards, and BattlegroundMgr ticks it. Nothing here
+    // runs the rules; what it does is read them back, so the seats are rewarded for what the script counted.
+    if (flags.Match)
+    {
+        ReadMatch(env);
+        return;
+    }
+
     CurriculumTuning::FlagTuning const& tuning = _scenario.Tuning().Flag;
     uint32 const now = env.EpisodeElapsedMs;
 
-    for (uint32 seat = 0; seat < 2; ++seat)
+    // A decision's events are paid to every seat of the side, so they are cleared here rather than by whichever
+    // seat is rewarded first.
+    for (Side& side : flags.Sides)
+    {
+        side.StepCaptures = side.StepPickups = side.StepReturns = 0;
+        side.StepCarrierKills = side.StepLost = 0;
+    }
+
+    uint32 const seats = _scenario.SeatCount();
+    for (uint32 seat = 0; seat < seats; ++seat)
     {
         Player* bot = _scenario.SeatBot(env, seat);
-        Side& own = flags.Sides[seat];
-        Side& enemy = flags.Sides[1 - seat];
+        uint32 const mine = SideOf(env, seat);
+        Side& own = flags.Sides[mine];
+        Side& enemy = flags.Sides[1 - mine];
+        SeatFlagState& state = flags.Seats[std::min<uint32>(seat, TEAM_MATCH_SEATS - 1)];
         if (!bot)
             continue;
 
-        bool const carrying = enemy.State == State::Carried;
+        // Only the seat actually holding it is carrying.
+        bool const carrying = enemy.State == State::Carried && enemy.CarriedBy == seat;
 
         // Death: a carrier drops the flag where it fell, and the other side is paid for stopping it.
         if (!bot->IsAlive())
         {
-            if (!own.Dead)
+            if (!state.Dead)
             {
-                own.Dead = true;
-                own.RespawnMs = now + tuning.RespawnMs;
+                state.Dead = true;
+                state.RespawnMs = now + tuning.RespawnMs;
+                ++state.StepDeaths;
                 ++own.Deaths;
-                ++own.StepDeaths;
                 if (carrying)
                 {
                     enemy.State = State::Dropped;
+                    enemy.CarriedBy = NO_SEAT;
                     enemy.Dropped.Relocate(bot);
                     enemy.DroppedMs = now;
                     ++enemy.CarrierKills;
                     ++enemy.StepCarrierKills;
                 }
             }
-            else if (now >= own.RespawnMs)
+            else if (now >= state.RespawnMs)
             {
                 // A graveyard wave: back at the base, whole.
                 bot->ResurrectPlayer(1.0f);
                 bot->SpawnCorpseBones();
                 BotFactory::TeleportWithinMap(bot, own.Base);
-                own.Dead = false;
-                own.LastDistance = -1.0f;
+                state.Dead = false;
+                state.LastDistance = -1.0f;
             }
             continue;
         }
@@ -156,6 +432,7 @@ void Animus::Curriculum::FlagEncounter::Update(Env& env)
             || (enemy.State == State::Dropped && touches(enemy.Dropped)))
         {
             enemy.State = State::Carried;
+            enemy.CarriedBy = seat;
             ++own.Pickups;
             ++own.StepPickups;
             if (bot->IsMounted())
@@ -163,9 +440,10 @@ void Animus::Curriculum::FlagEncounter::Update(Env& env)
         }
 
         // Home with it while its own flag is there: a capture.
-        if (enemy.State == State::Carried && own.State == State::AtBase && touches(own.Base))
+        if (carrying && own.State == State::AtBase && touches(own.Base))
         {
             enemy.State = State::AtBase;
+            enemy.CarriedBy = NO_SEAT;
             ++own.Captures;
             ++own.StepCaptures;
             ++enemy.StepLost;
@@ -175,18 +453,36 @@ void Animus::Curriculum::FlagEncounter::Update(Env& env)
     // A dropped flag nobody touched goes home.
     for (Side& side : flags.Sides)
         if (side.State == State::Dropped && now >= side.DroppedMs + tuning.DroppedReturnMs)
+        {
             side.State = State::AtBase;
+            side.CarriedBy = NO_SEAT;
+        }
 }
 
 Animus::Curriculum::FlagEncounter::Goal Animus::Curriculum::FlagEncounter::CurrentGoal(Env const& env, uint32 seat,
     Position& place) const
 {
     EnvFlags const& flags = _envs[env.Index];
-    Side const& own = flags.Sides[seat];
-    Side const& enemy = flags.Sides[1 - seat];
+    uint32 const mine = SideOf(env, seat);
+    Side const& own = flags.Sides[mine];
+    Side const& enemy = flags.Sides[1 - mine];
 
     if (enemy.State == State::Carried)
     {
+        // The seat carrying it takes it home; the rest of its side escort the carrier.
+        if (enemy.CarriedBy == seat)
+        {
+            place = own.Base;
+            return Goal::CaptureHome;
+        }
+
+        if (Player* mate = enemy.CarriedBy != NO_SEAT ? _scenario.SeatBot(env, enemy.CarriedBy) : nullptr;
+            mate && mate->IsAlive())
+        {
+            place.Relocate(mate);
+            return Goal::CaptureHome;
+        }
+
         place = own.Base;
         return Goal::CaptureHome;
     }
@@ -200,8 +496,8 @@ Animus::Curriculum::FlagEncounter::Goal Animus::Curriculum::FlagEncounter::Curre
     if (enemy.State == State::AtBase)
     {
         // With its own flag carried off, stopping the carrier comes first.
-        if (own.State == State::Carried)
-            if (Player* carrier = _scenario.SeatBot(env, 1 - seat); carrier && carrier->IsAlive())
+        if (own.State == State::Carried && own.CarriedBy != NO_SEAT)
+            if (Player* carrier = _scenario.SeatBot(env, own.CarriedBy); carrier && carrier->IsAlive())
             {
                 place.Relocate(carrier);
                 return Goal::ChaseCarrier;
@@ -218,11 +514,12 @@ Animus::Curriculum::FlagEncounter::Goal Animus::Curriculum::FlagEncounter::Curre
 void Animus::Curriculum::FlagEncounter::View(Env const& env, uint32 seat, SeatView& view) const
 {
     EnvFlags const& flags = _envs[env.Index];
-    if (!flags.Built || seat > 1)
+    if (!flags.Built)
         return;
 
-    Side const& own = flags.Sides[seat];
-    Side const& enemy = flags.Sides[1 - seat];
+    uint32 const mine = SideOf(env, seat);
+    Side const& own = flags.Sides[mine];
+    Side const& enemy = flags.Sides[1 - mine];
 
     SeatView::FlagMatch& match = view.Flags;
     match.Active = true;
@@ -244,38 +541,46 @@ void Animus::Curriculum::FlagEncounter::Reward(Env& env, uint32 seat, Player* bo
     ledger.Add(RewardTerm::StepCost, -tuning.StepCost * _scenario.DecisionScale());
 
     EnvFlags& flags = _envs[env.Index];
-    if (!flags.Built || seat > 1)
+    if (!flags.Built)
         return;
 
-    Side& side = flags.Sides[seat];
+    Side& side = flags.Sides[SideOf(env, seat)];
+    SeatFlagState& state = flags.Seats[std::min<uint32>(seat, TEAM_MATCH_SEATS - 1)];
+
+    // What the side did pays the whole side -- Update clears these once a decision, so all of it reads the same
+    // events -- and what the seat did costs the seat.
     ledger.Add(RewardTerm::FlagCapture, tuning.Capture * float(side.StepCaptures));
     ledger.Add(RewardTerm::FlagPickup, tuning.Pickup * float(side.StepPickups));
     ledger.Add(RewardTerm::FlagReturn, tuning.Return * float(side.StepReturns));
     ledger.Add(RewardTerm::CarrierKill, tuning.CarrierKill * float(side.StepCarrierKills));
     ledger.Add(RewardTerm::FlagLost, -tuning.Lost * float(side.StepLost));
-    ledger.Add(RewardTerm::Death, -tuning.Death * float(side.StepDeaths));
-    side.StepCaptures = side.StepPickups = side.StepReturns = side.StepCarrierKills = side.StepLost = 0;
-    side.StepDeaths = 0;
+    ledger.Add(RewardTerm::Death, -tuning.Death * float(state.StepDeaths));
+    state.StepDeaths = 0;
 
     // Potential shaping toward the current goal; a new goal starts it over, so a flag changing hands pays nothing.
     Position place;
     Goal const goal = CurrentGoal(env, seat, place);
-    if (!bot || !bot->IsAlive() || goal != side.LastGoal)
+    if (!bot || !bot->IsAlive() || goal != state.LastGoal)
     {
-        side.LastGoal = goal;
-        side.LastDistance = bot && bot->IsAlive() ? bot->GetExactDist2d(&place) : -1.0f;
+        state.LastGoal = goal;
+        state.LastDistance = bot && bot->IsAlive() ? bot->GetExactDist2d(&place) : -1.0f;
         return;
     }
 
     float const distance = bot->GetExactDist2d(&place);
-    if (side.LastDistance >= 0.0f)
-        ledger.Add(RewardTerm::Progress, tuning.Progress * (side.LastDistance - distance) / 100.0f);
-    side.LastDistance = distance;
+    if (state.LastDistance >= 0.0f)
+        ledger.Add(RewardTerm::Progress, tuning.Progress * (state.LastDistance - distance) / 100.0f);
+    state.LastDistance = distance;
 }
 
 bool Animus::Curriculum::FlagEncounter::IsTerminal(Env const& env) const
 {
     EnvFlags const& flags = _envs[env.Index];
+
+    // An episode is a match: it is over when the battleground says so, by captures or by its own clock.
+    if (Battleground const* match = flags.Match)
+        return match->GetStatus() >= STATUS_WAIT_LEAVE;
+
     uint32 const toWin = _scenario.Tuning().Flag.CapturesToWin;
     return flags.Sides[0].Captures >= toWin || flags.Sides[1].Captures >= toWin;
 }
