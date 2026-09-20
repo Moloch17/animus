@@ -363,7 +363,9 @@ void Animus::Curriculum::OpponentEncounter::TrackHiding(Env& env, uint32 seat, P
     RewardLedger& ledger)
 {
     CombatTally& tally = _scenario.Data(env).Seats[seat].Combat;
-    if (!bot || !bot->IsAlive() || !hunter)
+    // A dead hunter counts as no hunter, not as one that lost sight: killing the thing chasing you would
+    // otherwise pay a break of contact on top of the kill, for the one decision before the episode ends.
+    if (!bot || !bot->IsAlive() || !hunter || !hunter->IsAlive())
     {
         tally.WasSeen = false;
         tally.UnseenStreakMs = 0;
