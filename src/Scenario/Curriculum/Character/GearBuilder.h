@@ -22,6 +22,7 @@
 #include "ClassRoleProfile.h"
 #include <array>
 #include <map>
+#include <unordered_map>
 #include <vector>
 
 class Item;
@@ -149,9 +150,15 @@ namespace Animus::Curriculum
         void ApplyImbues(Player* bot, SpecProfile const& spec) const;
         void EquipQuiver(Player* bot) const;
 
-        /// Candidates for the level from a pool, reaching below the level's item level band as needed.
-        [[nodiscard]] std::vector<Candidate const*> Window(Pool pool, uint8 level, StatProfile stats,
+        /// Candidates for the level from a pool, reaching below the level's item level band as needed. The result
+        /// is memoised: it is a pure function of these six arguments over pools that are built in the constructor
+        /// and never touched again, and it is asked for it the same way for every character of a level and spec.
+        [[nodiscard]] std::vector<Candidate const*> const& Window(Pool pool, uint8 level, StatProfile stats,
             int32 subclass, bool needStats, bool pvp) const;
+
+        /// The six arguments of Window packed into one key.
+        [[nodiscard]] static uint64 WindowKey(Pool pool, uint8 level, StatProfile stats, int32 subclass,
+            bool needStats, bool pvp);
 
         bool EquipFromPool(Player* bot, uint8 slot, Pool pool, StatProfile stats, bool pvp,
             int32 subclass = -1) const;
@@ -161,6 +168,11 @@ namespace Animus::Curriculum
         ClassKit const& _kit;
         uint8 _class;
         std::map<StatProfile, Pools> _pools;
+        /// Window's answers, keyed by WindowKey. Built lazily and never invalidated, because _pools is filled in
+        /// the constructor and is const in every other respect; the Candidate pointers held here point into it.
+        /// Written from the decision hook's rebuild, which is the world thread (AnimusForge::Forge::RemoteDecision
+        /// -> EnvPool::Collect), so it is unsynchronised: guard it if rebuilds ever move onto the map threads.
+        mutable std::unordered_map<uint64, std::vector<Candidate const*>> _windows;
         std::vector<std::pair<uint8, uint32>> _arrows;     // (required level, item), sorted
         std::vector<std::pair<uint8, uint32>> _bullets;
         std::map<StatProfile, std::vector<EnchantCandidate>> _enchants;

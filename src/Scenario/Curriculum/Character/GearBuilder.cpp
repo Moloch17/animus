@@ -641,10 +641,25 @@ void Animus::Curriculum::GearBuilder::BuildPools(StatProfile stats)
         pools[POOL_CHEST].size(), pools[POOL_TRINKET].size());
 }
 
-std::vector<Animus::Curriculum::GearBuilder::Candidate const*> Animus::Curriculum::GearBuilder::Window(
+uint64 Animus::Curriculum::GearBuilder::WindowKey(Pool pool, uint8 level, StatProfile stats, int32 subclass,
+    bool needStats, bool pvp)
+{
+    // subclass is -1 for "any", so it is stored one above itself to keep the key unsigned.
+    return uint64(uint8(pool)) | (uint64(level) << 8) | (uint64(uint8(stats)) << 16)
+        | (uint64(uint8(subclass + 1)) << 24) | (uint64(needStats) << 32) | (uint64(pvp) << 33);
+}
+
+std::vector<Animus::Curriculum::GearBuilder::Candidate const*> const& Animus::Curriculum::GearBuilder::Window(
     Pool pool, uint8 level, StatProfile stats, int32 subclass, bool needStats, bool pvp) const
 {
-    std::vector<Candidate const*> found;
+    // Nineteen slots, each asking up to twice for stats and up to four times down the armor fallbacks, and each
+    // ask walking a whole pool four times as the item level band widens -- per character, per episode, for an
+    // answer that depends on nothing that changed since the last character of the same level and spec.
+    uint64 const key = WindowKey(pool, level, stats, subclass, needStats, pvp);
+    if (auto const cached = _windows.find(key); cached != _windows.end())
+        return cached->second;
+
+    std::vector<Candidate const*>& found = _windows[key];
     auto const pools = _pools.find(stats);
     if (pools == _pools.end())
         return found;
