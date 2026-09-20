@@ -21,8 +21,7 @@
  * blocks it needs and adding its own.
  *
  *   duel ─┬─ pack ─ gauntlet ─ companion ─ party ─┬─ crossroads     (PvE ...
- *         ├─ pvp ─ evade ─┬─ arena ────────────────┘                  ... and PvP, merged)
- *         │               └─ stealth (a leaf)                        (not fighting)
+ *         ├─ pvp ─ evade ─ hide ─ arena ──────────┘                  ... and PvP, merged)
  *         └─ travel ─┬─ flight                                       (getting somewhere)
  *                    └─ (with arena) flag                            (Warsong Gulch's rules)
  *
@@ -287,7 +286,7 @@ namespace
         // Two drills about not fighting, between the scripted duel and self-play. Everything up to here rewards
         // winning the fight in front of it, so a losing fight is a class of situation the policy has never been
         // paid to handle: it dies with its cooldowns up. Both sit on the trunk order but only the first is on the
-        // trunk: see stage17_stealth's note.
+        // trunk, and both are played by all eighteen class/roles.
         stages.push_back({
             .Name = "stage16_evade",
             .Suffix = "_evade",
@@ -319,21 +318,23 @@ namespace
             },
         });
 
-        // Stealth, for the classes that have it (NeedsStealth drops the layouts whose kit has no stealth aura, so
-        // the list follows the catalog rather than a hard-coded one here). A restricted stage writes a checkpoint
-        // holding only those layouts, and init_from: auto takes the first checkpoint in the chain that exists --
-        // so a stage extending this one would find it, stop looking, and start every other class/role from random
-        // weights without saying so. It is therefore a leaf: nothing may extend it, the way mix_duel_pvp is.
+        // Hiding, for every class and every race. Stealth is one way to do it and the rarest -- four of the
+        // eighteen class/roles have a stealth aura in their kit -- but it is not the lesson. The lesson is
+        // becoming unseen and staying unseen, which every class can do with terrain, with distance, and with
+        // whatever its kit and its race give it: Blink, Disengage, Feign Death, Invisibility, Sprint, and
+        // Shadowmeld for any night elf. So this stage is played by all eighteen, graded on the outcome rather
+        // than on which button produced it.
         stages.push_back({
-            .Name = "stage17_stealth",
-            .Suffix = "_stealth",
+            .Name = "stage17_hide",
+            .Suffix = "_hide",
             .Extends = "stage16_evade",
-            .Summary = "open from stealth against a stronger enemy, and get back into it once the fight turns",
-            .NeedsStealth = true,
+            .Summary = "get out of sight and stay there, and hide again after being found",
             .Blocks = { Core, Duel, Pet, Pvp },
-            // Six levels up rather than the evade drill's ten: the opener has to be worth taking, so the fight
-            // must be winnable from stealth and unwinnable head-on.
-            .Arenas = { { .Name = "stealth", .Against = Opposition::ScriptedPlayer, .Pvp = true,
+            // Six levels up rather than the evade drill's ten. The fight is winnable often enough that hiding
+            // is a choice rather than the only move left, which is the difference between this stage and the
+            // one before it: stage 16 is about leaving a fight that is lost, this one is about not being found
+            // once you have.
+            .Arenas = { { .Name = "hide", .Against = Opposition::ScriptedPlayer, .Pvp = true,
                 .EpisodeSeconds = 120, .OpponentLevelBonus = 6 } },
             // Cover is the whole point, and the default spawn is open field: the first run of this stage read
             // exactly 0.000 contact breaks for twelve of the eighteen class/roles, because on flat ground
@@ -352,7 +353,7 @@ namespace
         stages.push_back({
             .Name = "stage18_arena",
             .Suffix = "_arena",
-            .Extends = "stage16_evade",
+            .Extends = "stage17_hide",
             .Summary = "self-play one-on-one: two learned seats of any classes",
             .Blocks = { Core, Duel, Pet, Pvp },
             .Arenas = { { .Name = "arena_1v1", .Seats = SeatPlan::Mirror, .Against = Opposition::MirrorSeat,
@@ -572,24 +573,6 @@ namespace
 
         if (!stage.Extends.empty() && !earlier(stage.Extends))
             return "it extends " + stage.Extends + ", which is not an earlier valid stage";
-
-        // A restricted stage's checkpoint holds only the layouts it played, and init_from: auto takes the first
-        // checkpoint in the chain that exists -- so a stage seeding from one would find it, stop looking, and
-        // start every other class/role from random weights without saying so. Such a stage is a leaf.
-        auto const restricted = [&valid](std::string const& name)
-        {
-            return std::any_of(valid.begin(), valid.end(), [&name](StageDefinition const& other)
-            {
-                return other.Name == name && other.NeedsStealth;
-            });
-        };
-
-        if (restricted(stage.Extends))
-            return "it extends " + stage.Extends + ", which only some class/roles play: nothing may seed from it";
-
-        for (std::string const& merge : stage.Merges)
-            if (restricted(merge))
-                return "it merges " + merge + ", which only some class/roles play: nothing may seed from it";
 
         for (std::string const& merge : stage.Merges)
         {

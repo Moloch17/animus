@@ -134,14 +134,6 @@ namespace Animus::Curriculum
         std::string Extends;            // the stage it builds on and seeds from (the trunk); empty for the first
         std::vector<std::string> Merges{}; // further stages it seeds the blocks only they have from
         std::string Summary;
-        /// Only class/roles that can hide play this stage. Derived from each one's own action catalog rather
-        /// than from a list written here, because a list rots the first time a spec changes and the catalog is
-        /// already the authority on what a class can do.
-        ///
-        /// A stage that narrows its class/roles must be a LEAF: seeding takes the first whole checkpoint in the
-        /// chain (animus.train), not one layout at a time, so anything extending a three-layout checkpoint would
-        /// start the other fifteen class/roles from random weights and say nothing about it.
-        bool NeedsStealth = false;
         std::vector<BlockId> Blocks;    // in layout order: every block any of its arenas needs
         std::vector<ArenaDefinition> Arenas;
         bool InDefaultQueue = true;     // trained by an empty AnimusForge.Queue (false: only when named)
