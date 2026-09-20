@@ -624,6 +624,12 @@ Animus.Curriculum.ScriptedPlayers.BreakBelow = 0.6
 #   Travel arenas. Ground: a place this many yards away by path
 Animus.Curriculum.Travel.ObjectiveMin = 60.0
 Animus.Curriculum.Travel.ObjectiveMax = 320.0
+#   travel arenas made on foot (stage6_run): yards from the start, by path. Shorter than the mounted range because
+#   the lesson is how well the seat covers ground with what it has -- Sprint, Dash, Travel Form, Aspect of the
+#   Cheetah, and not stopping -- rather than whether a ride is worth summoning. Long enough that a speed cooldown
+#   pays for itself, short enough that the trip is not simply a wait
+Animus.Curriculum.Travel.FootMin = 40
+Animus.Curriculum.Travel.FootMax = 160
 #   flying arenas: yards from the start
 Animus.Curriculum.Travel.FlyingMin = 350.0
 Animus.Curriculum.Travel.FlyingMax = 700.0
