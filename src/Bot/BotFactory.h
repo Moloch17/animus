@@ -51,6 +51,12 @@ namespace Animus::BotFactory
         uint8 Gender = 0;
         uint8 Level = 1;
         uint32 AccountId = 0;
+        /// The battleground instance this bot joins, and on whose side. 0 = none, and the bot is placed the
+        /// ordinary way. A battleground map is reached only through this: MapInstanced asks the player which
+        /// battleground it was invited to.
+        uint32 BattlegroundId = 0;
+        uint32 BattlegroundType = 0;
+        uint8 BattlegroundTeam = 0;
 
         /// Player GUID counter to create the bot with; 0 = a new one. A scenario that rebuilds bots
         /// reuses a fixed set: the core keeps some per-GUID state for the life of the server (e.g.

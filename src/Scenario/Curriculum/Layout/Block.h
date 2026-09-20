@@ -79,6 +79,10 @@ namespace Animus::Curriculum
     constexpr uint32 GROUP_SEATS = 5;       // seats in a group: a party is one of them
     /// Learned agents per env: 1, an arena's 2, a party's 1-5, or a raid's groups of five.
     constexpr uint32 MAX_SEATS = RAID_GROUPS * GROUP_SEATS;
+    constexpr uint32 TEAM_SEATS = 10;       // a battleground side: Warsong Gulch as it is played
+    constexpr uint32 TEAM_COUNT = 2;
+    constexpr uint32 TEAM_MATCH_SEATS = TEAM_SEATS * TEAM_COUNT;
+    constexpr uint32 NO_SEAT = 0xFFFFFFFF;
     constexpr uint32 GROUP_MEMBERS = GROUP_SEATS - 1;    // the seat's own group, itself aside
     /// Raiders outside the seat's group that it still has to act on: the raid's main tank, its most hurt member,
     /// and the nearest one. Empty in every stage below a raid, where the group is the whole of it.

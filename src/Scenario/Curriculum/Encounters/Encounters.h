@@ -35,6 +35,7 @@
 #include <mutex>
 #include <vector>
 
+class Battleground;
 class Group;
 class Map;
 
@@ -551,6 +552,7 @@ namespace Animus::Curriculum
         [[nodiscard]] std::vector<RewardTerm> RewardTerms() const override;
         void AddEpisodeInfo(EpisodeInfoTable& table) override;
         void ResetEpisode(Env& env) override;
+        void BeforeSeats(Env& env, uint8 level) override;
         bool Build(Env& env, Map* map, uint8 level) override;
         void Update(Env& env) override;
         void View(Env const& env, uint32 seat, SeatView& view) const override;
@@ -572,24 +574,51 @@ namespace Animus::Curriculum
             uint32 Returns = 0;
             uint32 CarrierKills = 0;
             uint32 Deaths = 0;
-            bool Dead = false;
-            uint32 RespawnMs = 0;
-            // Since the last reward.
+            /// The seat carrying this side's flag, NO_SEAT when nobody is. With one seat a side this was the
+            /// other seat by construction; with ten it has to be said.
+            uint32 CarriedBy = NO_SEAT;
+            // This decision's events, paid to every seat of the side: Update clears them at its top, so all ten
+            // read the same decision rather than the first to be rewarded taking them.
             uint32 StepCaptures = 0;
             uint32 StepPickups = 0;
             uint32 StepReturns = 0;
             uint32 StepCarrierKills = 0;
             uint32 StepLost = 0;
-            uint32 StepDeaths = 0;
+        };
+
+        /// What belongs to a seat rather than to its side. These sat on Side while a side was one seat.
+        struct SeatFlagState
+        {
+            bool Dead = false;
+            uint32 RespawnMs = 0;
+            uint32 StepDeaths = 0;              // charged to the seat that died, not to its side
             float LastDistance = -1.0f;         // shaping toward the current goal; < 0 = none yet
             Goal LastGoal = Goal::None;
         };
 
         struct EnvFlags
         {
-            std::array<Side, 2> Sides;
+            Battleground* Match = nullptr;             // the scripted battleground, when the arena runs one
+            std::array<Group*, TEAM_COUNT> Groups{};    // a side is a group, so its healers can reach it
+            std::array<Side, TEAM_COUNT> Sides;
+            std::array<SeatFlagState, TEAM_MATCH_SEATS> Seats;
             bool Built = false;
         };
+
+        /// Which side a seat plays for: seats 0..TEAM_SEATS-1 are side 0, the rest side 1. A Mirror arena has
+        /// one seat a side and lands on 0 and 1 as it always did.
+        [[nodiscard]] uint32 SideOf(Env const& env, uint32 seat) const;
+        /// Make each side a group, so party and raid spells reach a team-mate. Disband undoes it.
+        void FormTeams(Env& env);
+        void Disband(Env& env);
+        /// The real Warsong Gulch for this env, made before its seats so they can be told to join it. Null for
+        /// an arena that plays the flag rules itself (stage 11's one on one).
+        [[nodiscard]] Battleground* Match(Env const& env) const;
+        [[nodiscard]] Battleground* MatchFor(Env const& env) const override { return Match(env); }
+        /// Take the match down with the episode that was it.
+        void EndMatch(Env& env);
+        /// Read the script's score and flag state back into the side view the seats and rewards use.
+        void ReadMatch(Env& env);
 
         /// Where seat `seat` should go now, and why.
         [[nodiscard]] Goal CurrentGoal(Env const& env, uint32 seat, Position& place) const;
