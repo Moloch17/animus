@@ -70,6 +70,7 @@ namespace Animus::Curriculum
         GoalMatch,
         OrderMatch,
         PlaceMatch,
+        BrokeContact,
         Repeat,
         Hazard,
         HealingMana,

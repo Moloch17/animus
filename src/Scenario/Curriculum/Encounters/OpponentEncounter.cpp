@@ -50,7 +50,7 @@ std::vector<Animus::Curriculum::RewardTerm> Animus::Curriculum::OpponentEncounte
 {
     return { RewardTerm::StepCost, RewardTerm::DamageDealt, RewardTerm::DamageTaken, RewardTerm::Casting,
         RewardTerm::Approach, RewardTerm::StealthOpener, RewardTerm::StealthUtility, RewardTerm::Kill,
-        RewardTerm::HealthKept, RewardTerm::Death, RewardTerm::Interrupt };
+        RewardTerm::HealthKept, RewardTerm::Death, RewardTerm::Interrupt, RewardTerm::BrokeContact };
 }
 
 /// An interrupt counts when the opponent it was cast at had its cast cut short since, and is paid by what it stopped
@@ -112,6 +112,42 @@ void Animus::Curriculum::OpponentEncounter::AddEpisodeInfo(EpisodeInfoTable& tab
     {
         CombatTally const& tally = _scenario.Data(env).Seats[seat].Combat;
         return _scenario.Uses(env, *this) && tally.Killed && !tally.Died ? 1.0f : 0.0f;
+    });
+
+    // Hiding, for the stages that are about it. All of these are measurements; only the transition is paid
+    // (RewardTerm::BrokeContact), because seconds spent unseen reward standing in a corner.
+    table.Add("unseen_seconds", [this](Env const& env, uint32 seat)
+    {
+        return float(_scenario.Data(env).Seats[seat].Combat.UnseenMs) / 1000.0f;
+    });
+    table.Add("unseen_longest_seconds", [this](Env const& env, uint32 seat)
+    {
+        return float(_scenario.Data(env).Seats[seat].Combat.LongestUnseenMs) / 1000.0f;
+    });
+    table.Add("contact_breaks", [this](Env const& env, uint32 seat)
+    {
+        return float(_scenario.Data(env).Seats[seat].Combat.ContactBreaks);
+    });
+    table.Add("line_of_sight_breaks", [this](Env const& env, uint32 seat)
+    {
+        return float(_scenario.Data(env).Seats[seat].Combat.LineOfSightBreaks);
+    });
+    table.Add("re_stealths", [this](Env const& env, uint32 seat)
+    {
+        return float(_scenario.Data(env).Seats[seat].Combat.ReStealths);
+    });
+    // Got away: out of sight, unbroken, for long enough that the hunter lost it rather than blinked.
+    table.Add("escaped", [this](Env const& env, uint32 seat)
+    {
+        CombatTally const& tally = _scenario.Data(env).Seats[seat].Combat;
+        return _scenario.Uses(env, *this) && tally.LongestUnseenMs >= _scenario.Tuning().Evade.EscapeMs
+            ? 1.0f : 0.0f;
+    });
+    // Still standing at the end. The outcome an evade stage is won by, against an opponent it cannot kill --
+    // which is why it is a separate thing from `won`, and not the same as simply not dying in a fair fight.
+    table.Add("survived", [this](Env const& env, uint32 seat)
+    {
+        return _scenario.Uses(env, *this) && !_scenario.Data(env).Seats[seat].Combat.Died ? 1.0f : 0.0f;
     });
 
     // Every seat of the stage has a row: in a stage that also has party arenas, seats 2 and 3 of a mirror episode are
@@ -228,7 +264,8 @@ bool Animus::Curriculum::OpponentEncounter::RebuildScripted(Env& env, Player* bo
     CurriculumTuning::OpponentTuning const& tuning = _scenario.Tuning().Opponent;
 
     uint8 const level = uint8(std::clamp<int32>(int32(_scenario.Data(env).Seats[0].Level)
-        + irand(-tuning.LevelSpread, tuning.LevelSpread), 1, DEFAULT_MAX_LEVEL));
+        + _scenario.Arena(env).OpponentLevelBonus + irand(-tuning.LevelSpread, tuning.LevelSpread), 1,
+        DEFAULT_MAX_LEVEL));
 
     uint32 const index = env.Id;
     EnemyPlayers::Naming const naming{
@@ -314,6 +351,67 @@ void Animus::Curriculum::OpponentEncounter::View(Env const& env, uint32 seat, Se
     view.OpponentRole = _envs[env.Index].PlayRole;
 }
 
+/// Getting out of sight, and being paid for the moment it happens.
+///
+/// Time unseen is counted and never paid. The best policy for paid seconds out of sight is to walk to the far
+/// corner at the start and stand there, which is not evasion and would read as a triumph; the reward audit
+/// would flag it eventually, but only after a run had been spent learning it. What is worth paying for is the
+/// transition -- being seen, and then not -- because that is the thing a player actually does under pressure,
+/// and a cooldown stops it being farmed by stepping in and out from behind a pillar.
+void Animus::Curriculum::OpponentEncounter::TrackHiding(Env& env, uint32 seat, Player* bot, Player const* hunter,
+    RewardLedger& ledger)
+{
+    CombatTally& tally = _scenario.Data(env).Seats[seat].Combat;
+    if (!bot || !bot->IsAlive() || !hunter)
+    {
+        tally.WasSeen = false;
+        tally.UnseenStreakMs = 0;
+        return;
+    }
+
+    CurriculumTuning::EvadeTuning const& tuning = _scenario.Tuning().Evade;
+    bool const seen = hunter->CanSeeOrDetect(bot);
+    bool const stealthed = bot->HasStealthAura();
+    uint32 const step = _scenario.DecisionMs();
+
+    if (seen)
+        tally.UnseenStreakMs = 0;
+    else
+    {
+        tally.UnseenMs += step;
+        tally.UnseenStreakMs += step;
+        tally.LongestUnseenMs = std::max(tally.LongestUnseenMs, tally.UnseenStreakMs);
+    }
+
+    // Back into stealth after losing it in a fight, which is the thing the stealth drill is about and is not
+    // the same as never having left it.
+    if (stealthed && !tally.WasStealthed && tally.Engaged)
+        ++tally.ReStealths;
+    tally.WasStealthed = stealthed;
+
+    if (seen || !tally.WasSeen)
+    {
+        tally.WasSeen = seen;
+        return;
+    }
+
+    // Seen last decision, not now: contact is broken.
+    tally.WasSeen = false;
+    ++tally.ContactBreaks;
+
+    // Counted as a line-of-sight break when it was done without stealth -- by putting something between
+    // itself and the hunter, or by outrunning its sight. Measured by its effect rather than by the button,
+    // which is the honest version: pressing break_line_of_sight and staying visible is not a break.
+    if (!stealthed)
+        ++tally.LineOfSightBreaks;
+
+    if (tally.BreakPaidMs && env.EpisodeElapsedMs < tally.BreakPaidMs + tuning.BreakCooldownMs)
+        return;
+
+    tally.BreakPaidMs = std::max<uint32>(1, env.EpisodeElapsedMs);
+    ledger.Add(RewardTerm::BrokeContact, tuning.BrokeContact);
+}
+
 void Animus::Curriculum::OpponentEncounter::Reward(Env& env, uint32 seat, Player* bot, RewardLedger& ledger)
 {
     // A flag match pays for the flags (FlagEncounter), not for a one-on-one's single kill.
@@ -323,6 +421,7 @@ void Animus::Curriculum::OpponentEncounter::Reward(Env& env, uint32 seat, Player
     // No opponent in the world (a far teleport, a failed rebuild): nothing to score, not even the step cost.
     if (Player* opponent = Find(env, seat); bot && opponent)
     {
+        TrackHiding(env, seat, bot, opponent, ledger);
         CombatReward::OneOnOne(_scenario, env, seat, bot, opponent, ledger);
         TrackInterrupt(env, seat, opponent, ledger);
     }

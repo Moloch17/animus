@@ -180,7 +180,7 @@ namespace Animus::Curriculum::DirectorLayout
 
         /// Where the side was told to be, and whether it resolved to ground it can stand on.
         PlaceAnchor Anchor = PlaceAnchor::TeamCentre;
-        PlaceOffset Offset = PlaceOffset::At;
+        PlaceOffset Offset = PlaceOffset::Toward;
         PlaceRing Ring = PlaceRing::Near;
         bool PlaceValid = false;
         float PlaceDistance = 0.0f;

@@ -229,6 +229,18 @@ namespace Animus::Curriculum
             uint32 PlaceCooldownMs = 10000;
         } Order;
 
+        /// Getting away: the stages about breaking off a fight that cannot be won.
+        struct EvadeTuning
+        {
+            /// Paid once for going from seen to unseen, and not again for BreakCooldownMs. Never per second
+            /// unseen: the best policy for paid seconds is to run to the far corner at the start and stand
+            /// there, which is not evasion, and the reward audit would only say so after the run was spent.
+            float BrokeContact = 0.3f;
+            uint32 BreakCooldownMs = 5000;
+            /// Unbroken seconds out of sight that count as having got away, for the `escaped` metric.
+            uint32 EscapeMs = 8000;
+        } Evade;
+
         /// What the director's own calls mean in yards.
         struct DirectorTuning
         {
@@ -660,6 +672,10 @@ namespace Animus::Curriculum
             f("Order.PlaceMatch", tuning.Order.PlaceMatch);
             f("Order.PlaceRadius", tuning.Order.PlaceRadius);
             f("Order.PlaceCooldownMs", tuning.Order.PlaceCooldownMs);
+
+            f("Evade.BrokeContact", tuning.Evade.BrokeContact);
+            f("Evade.BreakCooldownMs", tuning.Evade.BreakCooldownMs);
+            f("Evade.EscapeMs", tuning.Evade.EscapeMs);
 
             f("Director.PlaceNearYards", tuning.Director.PlaceNearYards);
             f("Director.PlaceFarYards", tuning.Director.PlaceFarYards);
