@@ -97,6 +97,8 @@ void Animus::Curriculum::DirectorLayout::Observe(DirectorView const& view, float
         out[ENEMY_CASTING] = enemy.Casting ? 1.0f : 0.0f;
         out[ENEMY_SPREAD] = enemy.Spread;
         out[ENEMY_IS_FOCUS] = enemy.IsFocus ? 1.0f : 0.0f;
+        out[ENEMY_SEEN] = enemy.Seen ? 1.0f : 0.0f;
+        out[ENEMY_UNSEEN_TIME] = enemy.UnseenTime;
 
         // Calling a dead enemy is not a call, and the seats could not act on it.
         if (mask && enemy.Alive)

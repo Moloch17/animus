@@ -63,6 +63,11 @@ void Animus::Curriculum::OrderBlock::Observe(SeatView const& view, float* obs, u
     if (order.HasRallyPlace)
         WritePlace(bot, order.RallyPlace, &obs[OBS_RALLY_DISTANCE]);
 
+    // A call the seat cannot see is still a call: it says so and stops there, rather than handing over a
+    // distance and a bearing to something out of sight. ViewSeat's own hidden-filter never touched the order.
+    if (order.FocusUnseen)
+        obs[OBS_FOCUS_UNSEEN] = 1.0f;
+
     Unit const* focus = order.Focus;
     if (focus && focus->IsAlive())
     {

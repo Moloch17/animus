@@ -174,6 +174,13 @@ namespace Animus::Curriculum
         }
         /// The seats of `side`, in seat order, and how many there are (at most TEAM_SEATS).
         uint32 SideSeats(Env const& env, uint32 side, std::array<uint32, TEAM_SEATS>& out) const;
+        /// Whether a side can see `unit` at all: any one of its living seats can.
+        ///
+        /// A side's knowledge is the union of its members', which is a notion the scenario did not have --
+        /// ViewSeat filters what one seat sees (StageScenario.cpp, the `hidden` lambda) and nothing filtered
+        /// anything per side. A director commands a side, so this is the visibility its observation is built
+        /// from. Dead seats are excluded: a side that wiped should not go on spotting.
+        [[nodiscard]] bool SideCanSee(Env const& env, uint32 side, Unit const* unit) const;
         /// Decision interval / 50 ms: per-decision reward terms are tuned per 50 ms and scaled by this, so they mean
         /// the same per second at any StageSettings::DecisionMs.
         [[nodiscard]] float DecisionScale() const { return _decisionScale; }

@@ -1825,6 +1825,15 @@ Animus::Curriculum::SeatView Animus::Curriculum::StageScenario::ViewSeat(Env con
                 view.Enemies[slot] = nullptr;
 
         view.OpponentHidden = hidden(view.Opponent);
+
+        // The order's focus was the one thing here the filter never covered, so a seat observed a called
+        // target's distance, bearing and health through a wall. It now says only that it was told, which is
+        // what a player in that position knows.
+        if (hidden(view.Order.Focus))
+        {
+            view.Order.FocusUnseen = true;
+            view.Order.Focus = nullptr;
+        }
     }
 
     return view;
@@ -1990,6 +1999,19 @@ bool Animus::Curriculum::StageScenario::DirectorsActive(Env const& env) const
 {
     ArenaDefinition const& arena = Arena(env);
     return HasDirectors() && arena.Directed && arena.DirectorLearned;
+}
+
+bool Animus::Curriculum::StageScenario::SideCanSee(Env const& env, uint32 side, Unit const* unit) const
+{
+    if (!unit)
+        return false;
+
+    for (uint32 seat = 0; seat < _seatCount; ++seat)
+        if (SideOf(env, seat) == side)
+            if (Player const* bot = SeatBot(env, seat); bot && bot->IsAlive() && bot->CanSeeOrDetect(unit))
+                return true;
+
+    return false;
 }
 
 uint32 Animus::Curriculum::StageScenario::SideSeats(Env const& env, uint32 side,

@@ -41,6 +41,7 @@ namespace Animus::Curriculum
             OBS_RALLY_SIN,                      // its bearing, relative to the seat's facing
             OBS_RALLY_COS,
             OBS_HAS_FOCUS,                      // a target was called
+            OBS_FOCUS_UNSEEN,                   // ... and this seat cannot see it: act on memory, or find it
             OBS_FOCUS_IS_TARGET,                // ... and the seat is already on it
             OBS_FOCUS_DISTANCE,                 // yards / 100
             OBS_FOCUS_SIN,

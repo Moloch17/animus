@@ -59,6 +59,8 @@ namespace Animus::Curriculum::DirectorLayout
     /// seat's own choice mean the same index.
     enum EnemyFeature : uint32
     {
+        /// The side has seen this one at some point. Not "it exists": a director is told how many it faces by
+        /// the scoreboard, but an enemy nobody has laid eyes on is not something it can call a focus on.
         ENEMY_PRESENT       = 0,
         ENEMY_ALIVE         = 1,
         ENEMY_HEALTH        = 2,
@@ -67,7 +69,12 @@ namespace Animus::Curriculum::DirectorLayout
         ENEMY_CASTING       = 7,
         ENEMY_SPREAD        = 8,    // its distance from the commanded side's centre / DISTANCE_SCALE
         ENEMY_IS_FOCUS      = 9,
-        ENEMY_FEATURES      = 10
+        /// A seat of the side can see it right now. When it cannot, health, role and position are what the
+        /// side last saw and ENEMY_UNSEEN_TIME says how old that is; combat and casting read zero rather than
+        /// their remembered values, because those are instantaneous facts and a stale one is a lie.
+        ENEMY_SEEN          = 10,
+        ENEMY_UNSEEN_TIME   = 11,   // time since the side last saw it / MAX_UNSEEN_TIME_MS, clamped
+        ENEMY_FEATURES      = 12
     };
 
     enum Observation : uint32
@@ -106,6 +113,9 @@ namespace Animus::Curriculum::DirectorLayout
     /// 2 v 2 arena and a battleground.
     constexpr float DISTANCE_SCALE = 100.0f;
     constexpr float CALL_AGE_SCALE = 40.0f;     // decisions
+    /// How stale a sighting can get before ENEMY_UNSEEN_TIME saturates. The same twenty seconds a seat's own
+    /// memory of a hidden target uses (StageScenario's MAX_UNSEEN_TIME_MS), so both cite one number.
+    constexpr float MAX_UNSEEN_TIME_MS = 20000.0f;
 
     /// What one side's director is looking at. Built by DirectorEncounter; nothing here knows a class or a spell.
     struct DirectorView
@@ -130,7 +140,7 @@ namespace Animus::Curriculum::DirectorLayout
 
         struct EnemySlot
         {
-            bool Present = false;
+            bool Present = false;       // ever seen by this side
             bool Alive = false;
             float Health = 0.0f;
             Role PlayRole = Role::Dps;
@@ -138,6 +148,8 @@ namespace Animus::Curriculum::DirectorLayout
             bool Casting = false;
             float Spread = 0.0f;
             bool IsFocus = false;
+            bool Seen = false;          // visible to the side right now
+            float UnseenTime = 0.0f;
         };
 
         std::array<SeatSlot, TEAM_SEATS> Seats{};
