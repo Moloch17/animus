@@ -585,7 +585,7 @@ Animus.Curriculum.Opponent.TankChance = 20
 
 #
 #    Animus.Curriculum.Evade.*
-#        Getting away from a fight that cannot be won (stage16_evade, stage17_stealth). Time spent unseen is
+#        Getting away from a fight that cannot be won (stage16_evade, stage17_hide). Time spent unseen is
 #        counted and never paid -- paid seconds out of sight are earned by standing in the far corner. What is
 #        paid is the transition out of contact, once a break, with a cooldown.
 
