@@ -128,6 +128,20 @@ void Animus::Curriculum::FlagEncounter::ReadMatch(Env& env)
         TeamId const team = side == 0 ? TEAM_ALLIANCE : TEAM_HORDE;
         Side& own = flags.Sides[side];
 
+        // Where the flag actually is, from the object itself. The stage names the battleground's arrival points,
+        // which are its tunnel mouths -- the flag rooms are further in, so steering by them left the seats at the
+        // door with the flag out of reach, half an opportunity a seat a match. The objects only exist once the
+        // script has spawned them, so this is taken here rather than in Build.
+        uint32 const object = side == 0 ? BG_WS_OBJECT_A_FLAG : BG_WS_OBJECT_H_FLAG;
+        if (GameObject const* flag = match->GetBGObject(object); flag && flag->IsInWorld())
+        {
+            Position const at(flag->GetPositionX(), flag->GetPositionY(), flag->GetPositionZ());
+            if (match->GetFlagState(team) == BG_WS_FLAG_STATE_ON_GROUND)
+                own.Dropped = at;
+            else if (match->GetFlagState(team) == BG_WS_FLAG_STATE_ON_BASE)
+                own.Base = at;
+        }
+
         uint32 const score = match->GetTeamScore(team);
         own.StepCaptures = score > own.Captures ? score - own.Captures : 0;
         own.Captures = score;
