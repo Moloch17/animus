@@ -46,6 +46,7 @@
 #include "SpellAuraEffects.h"
 #include "SpellChecks.h"
 #include "SpellInfo.h"
+#include "SpellMgr.h"
 #include "StageDefinition.h"
 #include <cmath>
 #include <numeric>
@@ -83,6 +84,20 @@ namespace
     /// How often the nearest hazard is searched for, and how far. A ground effect does not move, so between searches
     /// the cached one is simply measured again: the search is a grid visit, the measurement is arithmetic.
     constexpr uint32 HAZARD_SEARCH_MS = 1000;
+
+    /// Whether a class/role can get out of sight on purpose: anything in its catalog that makes it stealthed.
+    bool CanStealth(Animus::Curriculum::ClassRoleAssets const& assets)
+    {
+        if (!assets.Catalog)
+            return false;
+
+        for (Animus::Curriculum::ActionCatalog::Action const& action : assets.Catalog->Actions())
+            if (SpellInfo const* spell = sSpellMgr->GetSpellInfo(action.FirstRank);
+                spell && spell->HasAura(SPELL_AURA_MOD_STEALTH))
+                return true;
+
+        return false;
+    }
     /// How long an accepted resurrection is given to land before the offer may be taken again. A delayed
     /// teleport reschedules the resurrect (Player::ProcessDelayedOperations), so it does not always finish on
     /// the decision it was accepted on.
@@ -236,7 +251,13 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
             profile.Name) == settings.ClassRoles.end())
             continue;
 
-        if (ClassRoleAssets::For(profile).Races.empty())
+        ClassRoleAssets const& assets = ClassRoleAssets::For(profile);
+        if (assets.Races.empty())
+            continue;
+
+        // A stage about hiding is played only by class/roles that can hide. Asked of the catalog, which is
+        // built from the spells the class actually knows, so no list here has to be kept in step with a spec.
+        if (_stage.NeedsStealth && !CanStealth(assets))
             continue;
 
         Layout layout = Layout::Build(profile, _stage);
@@ -1172,7 +1193,8 @@ bool Animus::Curriculum::StageScenario::Setup(Env& env)
 {
     if (_layouts.empty())
     {
-        LOG_ERROR("module.animus", "{}: no class/role to play (check the host's class/role list)", Name());
+        LOG_ERROR("module.animus", "{}: no class/role to play (check the host's class/role list{})", Name(),
+            _stage.NeedsStealth ? ", and this stage is played only by class/roles that can stealth" : "");
         return false;
     }
 

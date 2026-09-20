@@ -420,6 +420,8 @@ namespace Animus::Curriculum
             return _scenario.Arena(env).Against == Opposition::Flag;
         }
         void TrackInterrupt(Env& env, uint32 seat, Unit const* opponent, RewardLedger& ledger);
+        /// Count time out of the hunter's sight, and pay for the moment contact breaks.
+        void TrackHiding(Env& env, uint32 seat, Player* bot, Player const* hunter, RewardLedger& ledger);
         [[nodiscard]] Player* Find(Env const& env, uint32 seat) const;
         /// The seats of the side `seat` fights, in that side's own seat order, capped at the slots a seat can
         /// observe. The order has to be stable across a match: target selection indexes it.
@@ -592,7 +594,12 @@ namespace Animus::Curriculum
             Position Place;
             bool HasPlace = false;
             PlaceAnchor Anchor = PlaceAnchor::TeamCentre;
-            PlaceOffset Offset = PlaceOffset::At;
+            /// Toward, not At. At the side's own centre a place is just where the side already is, which
+            /// makes Rally::Point a synonym for Rally::Stack and gives the director two actions that say the
+            /// same thing -- measured on the first run with places: the side averaged 7.9 yards from the
+            /// called place against a radius of 8. Toward the enemy at the near ring is a push, which nothing
+            /// else in the vocabulary says.
+            PlaceOffset Offset = PlaceOffset::Toward;
             PlaceRing Ring = PlaceRing::Near;
             ObjectGuid Focus;
             uint32 Duty = NO_SEAT;              // the seat that owes the next interrupt or control

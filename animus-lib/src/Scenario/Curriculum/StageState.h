@@ -71,7 +71,21 @@ namespace Animus::Curriculum
         uint32 CastsOther = 0;
         bool TimedOut = false;                  // creature duel: the clock ran out with neither side dead
         uint32 TargetEvadeMs = 0;               // creature duel: time the opponent spent evading (leashed, unreachable)
-        uint32 OutOfSightMs = 0;                // creature duel: time engaged without line of sight to the opponent
+        uint32 OutOfSightMs = 0;
+        /// Hiding, for the stages that are about it. Unseen time is measured and never paid: the optimal
+        /// policy for "seconds unseen" is to run to the far corner at the start and stand there, which is
+        /// exactly the farmable shape animus.rewards exists to catch, and it would catch it only after a run
+        /// had been spent on it. What is paid is the transition -- breaking contact -- with a cooldown.
+        uint32 UnseenMs = 0;
+        uint32 UnseenStreakMs = 0;      // ... without being spotted again
+        uint32 LongestUnseenMs = 0;
+        uint32 ContactBreaks = 0;       // seen -> unseen, however it was done
+        uint32 LineOfSightBreaks = 0;   // ... by break_line_of_sight, and it worked
+        uint32 ReStealths = 0;          // got back into stealth after losing it in a fight
+        bool WasSeen = false;
+        bool WasStealthed = false;
+        bool PendingLosBreak = false;   // pressed break_line_of_sight; next decision says whether it worked
+        uint32 BreakPaidMs = 0;         // cooldown on the transition nudge                // creature duel: time engaged without line of sight to the opponent
         uint32 UnreachableMs = 0;               // creature duel: time the opponent had no path to its victim
         uint32 UnreachableStreakMs = 0;         // ... without a break, up to now
         uint32 OpponentTeleports = 0;           // ... times it was put back beside its victim for it

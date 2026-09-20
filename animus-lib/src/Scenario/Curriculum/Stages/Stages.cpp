@@ -21,11 +21,12 @@
  * blocks it needs and adding its own.
  *
  *   duel ─┬─ pack ─ gauntlet ─ companion ─ party ─┬─ crossroads     (PvE ...
- *         ├─ pvp ─ arena ─────────────────────────┘                  ... and PvP, merged)
+ *         ├─ pvp ─ evade ─┬─ arena ────────────────┘                  ... and PvP, merged)
+ *         │               └─ stealth (a leaf)                        (not fighting)
  *         └─ travel ─┬─ flight                                       (getting somewhere)
  *                    └─ (with arena) flag                            (Warsong Gulch's rules)
  *
- * Scenario names carry the stage's number (stage1_duel ... stage18_warsong), model names only its suffix
+ * Scenario names carry the stage's number (stage1_duel ... stage21_warsong), model names only its suffix
  * (_duel). The
  * duel is the first stage: nothing seeds it.
  *
@@ -76,7 +77,7 @@ namespace
         });
 
         // Something on the ground, in every pull. Hazards exist already -- the pack ladder draws a hazard caster
-        // from rung 3 and self-play produces them by the spell (stage16_arena measured 3.1 s of hazard an episode,
+        // from rung 3 and self-play produces them by the spell (stage18_arena measured 3.1 s of hazard an episode,
         // stage4_gauntlet 1.1 s) -- but a class/role that stalls below rung 3 never meets one, and a second an
         // episode is thin to learn from. Here every pull has one, at stage 2's difficulty, so walking out of it is
         // the thing being learned rather than a detail of a harder fight.
@@ -210,7 +211,7 @@ namespace
         // episode is about is the threat table -- which the seat can now read (Encoding::ThreatShare).
         //
         // Read its scores knowing that the hazard charge lands about four times harder on a tank than on a ranged
-        // seat (stage16_arena: paladin_tank -0.834 an episode against priest_dps -0.198), because a tank cannot walk
+        // seat (stage18_arena: paladin_tank -0.834 an episode against priest_dps -0.198), because a tank cannot walk
         // out of what it is holding an enemy in. That is Hazards.Standing being tuned for a seat with a choice.
         stages.push_back({
             .Name = "stage11_tanking",
@@ -283,10 +284,46 @@ namespace
             .Arenas = { { .Name = "pvp_scripted", .Against = Opposition::ScriptedPlayer, .Pvp = true } },
         });
 
+        // Two drills about not fighting, between the scripted duel and self-play. Everything up to here rewards
+        // winning the fight in front of it, so a losing fight is a class of situation the policy has never been
+        // paid to handle: it dies with its cooldowns up. Both sit on the trunk order but only the first is on the
+        // trunk: see stage17_stealth's note.
         stages.push_back({
-            .Name = "stage16_arena",
-            .Suffix = "_arena",
+            .Name = "stage16_evade",
+            .Suffix = "_evade",
             .Extends = "stage15_pvp",
+            .Summary = "a fight it cannot win: break away, break line of sight, and live to the end of it",
+            .Blocks = { Core, Duel, Pet, Pvp },
+            // Six levels up is a fight no class wins straight: the win condition is being alive at 120 s, which is
+            // what makes running, cover and the escape cooldown the only policy that scores. Nothing pays time
+            // spent hidden -- that would be farmed by walking to the far corner at t=0 -- only the transition out
+            // of contact (RewardTerm::BrokeContact, once per break with a cooldown).
+            .Arenas = { { .Name = "evade", .Against = Opposition::ScriptedPlayer, .Pvp = true,
+                .EpisodeSeconds = 120, .OpponentLevelBonus = 6 } },
+        });
+
+        // Stealth, for the classes that have it (NeedsStealth drops the layouts whose kit has no stealth aura, so
+        // the list follows the catalog rather than a hard-coded one here). A restricted stage writes a checkpoint
+        // holding only those layouts, and init_from: auto takes the first checkpoint in the chain that exists --
+        // so a stage extending this one would find it, stop looking, and start every other class/role from random
+        // weights without saying so. It is therefore a leaf: nothing may extend it, the way mix_duel_pvp is.
+        stages.push_back({
+            .Name = "stage17_stealth",
+            .Suffix = "_stealth",
+            .Extends = "stage16_evade",
+            .Summary = "open from stealth against a stronger enemy, and get back into it once the fight turns",
+            .NeedsStealth = true,
+            .Blocks = { Core, Duel, Pet, Pvp },
+            // Four levels up rather than six: the opener has to be worth taking, so the fight must be winnable
+            // from stealth and unwinnable head-on.
+            .Arenas = { { .Name = "stealth", .Against = Opposition::ScriptedPlayer, .Pvp = true,
+                .EpisodeSeconds = 120, .OpponentLevelBonus = 4 } },
+        });
+
+        stages.push_back({
+            .Name = "stage18_arena",
+            .Suffix = "_arena",
+            .Extends = "stage16_evade",
             .Summary = "self-play one-on-one: two learned seats of any classes",
             .Blocks = { Core, Duel, Pet, Pvp },
             .Arenas = { { .Name = "arena_1v1", .Seats = SeatPlan::Mirror, .Against = Opposition::MirrorSeat,
@@ -303,9 +340,9 @@ namespace
         // focus, the duty goes round the side in turn. A learned director comes next, and meets seats that
         // already know how to be commanded rather than seats that have never heard an order.
         stages.push_back({
-            .Name = "stage17_duo_led",
+            .Name = "stage19_duo_led",
             .Suffix = "_duo",
-            .Extends = "stage16_arena",
+            .Extends = "stage18_arena",
             .Summary = "two against two, told who to kill and whose turn it is: follow the call",
             .Blocks = { Core, Duel, Pack, Pet, Pvp, Context, Hostiles, Support, Order },
             .Arenas = { { .Name = "duo", .Seats = SeatPlan::Teams, .Against = Opposition::MirrorSeat,
@@ -321,9 +358,9 @@ namespace
         // The Barrens, for stage 9's reason: the second base is placed by the same objective search, 100-180 yd from
         // the first, and only open ground has room for it.
         stages.push_back({
-            .Name = "stage18_flag",
+            .Name = "stage20_flag",
             .Suffix = "_flag",
-            .Extends = "stage16_arena",
+            .Extends = "stage18_arena",
             .Merges = { "stage7_travel" },
             .Summary = "capture the flag one-on-one: bases 100-180 yd apart, first to three captures",
             .Blocks = { Core, Duel, Pet, Pvp, Travel, Flag },
@@ -340,9 +377,9 @@ namespace
         });
 
         stages.push_back({
-            .Name = "stage19_warsong",
+            .Name = "stage21_warsong",
             .Suffix = "_warsong",
-            .Extends = "stage18_flag",
+            .Extends = "stage20_flag",
             .Summary = "ten against ten for the flag: escort the carrier, hold the base, stop theirs",
             .Blocks = { Core, Duel, Pet, Pvp, Travel, Flag, Party },
             .Arenas = { { .Name = "warsong", .Seats = SeatPlan::Teams, .Against = Opposition::Flag, .Pvp = true,
@@ -364,13 +401,13 @@ namespace
         // episode: an ambush of the owner in the middle of the gauntlet, and a lone enemy player attacking the owner.
         // Every PvE arena plays long episodes; the one-on-ones stay short.
         stages.push_back({
-            .Name = "stage20_crossroads",
+            .Name = "stage22_crossroads",
             .Suffix = "_crossroads",
             .Extends = "stage14_raid_gauntlet",
             // The leaf of every other branch, so nothing trained in the queue is left behind: the PvP line
             // through warsong, the movement line through flight. The PvE line arrives by extension.
             .Merges = {
-                "stage19_warsong", "stage16_arena", "stage15_pvp", "stage8_flight",
+                "stage21_warsong", "stage18_arena", "stage15_pvp", "stage8_flight",
                 "stage9_companion", "stage4_gauntlet", "stage1_duel",
             },
             .Summary = "PvE and PvP in one policy: every earlier situation, an ambush mid-gauntlet and a ganked owner",
@@ -474,6 +511,8 @@ namespace
             return "travel needs the travel block";
         if (travel && (arena.Seats != SeatPlan::Solo || arena.Owner || arena.Pvp || arena.Ambushers > 0))
             return "travel is one seat on its own";
+        if (arena.OpponentLevelBonus != 0 && arena.Against != Opposition::ScriptedPlayer)
+            return "only a scripted enemy player takes a level bonus";
         if (arena.Flying && !travel)
             return "only a travel arena flies";
         if (flag && (!stage.Has(BlockId::Travel) || !stage.Has(BlockId::Flag)))
@@ -504,6 +543,24 @@ namespace
 
         if (!stage.Extends.empty() && !earlier(stage.Extends))
             return "it extends " + stage.Extends + ", which is not an earlier valid stage";
+
+        // A restricted stage's checkpoint holds only the layouts it played, and init_from: auto takes the first
+        // checkpoint in the chain that exists -- so a stage seeding from one would find it, stop looking, and
+        // start every other class/role from random weights without saying so. Such a stage is a leaf.
+        auto const restricted = [&valid](std::string const& name)
+        {
+            return std::any_of(valid.begin(), valid.end(), [&name](StageDefinition const& other)
+            {
+                return other.Name == name && other.NeedsStealth;
+            });
+        };
+
+        if (restricted(stage.Extends))
+            return "it extends " + stage.Extends + ", which only some class/roles play: nothing may seed from it";
+
+        for (std::string const& merge : stage.Merges)
+            if (restricted(merge))
+                return "it merges " + merge + ", which only some class/roles play: nothing may seed from it";
 
         for (std::string const& merge : stage.Merges)
         {
