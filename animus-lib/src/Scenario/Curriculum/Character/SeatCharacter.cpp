@@ -43,6 +43,13 @@ Animus::Curriculum::SeatCharacter::Built Animus::Curriculum::SeatCharacter::Conf
     ClassRoleAssets const& assets = *layout.Assets;
     SpecProfile const& spec = layout.Profile->Specs[specIndex];
 
+    // Every talent learned, every spell in the kit and every item equipped below recomputes the character's stats
+    // on its own, and at level 80 that is some seventy talents, a kit walked twice and nineteen slots -- hundreds
+    // of full recomputes to reach the one state that matters, per character, per episode. This is the core's own
+    // pattern for applying a pile of modifiers at once (Player::_ApplyAllStatBonuses): hold the recompute, apply
+    // everything, then recompute once at the end. The UpdateAllStats() that closes this function is that one.
+    bot->SetCanModifyStats(false);
+
     GearBuilder::LearnProficiencies(bot);
 
     Built built;
@@ -72,6 +79,7 @@ Animus::Curriculum::SeatCharacter::Built Animus::Curriculum::SeatCharacter::Conf
         if (bot->GetItemByPos(INVENTORY_SLOT_BAG_0, slot))
             ++built.EquippedItems;
 
+    bot->SetCanModifyStats(true);
     bot->UpdateAllStats();
     bot->SetFullHealth();
     bot->SetPower(POWER_MANA, bot->GetMaxPower(POWER_MANA));
