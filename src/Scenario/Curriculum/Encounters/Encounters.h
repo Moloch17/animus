@@ -399,7 +399,7 @@ namespace Animus::Curriculum
             ScriptedPlayer::State Script;
             /// Per seat: a casting opponent the seat just cast an interrupt at, how many it has landed, and how long
             /// the opponent has been held out of the fight. A scripted player casts and heals -- 3 interruptible
-            /// casts an episode in stage6_pvp -- so stopping one matters at least as much as it does against a
+            /// casts an episode in stage14_pvp -- so stopping one matters at least as much as it does against a
             /// creature, and until now none of it was paid or even counted here.
             std::array<ObjectGuid, MAX_SEATS> PendingInterrupt{};
             std::array<uint32, MAX_SEATS> Interrupts{};

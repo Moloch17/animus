@@ -465,7 +465,7 @@ bool Animus::Curriculum::PullsEncounter::SpawnPull(Env& env, Map* map)
 
     // A hazard arena puts one in every pull, whatever the rung drew. The pack ladder only reaches hazards at
     // rung 3, so a class/role that stalls below it never meets one, and elsewhere they are thin enough to be hard
-    // to learn from (stage3_gauntlet averages about a second of hazard an episode). Replacing the last entry rather
+    // to learn from (stage4_gauntlet averages about a second of hazard an episode). Replacing the last entry rather
     // than adding one keeps the pull the size its rung says.
     if (arena.Hazards && !entries.empty())
         if (uint32 const entry = pool.RandomHazardCaster(uint8(std::min<uint32>(level, DEFAULT_MAX_LEVEL))))
