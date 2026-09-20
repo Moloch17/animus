@@ -95,6 +95,7 @@ std::string_view Animus::Curriculum::RewardTermName(RewardTerm term)
         case RewardTerm::Control:               return "control";
         case RewardTerm::SelfHealing:           return "self_healing";
         case RewardTerm::GoalMatch:             return "goal_match";
+        case RewardTerm::OrderMatch:            return "order_match";
         case RewardTerm::Repeat:                return "repeat";
         case RewardTerm::Count:                 break;
     }

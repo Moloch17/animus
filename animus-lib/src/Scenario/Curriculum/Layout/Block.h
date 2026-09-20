@@ -149,6 +149,8 @@ namespace Animus::Curriculum
     constexpr int32 NO_GOAL = -1;
 
     [[nodiscard]] std::string_view GoalName(SeatGoal goal);
+    [[nodiscard]] std::string_view PostureName(TeamPosture posture);
+    [[nodiscard]] std::string_view RallyName(TeamRally rally);
     /// The episode clock's scale: the longest arena's episode, so it rises through every episode instead of
     /// saturating. Elapsed time, not the fraction of an episode's own limit: a companion has no limit, and the
     /// critic already sees the fraction (StageScenario::STATE_EPISODE_TIME).

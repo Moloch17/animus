@@ -20,6 +20,7 @@
 #define ANIMUS_LIB_CURRICULUM_STAGE_SCENARIO_H
 
 #include "CurriculumTuning.h"
+#include "DirectorLayout.h"
 #include "Encounter.h"
 #include "EpisodeInfoTable.h"
 #include "Layout.h"
@@ -33,6 +34,7 @@
 
 namespace Animus::Curriculum
 {
+    class DirectorEncounter;
     class OwnerEncounter;
     class PartyEncounter;
 
@@ -120,7 +122,7 @@ namespace Animus::Curriculum
 
         [[nodiscard]] char const* Name() const override;
         [[nodiscard]] bool IsTerminal(Env const& env) const override;
-        /// The second seat of a mirror arena.
+        /// The far side of a self-play arena: its seats, and the director commanding them.
         [[nodiscard]] bool IsOpponentSeat(Env const& env, uint32 agent) const override;
         [[nodiscard]] ScenarioSpec Spec() const override { return _spec; }
 
@@ -145,6 +147,8 @@ namespace Animus::Curriculum
         [[nodiscard]] ArenaDefinition const& Arena(Env const& env) const;
         /// Whether the env's current episode uses `encounter`.
         [[nodiscard]] bool Uses(Env const& env, Encounter const& encounter) const;
+        /// The encounters the env's current episode uses, in build order.
+        [[nodiscard]] std::vector<Encounter*> const& ActiveEncounters(Env const& env) const;
         [[nodiscard]] CurriculumTuning const& Tuning() const { return _tuning; }
         /// Which side a seat plays for. A Teams arena splits its seats down the middle; anything else has one
         /// seat a side, which is what a Mirror is.
@@ -159,6 +163,17 @@ namespace Animus::Curriculum
         [[nodiscard]] static uint32 EnvPhase(Env const& env);
         [[nodiscard]] uint32 SpawnMapId() const { return _spawnMapId; }
         [[nodiscard]] uint32 SeatCount() const { return _seatCount; }
+        /// Whether the run carries the two director agents at all (some arena of the stage has a learned
+        /// director), and whether the env's current episode is actually using them.
+        [[nodiscard]] bool HasDirectors() const { return _directorLayout != NO_LAYOUT; }
+        [[nodiscard]] bool DirectorsActive(Env const& env) const;
+        /// The agent index that commands `side`, or NO_SEAT when the run has no directors.
+        [[nodiscard]] uint32 DirectorAgent(uint32 side) const
+        {
+            return HasDirectors() ? _seatCount + side : NO_SEAT;
+        }
+        /// The seats of `side`, in seat order, and how many there are (at most TEAM_SEATS).
+        uint32 SideSeats(Env const& env, uint32 side, std::array<uint32, TEAM_SEATS>& out) const;
         /// Decision interval / 50 ms: per-decision reward terms are tuned per 50 ms and scaled by this, so they mean
         /// the same per second at any StageSettings::DecisionMs.
         [[nodiscard]] float DecisionScale() const { return _decisionScale; }
@@ -186,6 +201,9 @@ namespace Animus::Curriculum
 
         /// Seat `seat`'s bot, in or out of the world (see BotSlot::Active).
         [[nodiscard]] Player* SeatBot(Env const& env, uint32 seat) const;
+        /// What SeatReward last resolved as this seat's target (SeatState::CurrentTargetGuid), for the const readers
+        /// -- episode info, state -- that cannot ask the encounters again. Falls back to the first target slot.
+        [[nodiscard]] Unit* SeatTarget(Env const& env, uint32 seat) const;
 
         /// The scripted owner, or null (no owner in the env's arena, or none built).
         [[nodiscard]] Player* Owner(Env const& env) const;
@@ -226,7 +244,6 @@ namespace Animus::Curriculum
         /// The next episode's arena: drawn by weight (no draw for a single arena, so its random numbers are as before).
         [[nodiscard]] uint32 DrawArena() const;
         /// The encounters arena `arena` uses, in build order and in reward order.
-        [[nodiscard]] std::vector<Encounter*> const& ActiveEncounters(Env const& env) const;
         [[nodiscard]] std::vector<Encounter*> const& ActiveRewardOrder(Env const& env) const;
         /// Create and place seat `seat`'s next character (its layout is set). `map` is null for the env's first bot.
         Player* BuildSeat(Env& env, uint32 seat, Map*& map, uint8 level, Position const& start);
@@ -241,9 +258,6 @@ namespace Animus::Curriculum
         /// What the seat's actions aim at: the dummy or creature, the selected pack enemy, the enemy player. Null
         /// between gauntlet pulls.
         [[nodiscard]] Unit* CurrentTarget(Env const& env, uint32 seat);
-        /// What SeatReward last resolved as this seat's target (SeatState::CurrentTargetGuid), for the const readers
-        /// -- episode info, state -- that cannot ask the encounters again. Falls back to the first target slot.
-        [[nodiscard]] Unit* SeatTarget(Env const& env, uint32 seat) const;
         /// Remember where the seat last saw its target, while it can see it.
         static void TrackTarget(Env const& env, SeatState& seat, Player* bot, Unit* target);
         /// The seat's view. Enemies the bot can neither see nor detect are left out of it, the target included
@@ -255,6 +269,9 @@ namespace Animus::Curriculum
         /// The seat pressed `action`: its memory, and the repeat charge.
         void Press(Env const& env, SeatState& seat, Player* bot, uint32 action, bool didSomething) const;
         void ObserveSeat(Env& env, uint32 seat, float* obs, uint8* mask);
+        /// The row of the agent commanding `side`: what it sees of its side, the enemy and the standing order,
+        /// and which calls it may make (DirectorLayout).
+        void ObserveDirector(Env& env, uint32 side, float* obs, uint8* mask);
         [[nodiscard]] float SeatReward(Env& env, uint32 seat);
         /// Whether the seat's decision matched the goal it is pursuing (SeatGoal): damage for Fight, an enemy other
         /// than its target held for Control, healing or resting itself for Recover, healing or shielding the owner or
@@ -281,7 +298,13 @@ namespace Animus::Curriculum
         float _decisionScale = 1.0f;
         uint32 _decisionMs = 0;
 
+        /// The director encounter, or null when no arena of the stage has one. Owned by _encounters.
+        DirectorEncounter* _director = nullptr;
+
         std::vector<Layout> _layouts;
+        /// The director layout's index in _layouts, or NO_LAYOUT when no arena of the stage has a learned
+        /// director. The two director agents follow the seats: agent _seatCount + side commands side `side`.
+        uint32 _directorLayout = NO_LAYOUT;
 
         /// Per layout, how often a training episode draws it (the learner's WEIGHTS message); empty = evenly.
         std::vector<float> _layoutWeights;

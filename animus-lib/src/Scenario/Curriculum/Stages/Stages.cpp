@@ -353,7 +353,8 @@ namespace
             .Summary = "two against two, told who to kill and whose turn it is: follow the call",
             .Blocks = { Core, Duel, Pack, Pet, Pvp, Context, Hostiles, Support, Order },
             .Arenas = { { .Name = "duo", .Seats = SeatPlan::Teams, .Against = Opposition::MirrorSeat,
-                .Pvp = true, .EpisodeSeconds = 180, .Directed = true, .TeamSeats = 2 } },
+                .Pvp = true, .EpisodeSeconds = 180, .Directed = true, .DirectorLearned = true,
+                .TeamSeats = 2 } },
             .InDefaultQueue = false,
             .MinLevel = 20,
         });
@@ -430,6 +431,8 @@ namespace
             return "a side is between one seat and TEAM_SEATS";
         if (arena.Directed && !stage.Has(BlockId::Order))
             return "a director needs the order block: its seats have to read what it asks";
+        if (arena.DirectorLearned && !arena.Directed)
+            return "a learned director is still a director: the arena has to be directed";
         if (arena.Directed && arena.Seats != SeatPlan::Teams)
             return "a director commands a side, so its arena needs team seats";
         if (arena.Ambushers > MAX_AMBUSHERS)

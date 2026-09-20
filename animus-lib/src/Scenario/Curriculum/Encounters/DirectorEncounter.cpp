@@ -22,6 +22,7 @@
 #include "ObjectAccessor.h"
 #include "Player.h"
 #include "SeatView.h"
+#include "StageDefinition.h"
 #include "StageScenario.h"
 #include <algorithm>
 
@@ -40,6 +41,45 @@ Animus::Curriculum::DirectorEncounter::DirectorEncounter(StageScenario& scenario
 {
 }
 
+std::vector<Animus::Curriculum::RewardTerm> Animus::Curriculum::DirectorEncounter::RewardTerms() const
+{
+    return { RewardTerm::OrderMatch };
+}
+
+void Animus::Curriculum::DirectorEncounter::BeforeRewards(Env& env)
+{
+    _envs[env.Index].Shaping.fill(0.0f);
+}
+
+float Animus::Curriculum::DirectorEncounter::ShapingPaid(Env const& env, uint32 seat) const
+{
+    return seat < MAX_SEATS ? _envs[env.Index].Shaping[seat] : 0.0f;
+}
+
+void Animus::Curriculum::DirectorEncounter::Reward(Env& env, uint32 seat, Player* bot, RewardLedger& ledger)
+{
+    if (!bot || !bot->IsAlive() || seat >= MAX_SEATS)
+        return;
+
+    SideOrder const& order = _envs[env.Index].Sides[_scenario.SideOf(env, seat)];
+    if (!order.Focus)
+        return;
+
+    // Only a call the seat could be following: a dead target is not one, and neither is one it cannot reach in
+    // the slots it selects between.
+    Unit const* focus = ObjectAccessor::GetUnit(*bot, order.Focus);
+    if (!focus || !focus->IsAlive())
+        return;
+
+    Unit const* target = _scenario.SeatTarget(env, seat);
+    if (!target || target->GetGUID() != order.Focus)
+        return;
+
+    float const paid = _scenario.Tuning().Order.Focus * _scenario.DecisionScale();
+    ledger.Add(RewardTerm::OrderMatch, paid);
+    _envs[env.Index].Shaping[seat] = paid;
+}
+
 void Animus::Curriculum::DirectorEncounter::AddEpisodeInfo(EpisodeInfoTable& table)
 {
     // What the director did, so a directed stage can be read against the undirected one it came from.
@@ -55,12 +95,31 @@ void Animus::Curriculum::DirectorEncounter::AddEpisodeInfo(EpisodeInfoTable& tab
     {
         return _envs[env.Index].Sides[_scenario.SideOf(env, seat)].Focus ? 1.0f : 0.0f;
     });
+    // Whether the call was worth following, which is upstream of whether it was followed. A seat that ignores a
+    // director and a director that names nothing worth fighting look identical in order_focus_kept alone.
+    auto const share = [this](Env const& env, uint32 seat, auto pick)
+    {
+        SideOrder const& side = _envs[env.Index].Sides[_scenario.SideOf(env, seat)];
+        return side.Decisions ? float(pick(side)) / float(side.Decisions) : 0.0f;
+    };
+    table.Add("order_focus_alive", [share](Env const& env, uint32 seat)
+    {
+        return share(env, seat, [](SideOrder const& side) { return float(side.FocusAlive); });
+    });
+    table.Add("order_focus_lowest", [share](Env const& env, uint32 seat)
+    {
+        return share(env, seat, [](SideOrder const& side) { return float(side.FocusLowest); });
+    });
+    table.Add("order_focus_chance", [share](Env const& env, uint32 seat)
+    {
+        return share(env, seat, [](SideOrder const& side) { return side.ChanceSum; });
+    });
     // Whether the side was doing what it was told: the share of its seats on the called target.
     table.Add("order_focus_kept", [this](Env const& env, uint32 seat)
     {
         SideOrder const& side = _envs[env.Index].Sides[_scenario.SideOf(env, seat)];
-        Player const* bot = _scenario.SeatBot(env, seat);
-        return side.Focus && bot && bot->GetTarget() == side.Focus ? 1.0f : 0.0f;
+        Unit const* target = _scenario.SeatTarget(env, seat);
+        return side.Focus && target && target->GetGUID() == side.Focus ? 1.0f : 0.0f;
     });
 }
 
@@ -69,14 +128,186 @@ void Animus::Curriculum::DirectorEncounter::ResetEpisode(Env& env)
     _envs[env.Index] = EnvDirector();
 }
 
+bool Animus::Curriculum::DirectorEncounter::Learned(Env const& env) const
+{
+    ArenaDefinition const& arena = _scenario.Arena(env);
+    return arena.Directed && arena.DirectorLearned;
+}
+
+void Animus::Curriculum::DirectorEncounter::Changed(SideOrder& order, uint32 steps) const
+{
+    ++order.Changes;
+    order.CalledStep = steps;
+}
+
+void Animus::Curriculum::DirectorEncounter::Forget(Env& env, uint32 side)
+{
+    EnvDirector& state = _envs[env.Index];
+    SideOrder& order = state.Sides[side];
+
+    if (order.Focus)
+    {
+        std::array<uint32, TEAM_SEATS> theirs{};
+        uint32 const count = _scenario.SideSeats(env, side ? 0 : 1, theirs);
+
+        Player const* focus = nullptr;
+        for (uint32 slot = 0; slot < count && !focus; ++slot)
+            if (Player const* bot = _scenario.SeatBot(env, theirs[slot]); bot && bot->GetGUID() == order.Focus)
+                focus = bot;
+
+        if (!focus || !focus->IsAlive())
+        {
+            order.Focus = ObjectGuid::Empty;
+            Changed(order, state.Steps);
+        }
+    }
+
+    if (order.Duty != NO_SEAT)
+    {
+        Player const* duty = _scenario.SeatBot(env, order.Duty);
+        if (!duty || !duty->IsAlive())
+        {
+            order.Duty = NO_SEAT;
+            Changed(order, state.Steps);
+        }
+    }
+}
+
+void Animus::Curriculum::DirectorEncounter::Measure(Env& env, uint32 side)
+{
+    SideOrder& order = _envs[env.Index].Sides[side];
+
+    std::array<uint32, TEAM_SEATS> theirs{};
+    uint32 const count = _scenario.SideSeats(env, side ? 0 : 1, theirs);
+
+    Player const* lowest = nullptr;
+    Player const* focus = nullptr;
+    float least = 2.0f;
+    uint32 living = 0;
+    for (uint32 slot = 0; slot < count && slot < PACK_SLOTS; ++slot)
+    {
+        Player const* bot = _scenario.SeatBot(env, theirs[slot]);
+        if (!bot || !bot->IsAlive())
+            continue;
+
+        ++living;
+        if (float const left = CombatReward::HealthLeft(bot); left < least)
+        {
+            least = left;
+            lowest = bot;
+        }
+        if (bot->GetGUID() == order.Focus)
+            focus = bot;
+    }
+
+    // Nothing to call: not a decision the call can be judged on either way.
+    if (!living)
+        return;
+
+    ++order.Decisions;
+    // What naming one of the living at random would have scored, so a side of two and a side of ten are read on
+    // the same scale and a director that calls well is told apart from one the arena makes look good.
+    order.ChanceSum += 1.0f / float(living);
+    if (!focus)
+        return;
+
+    ++order.FocusAlive;
+    if (focus == lowest)
+        ++order.FocusLowest;
+}
+
 void Animus::Curriculum::DirectorEncounter::Update(Env& env)
 {
     EnvDirector& state = _envs[env.Index];
-    if (state.Steps++ % THINK_EVERY)
+    uint32 const steps = state.Steps++;
+
+    // Before anything reads the order: a call at a corpse is not a call. The order stands between the
+    // director's decisions -- ten of them, and longer still if it never spends another action on the focus --
+    // so a target that dies mid-span would otherwise go on being asked for. Measured before this was added,
+    // 37% of all decisions carried an order aimed at someone dead or gone, which no seat could follow at any
+    // price, and which dragged order_focus_kept below chance on its own: a seat fighting someone alive cannot
+    // match a call pointing at someone dead.
+    for (uint32 side = 0; side < TEAM_COUNT; ++side)
+        Forget(env, side);
+
+    // Measured every decision and for either kind of director, so the scripted one is the yardstick.
+    for (uint32 side = 0; side < TEAM_COUNT; ++side)
+        Measure(env, side);
+
+    // A learned director speaks through its own agent's actions (Call), on whatever cadence the learner gives
+    // it; there is nothing to script.
+    if (Learned(env))
+        return;
+
+    if (steps % THINK_EVERY)
         return;
 
     for (uint32 side = 0; side < TEAM_COUNT; ++side)
         Command(env, side);
+}
+
+void Animus::Curriculum::DirectorEncounter::Call(Env& env, uint32 side, int32 action)
+{
+    if (side >= TEAM_COUNT || action <= int32(DirectorLayout::ACTION_HOLD))
+        return;
+
+    EnvDirector& state = _envs[env.Index];
+    SideOrder& order = state.Sides[side];
+    uint32 const local = uint32(action);
+
+    if (local < DirectorLayout::ACTION_RALLY_FIRST)
+    {
+        TeamPosture const posture = TeamPosture(local - DirectorLayout::ACTION_POSTURE_FIRST);
+        if (posture != order.Posture)
+        {
+            order.Posture = posture;
+            Changed(order, state.Steps);
+        }
+        return;
+    }
+
+    if (local < DirectorLayout::ACTION_FOCUS_FIRST)
+    {
+        TeamRally const rally = TeamRally(local - DirectorLayout::ACTION_RALLY_FIRST);
+        if (rally != order.Rally)
+        {
+            order.Rally = rally;
+            Changed(order, state.Steps);
+        }
+        return;
+    }
+
+    if (local < DirectorLayout::ACTION_DUTY_FIRST)
+    {
+        // The enemy side's seats in seat order, which is the order the seats themselves select between, so a
+        // called slot and a seat's own choice mean the same enemy.
+        std::array<uint32, TEAM_SEATS> enemies{};
+        uint32 const count = _scenario.SideSeats(env, side ? 0 : 1, enemies);
+        uint32 const slot = local - DirectorLayout::ACTION_FOCUS_FIRST;
+        if (slot >= count || slot >= PACK_SLOTS)
+            return;
+
+        Player const* enemy = _scenario.SeatBot(env, enemies[slot]);
+        if (!enemy || !enemy->IsAlive() || enemy->GetGUID() == order.Focus)
+            return;
+
+        order.Focus = enemy->GetGUID();
+        Changed(order, state.Steps);
+        return;
+    }
+
+    std::array<uint32, TEAM_SEATS> mine{};
+    uint32 const count = _scenario.SideSeats(env, side, mine);
+    uint32 const slot = local - DirectorLayout::ACTION_DUTY_FIRST;
+    if (slot >= count)
+        return;
+
+    Player const* bot = _scenario.SeatBot(env, mine[slot]);
+    if (!bot || !bot->IsAlive() || mine[slot] == order.Duty)
+        return;
+
+    order.Duty = mine[slot];
+    Changed(order, state.Steps);
 }
 
 void Animus::Curriculum::DirectorEncounter::Command(Env& env, uint32 side)
@@ -132,13 +363,137 @@ void Animus::Curriculum::DirectorEncounter::Command(Env& env, uint32 side)
         : focus ? TeamRally::Focus : TeamRally::None;
 
     if (order.Focus != focus || order.Posture != posture || order.Rally != rally)
-        ++order.Changes;
+        Changed(order, state.Steps);
 
     order.Focus = focus;
     order.Posture = posture;
     order.Rally = rally;
     order.Duty = duty;
     order.HasPlace = false;
+}
+
+void Animus::Curriculum::DirectorEncounter::ViewSide(Env const& env, uint32 side,
+    DirectorLayout::DirectorView& view) const
+{
+    view = DirectorLayout::DirectorView();
+    if (side >= TEAM_COUNT)
+        return;
+
+    EnvDirector const& state = _envs[env.Index];
+    SideOrder const& order = state.Sides[side];
+
+    view.Active = true;
+    view.EpisodeTime = std::min(1.0f, float(env.EpisodeElapsedMs) / EPISODE_TIME_SCALE_MS);
+    view.Posture = order.Posture;
+    view.Rally = order.Rally;
+    view.HasFocus = bool(order.Focus);
+    view.HasDuty = order.Duty != NO_SEAT;
+    view.SinceCall = std::min(1.0f,
+        float(state.Steps - std::min(state.Steps, order.CalledStep)) / DirectorLayout::CALL_AGE_SCALE);
+
+    std::array<uint32, TEAM_SEATS> mine{}, theirs{};
+    uint32 const own = _scenario.SideSeats(env, side, mine);
+    uint32 const enemy = _scenario.SideSeats(env, side ? 0 : 1, theirs);
+
+    Unit const* focus = nullptr;
+    for (uint32 slot = 0; slot < enemy; ++slot)
+        if (Player const* bot = _scenario.SeatBot(env, theirs[slot]); bot && bot->GetGUID() == order.Focus)
+            focus = bot;
+
+    // The side's centre, which is all the geometry a director gets: it asks for a shape, never for a place.
+    float centreX = 0.0f, centreY = 0.0f;
+    uint32 standing = 0;
+    for (uint32 slot = 0; slot < own; ++slot)
+        if (Player const* bot = _scenario.SeatBot(env, mine[slot]); bot && bot->IsAlive())
+        {
+            centreX += bot->GetPositionX();
+            centreY += bot->GetPositionY();
+            ++standing;
+        }
+
+    if (standing)
+    {
+        centreX /= float(standing);
+        centreY /= float(standing);
+    }
+
+    auto const spread = [&](Player const* bot)
+    {
+        if (!standing || !bot)
+            return 0.0f;
+
+        float const dx = bot->GetPositionX() - centreX;
+        float const dy = bot->GetPositionY() - centreY;
+        return std::min(1.0f, std::sqrt(dx * dx + dy * dy) / DirectorLayout::DISTANCE_SCALE);
+    };
+
+    view.SeatCount = own;
+    float health = 0.0f;
+    for (uint32 slot = 0; slot < own; ++slot)
+    {
+        DirectorLayout::DirectorView::SeatSlot& out = view.Seats[slot];
+        Player const* bot = _scenario.SeatBot(env, mine[slot]);
+        SeatState const& seat = _scenario.Data(env).Seats[mine[slot]];
+        out.Present = bot && seat.L;
+        if (!out.Present)
+            continue;
+
+        out.Alive = bot->IsAlive();
+        out.Health = CombatReward::HealthLeft(bot);
+        out.Power = bot->GetMaxPower(bot->getPowerType())
+            ? float(bot->GetPower(bot->getPowerType())) / float(bot->GetMaxPower(bot->getPowerType())) : 0.0f;
+        out.PlayRole = seat.L->PlayRole();
+        out.InCombat = bot->IsInCombat();
+        out.Casting = bot->IsNonMeleeSpellCast(false, false, true);
+        out.Spread = spread(bot);
+        out.IsDuty = order.Duty == mine[slot];
+        if (focus)
+        {
+            out.ToFocus = std::min(1.0f, bot->GetExactDist2d(focus) / DirectorLayout::DISTANCE_SCALE);
+            Unit const* target = _scenario.SeatTarget(env, mine[slot]);
+            out.OnFocus = target && target->GetGUID() == order.Focus;
+        }
+
+        if (out.Alive)
+            health += out.Health;
+    }
+
+    view.OwnStanding = own ? float(standing) / float(own) : 0.0f;
+    view.OwnHealth = standing ? health / float(standing) : 0.0f;
+
+    // Only the enemies a seat of this side could select between: a call it cannot act on is not a call.
+    view.EnemyCount = std::min(enemy, PACK_SLOTS);
+    float enemyHealth = 0.0f;
+    uint32 enemyStanding = 0;
+    for (uint32 slot = 0; slot < view.EnemyCount; ++slot)
+    {
+        DirectorLayout::DirectorView::EnemySlot& out = view.Enemies[slot];
+        Player const* bot = _scenario.SeatBot(env, theirs[slot]);
+        SeatState const& seat = _scenario.Data(env).Seats[theirs[slot]];
+        out.Present = bot && seat.L;
+        if (!out.Present)
+            continue;
+
+        out.Alive = bot->IsAlive();
+        out.Health = CombatReward::HealthLeft(bot);
+        out.PlayRole = seat.L->PlayRole();
+        out.InCombat = bot->IsInCombat();
+        out.Casting = bot->IsNonMeleeSpellCast(false, false, true);
+        out.Spread = spread(bot);
+        out.IsFocus = bot->GetGUID() == order.Focus;
+        if (out.Alive)
+        {
+            enemyHealth += out.Health;
+            ++enemyStanding;
+        }
+    }
+
+    view.EnemyStanding = view.EnemyCount ? float(enemyStanding) / float(view.EnemyCount) : 0.0f;
+    view.EnemyHealth = enemyStanding ? enemyHealth / float(enemyStanding) : 0.0f;
+
+    // The objective, from whichever encounter keeps one.
+    for (Encounter* encounter : _scenario.ActiveEncounters(env))
+        encounter->ViewDirector(env, side, view);
 }
 
 void Animus::Curriculum::DirectorEncounter::View(Env const& env, uint32 seat, SeatView& view) const

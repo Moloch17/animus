@@ -307,6 +307,13 @@ namespace Animus::Curriculum
         bool Fresh = false;                     // built by Setup, not yet reset
         bool BuildFailed = false;               // the last reset could not build the episode: end it and retry
         uint32 OpponentEntry = 0;               // creature entry: the duel's opponent, the first pull's first member
+
+        /// A resurrection offer already accepted for each seat, and for the owner in the last slot: which seat
+        /// made it, and when it was taken. A client sends one CMSG_RESURRECT_RESPONSE and is done; the core has
+        /// no reason to clear the request afterwards, so a poll that does not remember it has accepted one will
+        /// accept the same offer again every decision (StageScenario::AcceptResurrections).
+        std::array<uint32, MAX_SEATS + 1> ResurrectBy{};
+        std::array<uint64, MAX_SEATS + 1> ResurrectMs{};
     };
 }
 
