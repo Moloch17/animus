@@ -49,10 +49,17 @@ namespace Animus::Curriculum::DirectorLayout
         SEAT_IN_COMBAT      = 7,
         SEAT_CASTING        = 8,
         SEAT_SPREAD         = 9,    // its distance from the side's centre / DISTANCE_SCALE
-        SEAT_TO_FOCUS       = 10,   // its distance to the called target / DISTANCE_SCALE
-        SEAT_ON_FOCUS       = 11,   // it is already fighting the called target
-        SEAT_IS_DUTY        = 12,
-        SEAT_FEATURES       = 13
+        /// And which way, as a sine and cosine about the side's own axis (the centre towards the enemy, or
+        /// towards the objective when it knows of no enemy). Distances alone told the director how far apart
+        /// its side was and nothing about its shape, so it could not have learned to call a place: "left of
+        /// the flag room" is unusable by something that cannot tell left from right.
+        SEAT_BEARING_SIN    = 10,
+        SEAT_BEARING_COS    = 11,
+        SEAT_TO_FOCUS       = 12,   // its distance to the called target / DISTANCE_SCALE
+        SEAT_ON_FOCUS       = 13,   // it is already fighting the called target
+        SEAT_IS_DUTY        = 14,
+        SEAT_AT_PLACE       = 15,   // it is standing where the side was told to be
+        SEAT_FEATURES       = 16
     };
 
     /// Features an enemy slot contributes. The same slots the side's seats select between, so a called focus and a
@@ -74,7 +81,9 @@ namespace Animus::Curriculum::DirectorLayout
         /// their remembered values, because those are instantaneous facts and a stale one is a lie.
         ENEMY_SEEN          = 10,
         ENEMY_UNSEEN_TIME   = 11,   // time since the side last saw it / MAX_UNSEEN_TIME_MS, clamped
-        ENEMY_FEATURES      = 12
+        ENEMY_BEARING_SIN   = 12,   // which way it lies, about the same axis as SEAT_BEARING_*
+        ENEMY_BEARING_COS   = 13,
+        ENEMY_FEATURES      = 14
     };
 
     enum Observation : uint32
@@ -93,7 +102,14 @@ namespace Animus::Curriculum::DirectorLayout
         OBS_HAS_DUTY            = 11,
         OBS_POSTURE_FIRST       = 12,   // one-hot: the posture standing now
         OBS_RALLY_FIRST         = OBS_POSTURE_FIRST + TEAM_POSTURE_COUNT,
-        OBS_SEAT_FIRST          = OBS_RALLY_FIRST + TEAM_RALLY_COUNT,
+        // The place as it stands: which anchor, which way off it, how far, whether it resolved to somewhere
+        // the side can actually stand, and how far the side is from it.
+        OBS_ANCHOR_FIRST        = OBS_RALLY_FIRST + TEAM_RALLY_COUNT,
+        OBS_OFFSET_FIRST        = OBS_ANCHOR_FIRST + PLACE_ANCHOR_COUNT,
+        OBS_RING_FIRST          = OBS_OFFSET_FIRST + PLACE_OFFSET_COUNT,
+        OBS_PLACE_VALID         = OBS_RING_FIRST + PLACE_RING_COUNT,
+        OBS_PLACE_DISTANCE,             // the side's centre to the place / DISTANCE_SCALE
+        OBS_SEAT_FIRST,
         OBS_ENEMY_FIRST         = OBS_SEAT_FIRST + TEAM_SEATS * SEAT_FEATURES,
         OBS_COUNT               = OBS_ENEMY_FIRST + PACK_SLOTS * ENEMY_FEATURES
     };
@@ -104,7 +120,12 @@ namespace Animus::Curriculum::DirectorLayout
         ACTION_HOLD             = 0,    // let the order stand
         ACTION_POSTURE_FIRST    = 1,
         ACTION_RALLY_FIRST      = ACTION_POSTURE_FIRST + TEAM_POSTURE_COUNT,
-        ACTION_FOCUS_FIRST      = ACTION_RALLY_FIRST + TEAM_RALLY_COUNT,
+        // A place is named a field at a time like everything else here, so it costs three small groups
+        // rather than one action per reachable spot.
+        ACTION_ANCHOR_FIRST     = ACTION_RALLY_FIRST + TEAM_RALLY_COUNT,
+        ACTION_OFFSET_FIRST     = ACTION_ANCHOR_FIRST + PLACE_ANCHOR_COUNT,
+        ACTION_RING_FIRST       = ACTION_OFFSET_FIRST + PLACE_OFFSET_COUNT,
+        ACTION_FOCUS_FIRST      = ACTION_RING_FIRST + PLACE_RING_COUNT,
         ACTION_DUTY_FIRST       = ACTION_FOCUS_FIRST + PACK_SLOTS,
         ACTION_COUNT            = ACTION_DUTY_FIRST + TEAM_SEATS
     };
@@ -133,9 +154,12 @@ namespace Animus::Curriculum::DirectorLayout
             bool InCombat = false;
             bool Casting = false;
             float Spread = 0.0f;
+            float BearingSin = 0.0f;
+            float BearingCos = 0.0f;
             float ToFocus = 0.0f;
             bool OnFocus = false;
             bool IsDuty = false;
+            bool AtPlace = false;
         };
 
         struct EnemySlot
@@ -150,7 +174,19 @@ namespace Animus::Curriculum::DirectorLayout
             bool IsFocus = false;
             bool Seen = false;          // visible to the side right now
             float UnseenTime = 0.0f;
+            float BearingSin = 0.0f;
+            float BearingCos = 0.0f;
         };
+
+        /// Where the side was told to be, and whether it resolved to ground it can stand on.
+        PlaceAnchor Anchor = PlaceAnchor::TeamCentre;
+        PlaceOffset Offset = PlaceOffset::At;
+        PlaceRing Ring = PlaceRing::Near;
+        bool PlaceValid = false;
+        float PlaceDistance = 0.0f;
+        /// Whether this arena offers places at all (ArenaDefinition::Places): the group is masked out where
+        /// it does not, so a stage that has no use for them pays nothing to explore them.
+        bool PlacesAllowed = false;
 
         std::array<SeatSlot, TEAM_SEATS> Seats{};
         uint32 SeatCount = 0;

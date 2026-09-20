@@ -586,8 +586,14 @@ namespace Animus::Curriculum
         {
             TeamPosture Posture = TeamPosture::Attack;
             TeamRally Rally = TeamRally::None;
+            /// Where the side was sent, rebuilt every decision from the three fields below so a place hung
+            /// on the focus or on the side's own centre follows them as they move. HasPlace is derived, never
+            /// set on its own: two independent ways to say "there is a place" is how they drift apart.
             Position Place;
             bool HasPlace = false;
+            PlaceAnchor Anchor = PlaceAnchor::TeamCentre;
+            PlaceOffset Offset = PlaceOffset::At;
+            PlaceRing Ring = PlaceRing::Near;
             ObjectGuid Focus;
             uint32 Duty = NO_SEAT;              // the seat that owes the next interrupt or control
             uint32 Changes = 0;                 // how often the call moved, for the episode info
@@ -604,6 +610,15 @@ namespace Animus::Curriculum
             /// both cases and nothing says which.
             uint32 FocusUnseen = 0;
             float SeenSum = 0.0f;
+            /// The place: decisions one stood, seats that reached it, and how far the side was from it.
+            uint32 PlaceCalled = 0;
+            uint32 PlaceReached = 0;
+            float PlaceDistanceSum = 0.0f;
+            /// Per seat, when it was last paid for arriving, and whether it was inside the radius last
+            /// decision. Arriving is paid on the crossing and only then: a seat standing in the right spot
+            /// earns nothing for going on standing there, and one stepping in and out of the edge earns once.
+            std::array<uint32, MAX_SEATS> PlacePaidMs{};
+            std::array<uint8, MAX_SEATS> WasAtPlace{};
         };
 
         /// What a side remembers of one enemy slot. Keyed by slot rather than by guid: SideSeats hands back
@@ -649,6 +664,11 @@ namespace Animus::Curriculum
         [[nodiscard]] bool Learned(Env const& env) const;
         /// Refresh what the side can see and what it remembers, once per decision before anything reads it.
         void Observe(Env& env, uint32 side);
+        /// Rebuild SideOrder::Place from its anchor, offset and ring, and say whether it landed anywhere the
+        /// side could stand.
+        void ResolvePlace(Env& env, uint32 side);
+        /// Pay a seat for arriving where it was sent, on the crossing and no more often than the cooldown.
+        void RewardPlace(Env& env, uint32 seat, Player* bot, RewardLedger& ledger);
         /// Drop what the side is being asked for once it cannot be done: a call at a corpse is not a call.
         void Forget(Env& env, uint32 side);
         /// Tally what the side's standing call is worth this decision, scripted or learned.

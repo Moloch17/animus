@@ -71,6 +71,7 @@ namespace Animus::Curriculum
         Protect,        // keep one of its own alive
         Recover,        // disengage, heal, drink
         Regroup,        // gather before anything else
+        Hold,           // stay where the side was put, at the called place: do not chase
         Count
     };
 
@@ -83,11 +84,52 @@ namespace Animus::Curriculum
         Focus,          // on the called target
         Spread,         // away from each other
         Stack,          // together
+        Point,          // the place the director named (SideOrder::Place, from an anchor and an offset)
         Count
     };
 
     constexpr uint32 TEAM_POSTURE_COUNT = uint32(TeamPosture::Count);
     constexpr uint32 TEAM_RALLY_COUNT = uint32(TeamRally::Count);
+
+    /// How a director names a spot without an action space the size of the world.
+    ///
+    /// A place is an anchor, an offset from it and how far: "behind the flag room", "pull back from the
+    /// target", "twenty yards left of where we are". Three small categorical fields the director edits one at
+    /// a time, exactly as it edits the rest of a standing order, so the whole vocabulary is 13 actions and
+    /// stays 13 whether the map is an arena or a continent -- only the ring radii change.
+    ///
+    /// The offset is relative to an axis the side can actually perceive, not a compass bearing. A director has
+    /// no idea which way north is: its observation carries distances, and (since the bearing features beside
+    /// this) angles relative to its own side, but nothing that orients it to the map. "Sixty yards north" would
+    /// be a direction it could not learn to use; "sixty yards back from them" is one it can.
+    enum class PlaceAnchor : uint8
+    {
+        TeamCentre,     // where the side is now
+        Focus,          // the enemy it called
+        LastSeenEnemy,  // where it last saw one, which is the only place a scout has to go on
+        Objective,      // what the arena is about, when it has one
+        OwnBase,
+        EnemyBase,
+        Count
+    };
+
+    /// Along the axis from the anchor towards the enemy (falling back to the objective, then the last
+    /// sighting, then the side's own facing when it knows of no enemy at all).
+    enum class PlaceOffset : uint8
+    {
+        At,             // the anchor itself
+        Toward,
+        Away,
+        Left,
+        Right,
+        Count
+    };
+
+    enum class PlaceRing : uint8 { Near, Far, Count };
+
+    constexpr uint32 PLACE_ANCHOR_COUNT = uint32(PlaceAnchor::Count);
+    constexpr uint32 PLACE_OFFSET_COUNT = uint32(PlaceOffset::Count);
+    constexpr uint32 PLACE_RING_COUNT = uint32(PlaceRing::Count);
 
     /// Kinds of standing choice a player makes and keeps (SeatMemory: a change of one kind holds for a while).
     enum class ModeGroup : uint8
@@ -151,6 +193,9 @@ namespace Animus::Curriculum
     [[nodiscard]] std::string_view GoalName(SeatGoal goal);
     [[nodiscard]] std::string_view PostureName(TeamPosture posture);
     [[nodiscard]] std::string_view RallyName(TeamRally rally);
+    [[nodiscard]] std::string_view AnchorName(PlaceAnchor anchor);
+    [[nodiscard]] std::string_view OffsetName(PlaceOffset offset);
+    [[nodiscard]] std::string_view RingName(PlaceRing ring);
     /// The episode clock's scale: the longest arena's episode, so it rises through every episode instead of
     /// saturating. Elapsed time, not the fraction of an episode's own limit: a companion has no limit, and the
     /// critic already sees the fraction (StageScenario::STATE_EPISODE_TIME).

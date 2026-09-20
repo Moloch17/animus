@@ -201,6 +201,15 @@ namespace Animus::Curriculum::Encoding
     void SelectEnemy(SeatView& view, uint32 slot);
 
     /// Run to a point, replacing whatever movement the bot had.
+    /// Put `at` on the ground beneath it, or say there is no ground there to stand on.
+    ///
+    /// `fromZ` is the height the probe drops from and `maxStep` how far the result may differ from it, which
+    /// is what keeps a point from landing on a roof above or in a pit below. Shared by anything that picks a
+    /// spot to walk to out of thin air -- cover behind a pillar (DuelBlock::FindCover), a place a director
+    /// names -- because a point that is not snapped sends a bot into a wall or off a ledge.
+    [[nodiscard]] bool SnapToGround(Map const* map, uint32 phaseMask, Position& at, float fromZ,
+        float maxStep = 6.0f);
+
     void MoveTo(Player* bot, uint32 pointId, float x, float y, float z);
 
     /// Send the bot's pets and guardians at `target`, as the pet bar's Attack does. True if any was ordered.

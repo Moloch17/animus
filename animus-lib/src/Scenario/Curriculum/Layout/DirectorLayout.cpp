@@ -57,6 +57,11 @@ void Animus::Curriculum::DirectorLayout::Observe(DirectorView const& view, float
     obs[OBS_HAS_DUTY] = view.HasDuty ? 1.0f : 0.0f;
     obs[OBS_POSTURE_FIRST + uint32(view.Posture)] = 1.0f;
     obs[OBS_RALLY_FIRST + uint32(view.Rally)] = 1.0f;
+    obs[OBS_ANCHOR_FIRST + uint32(view.Anchor)] = 1.0f;
+    obs[OBS_OFFSET_FIRST + uint32(view.Offset)] = 1.0f;
+    obs[OBS_RING_FIRST + uint32(view.Ring)] = 1.0f;
+    obs[OBS_PLACE_VALID] = view.PlaceValid ? 1.0f : 0.0f;
+    obs[OBS_PLACE_DISTANCE] = view.PlaceDistance;
 
     for (uint32 slot = 0; slot < view.SeatCount && slot < TEAM_SEATS; ++slot)
     {
@@ -73,9 +78,12 @@ void Animus::Curriculum::DirectorLayout::Observe(DirectorView const& view, float
         out[SEAT_IN_COMBAT] = seat.InCombat ? 1.0f : 0.0f;
         out[SEAT_CASTING] = seat.Casting ? 1.0f : 0.0f;
         out[SEAT_SPREAD] = seat.Spread;
+        out[SEAT_BEARING_SIN] = seat.BearingSin;
+        out[SEAT_BEARING_COS] = seat.BearingCos;
         out[SEAT_TO_FOCUS] = seat.ToFocus;
         out[SEAT_ON_FOCUS] = seat.OnFocus ? 1.0f : 0.0f;
         out[SEAT_IS_DUTY] = seat.IsDuty ? 1.0f : 0.0f;
+        out[SEAT_AT_PLACE] = seat.AtPlace ? 1.0f : 0.0f;
 
         // Only a seat that is there to be given the duty may be given it.
         if (mask && seat.Alive)
@@ -99,6 +107,8 @@ void Animus::Curriculum::DirectorLayout::Observe(DirectorView const& view, float
         out[ENEMY_IS_FOCUS] = enemy.IsFocus ? 1.0f : 0.0f;
         out[ENEMY_SEEN] = enemy.Seen ? 1.0f : 0.0f;
         out[ENEMY_UNSEEN_TIME] = enemy.UnseenTime;
+        out[ENEMY_BEARING_SIN] = enemy.BearingSin;
+        out[ENEMY_BEARING_COS] = enemy.BearingCos;
 
         // Calling a dead enemy is not a call, and the seats could not act on it.
         if (mask && enemy.Alive)
@@ -110,6 +120,20 @@ void Animus::Curriculum::DirectorLayout::Observe(DirectorView const& view, float
     {
         std::fill(mask + ACTION_POSTURE_FIRST, mask + ACTION_POSTURE_FIRST + TEAM_POSTURE_COUNT, uint8(1));
         std::fill(mask + ACTION_RALLY_FIRST, mask + ACTION_RALLY_FIRST + TEAM_RALLY_COUNT, uint8(1));
+
+        // Naming a place is offered only where the arena wants one. Everywhere else the thirteen actions stay
+        // masked, so a stage with nowhere to send anyone never spends exploration discovering that.
+        if (view.PlacesAllowed)
+        {
+            std::fill(mask + ACTION_ANCHOR_FIRST, mask + ACTION_ANCHOR_FIRST + PLACE_ANCHOR_COUNT, uint8(1));
+            std::fill(mask + ACTION_OFFSET_FIRST, mask + ACTION_OFFSET_FIRST + PLACE_OFFSET_COUNT, uint8(1));
+            std::fill(mask + ACTION_RING_FIRST, mask + ACTION_RING_FIRST + PLACE_RING_COUNT, uint8(1));
+        }
+        else
+        {
+            // Rally::Point means nothing without a place to point at.
+            mask[ACTION_RALLY_FIRST + uint32(TeamRally::Point)] = 0;
+        }
     }
 }
 
@@ -122,6 +146,12 @@ std::vector<std::string> Animus::Curriculum::DirectorLayout::ActionNames()
             PostureName(TeamPosture(posture)));
     for (uint32 rally = 0; rally < TEAM_RALLY_COUNT; ++rally)
         names[ACTION_RALLY_FIRST + rally] = Acore::StringFormat("rally_{}", RallyName(TeamRally(rally)));
+    for (uint32 anchor = 0; anchor < PLACE_ANCHOR_COUNT; ++anchor)
+        names[ACTION_ANCHOR_FIRST + anchor] = Acore::StringFormat("anchor_{}", AnchorName(PlaceAnchor(anchor)));
+    for (uint32 offset = 0; offset < PLACE_OFFSET_COUNT; ++offset)
+        names[ACTION_OFFSET_FIRST + offset] = Acore::StringFormat("offset_{}", OffsetName(PlaceOffset(offset)));
+    for (uint32 ring = 0; ring < PLACE_RING_COUNT; ++ring)
+        names[ACTION_RING_FIRST + ring] = Acore::StringFormat("ring_{}", RingName(PlaceRing(ring)));
     for (uint32 slot = 0; slot < PACK_SLOTS; ++slot)
         names[ACTION_FOCUS_FIRST + slot] = Acore::StringFormat("focus_{}", slot);
     for (uint32 slot = 0; slot < TEAM_SEATS; ++slot)

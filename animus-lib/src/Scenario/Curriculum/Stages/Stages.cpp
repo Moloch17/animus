@@ -310,7 +310,7 @@ namespace
             .Blocks = { Core, Duel, Pack, Pet, Pvp, Context, Hostiles, Support, Order },
             .Arenas = { { .Name = "duo", .Seats = SeatPlan::Teams, .Against = Opposition::MirrorSeat,
                 .Pvp = true, .EpisodeSeconds = 180, .Directed = true, .DirectorLearned = true,
-                .TeamSeats = 2 } },
+                .Places = true, .TeamSeats = 2 } },
             .MinLevel = 20,
         });
 
@@ -449,6 +449,8 @@ namespace
             return "only a travel arena can be made on foot: there is nothing else a mount would be barred from";
         if (arena.OnFoot && arena.Flying)
             return "an arena is on foot or it flies, not both";
+        if (arena.Places && !arena.Directed)
+            return "only a director names a place: the arena has to be directed";
         if (arena.DirectorLearned && !arena.Directed)
             return "a learned director is still a director: the arena has to be directed";
         if (arena.Directed && arena.Seats != SeatPlan::Teams)
