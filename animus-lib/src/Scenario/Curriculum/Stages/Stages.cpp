@@ -25,7 +25,8 @@
  *         └─ travel ─┬─ flight                                       (getting somewhere)
  *                    └─ (with arena) flag                            (Warsong Gulch's rules)
  *
- * Scenario names carry the stage's number (stage1_duel ... stage8_crossroads), model names only its suffix (_duel). The
+ * Scenario names carry the stage's number (stage1_duel ... stage18_warsong), model names only its suffix
+ * (_duel). The
  * duel is the first stage: nothing seeds it.
  *
  * A stage's episodes are its arenas (see ArenaDefinition): each episode draws one by weight, so a stage can mix PvE
@@ -75,7 +76,18 @@ namespace
         });
 
         stages.push_back({
-            .Name = "stage3_gauntlet",
+            .Name = "stage3_hazards",
+            .Suffix = "_hazards",
+            .Extends = "stage2_pack",
+            .Summary = "a pack with something on the ground in every pull: see it, and walk out of it",
+            .Blocks = { Core, Duel, Pet, Pack, Support },
+            .Arenas = { { .Name = "hazards", .Against = Opposition::Pulls, .Schedule = PullSchedule::SinglePack,
+                .EpisodeSeconds = 120, .Hazards = true } },
+            .InDefaultQueue = false,
+        });
+
+        stages.push_back({
+            .Name = "stage4_gauntlet",
             .Suffix = "_gauntlet",
             .Extends = "stage2_pack",
             .Summary = "pull after pull with short breaks: heals, food and drink",
@@ -89,9 +101,58 @@ namespace
         });
 
         stages.push_back({
-            .Name = "stage4_companion",
+            .Name = "stage5_endurance",
+            .Suffix = "_endurance",
+            .Extends = "stage4_gauntlet",
+            .Summary = "a known run of eight pulls, won by finishing it",
+            .Blocks = { Core, Duel, Pet, Pack, Gauntlet, Support },
+            .Arenas = { { .Name = "endurance", .Against = Opposition::Pulls, .Schedule = PullSchedule::Sequence,
+                .EpisodeSeconds = 900 } },
+            .InDefaultQueue = false,
+        });
+
+        // Drill stages: one skill each, trained by name and never queued. The curriculum teaches these skills
+        // inside stages whose win condition is something else, so the credit for them is smeared over the clear.
+        // Each drill fixes what the episode is about and leaves everything else as it was.
+
+        stages.push_back({
+            .Name = "stage6_travel",
+            .Suffix = "_travel",
+            .Extends = "stage1_duel",
+            .Summary = "a place 60-320 yd away by path: mount when it pays, get there, arrive on foot",
+            .Blocks = { Core, Duel, Pet, Travel },
+            .Arenas = { { .Name = "travel", .Against = Opposition::Travel, .EpisodeSeconds = 150 } },
+            .MapId = MAP_KALIMDOR,
+            .SpawnPoints = {
+                { -872.0f, -2642.0f, 92.0f, 0.0f }, { -2298.0f, -1948.0f, 96.0f, 0.0f },
+                { -1967.0f, -2544.0f, 94.0f, 0.0f }, { -2605.0f, -2286.0f, 92.0f, 0.0f },
+                { -609.0f, -1614.0f, 94.0f, 0.0f }, { -881.0f, -3221.0f, 92.0f, 0.0f },
+                { -3077.0f, -1786.0f, 92.0f, 0.0f }, { -3115.0f, -2352.0f, 94.0f, 0.0f },
+            },
+            .MinLevel = 20,
+        });
+
+        stages.push_back({
+            .Name = "stage7_flight",
+            .Suffix = "_flight",
+            .Extends = "stage6_travel",
+            .Summary = "a place 350-700 yd away in Nagrand: take off, fly over what is in the way, land, dismount",
+            .Blocks = { Core, Duel, Pet, Travel },
+            .Arenas = { { .Name = "flight", .Against = Opposition::Travel, .EpisodeSeconds = 180, .Flying = true } },
+            .MapId = MAP_OUTLAND,
+            .SpawnPoints = {
+                { -1684.0f, 7167.0f, 2.0f, 0.0f }, { -1060.0f, 7618.0f, 28.0f, 0.0f },
+                { -1820.0f, 8828.0f, 28.0f, 0.0f }, { -1226.0f, 8834.0f, 46.0f, 0.0f },
+                { -2581.0f, 6582.0f, 11.0f, 0.0f }, { -1308.0f, 6816.0f, 36.0f, 0.0f },
+                { -1092.0f, 7304.0f, 33.0f, 0.0f }, { -2533.0f, 7693.0f, -23.0f, 0.0f },
+            },
+            .MinLevel = 60,
+        });
+
+        stages.push_back({
+            .Name = "stage8_companion",
             .Suffix = "_companion",
-            .Extends = "stage3_gauntlet",
+            .Extends = "stage4_gauntlet",
             .Summary = "the gauntlet beside a scripted owner: follow, assist, guard and heal it",
             .Blocks = { Core, Duel, Pet, Pack, Gauntlet, Companion, Support },
             // 450 s, as the solo gauntlet: without its own length the arena took the host's 60 s, two or three pulls
@@ -101,18 +162,63 @@ namespace
         });
 
         stages.push_back({
-            .Name = "stage5_party",
+            .Name = "stage9_party",
             .Suffix = "_party",
-            .Extends = "stage4_companion",
+            .Extends = "stage8_companion",
             .Summary = "four learned seats and the scripted owner against elite-heavy pulls",
             .Blocks = { Core, Duel, Pet, Pack, Gauntlet, Companion, Party, Support },
             .Arenas = { { .Name = "party", .Seats = SeatPlan::Party, .Against = Opposition::Pulls,
                 .Schedule = PullSchedule::Gauntlet, .Owner = true, .PartyGroup = true, .EpisodeSeconds = 450 } },
         });
 
-        // The PvP branch: off the duel, without the PvE blocks it would never fill.
         stages.push_back({
-            .Name = "stage6_pvp",
+            .Name = "stage10_tanking",
+            .Suffix = "_tanking",
+            .Extends = "stage9_party",
+            .Summary = "a fixed tank seat beside its group: hold what the pull brings, and keep it off the others",
+            .Blocks = { Core, Duel, Pet, Pack, Gauntlet, Companion, Party, Support },
+            .Arenas = { { .Name = "tanking", .Weight = 1, .Seats = SeatPlan::Party, .Against = Opposition::Pulls,
+                .Schedule = PullSchedule::Gauntlet, .Owner = true, .PartyGroup = true, .EpisodeSeconds = 300,
+                .SeatRoles = { Role::Tank } } },
+            .InDefaultQueue = false,
+        });
+
+        stages.push_back({
+            .Name = "stage11_triage",
+            .Suffix = "_triage",
+            .Extends = "stage9_party",
+            .Summary = "a fixed healer seat beside its group: keep the hurt one up, and spend mana to do it",
+            .Blocks = { Core, Duel, Pet, Pack, Gauntlet, Companion, Party, Support },
+            .Arenas = { { .Name = "triage", .Weight = 1, .Seats = SeatPlan::Party, .Against = Opposition::Pulls,
+                .Schedule = PullSchedule::Gauntlet, .Owner = true, .PartyGroup = true, .EpisodeSeconds = 300,
+                .SeatRoles = { Role::Heal } } },
+            .InDefaultQueue = false,
+        });
+
+        stages.push_back({
+            .Name = "stage12_raid_single",
+            .Suffix = "_raid",
+            .Extends = "stage9_party",
+            .Summary = "a raid of eight groups against one elite and its adds, won or lost as the single pack is",
+            .Blocks = { Core, Duel, Pet, Pack, Gauntlet, Companion, Party, Support },
+            .Arenas = { { .Name = "raid_single", .Seats = SeatPlan::Raid, .Against = Opposition::Pulls,
+                .Schedule = PullSchedule::SinglePack, .EpisodeSeconds = 300 } },
+            .InDefaultQueue = false,
+        });
+
+        stages.push_back({
+            .Name = "stage13_raid_gauntlet",
+            .Suffix = "_raidrun",
+            .Extends = "stage12_raid_single",
+            .Summary = "a raid clearing pull after pull, recovering between them",
+            .Blocks = { Core, Duel, Pet, Pack, Gauntlet, Companion, Party, Support },
+            .Arenas = { { .Name = "raid_gauntlet", .Seats = SeatPlan::Raid, .Against = Opposition::Pulls,
+                .Schedule = PullSchedule::Gauntlet, .EpisodeSeconds = 600 } },
+            .InDefaultQueue = false,
+        });
+
+        stages.push_back({
+            .Name = "stage14_pvp",
             .Suffix = "_pvp",
             .Extends = "stage1_duel",
             .Summary = "one-on-one against a scripted enemy player",
@@ -121,25 +227,21 @@ namespace
         });
 
         stages.push_back({
-            .Name = "stage7_arena",
+            .Name = "stage15_arena",
             .Suffix = "_arena",
-            .Extends = "stage6_pvp",
+            .Extends = "stage14_pvp",
             .Summary = "self-play one-on-one: two learned seats of any classes",
             .Blocks = { Core, Duel, Pet, Pvp },
             .Arenas = { { .Name = "arena_1v1", .Seats = SeatPlan::Mirror, .Against = Opposition::MirrorSeat,
                 .Pvp = true } },
         });
 
-        // The crossroads: both branches join. It extends the party (the trunk and every PvE block), takes the pvp
-        // block from the arena, and each parent teaches the arenas it trained on. Two new situations need PvE and PvP in one
-        // episode: an ambush of the owner in the middle of the gauntlet, and a lone enemy player attacking the owner.
-        // Every PvE arena plays long episodes; the one-on-ones stay short.
         stages.push_back({
-            .Name = "stage8_crossroads",
+            .Name = "stage16_crossroads",
             .Suffix = "_crossroads",
-            .Extends = "stage5_party",
+            .Extends = "stage9_party",
             .Merges = {
-                "stage7_arena", "stage6_pvp", "stage4_companion", "stage3_gauntlet", "stage1_duel",
+                "stage15_arena", "stage14_pvp", "stage8_companion", "stage4_gauntlet", "stage1_duel",
             },
             .Summary = "PvE and PvP in one policy: every earlier situation, an ambush mid-gauntlet and a ganked owner",
             .Blocks = { Core, Duel, Pet, Pack, Gauntlet, Companion, Party, Pvp, Context, Hostiles, Support },
@@ -162,60 +264,11 @@ namespace
             },
         });
 
-        // Travel: getting somewhere, off the duel. Characters of 20 and up ride; the policy learns when a trip is worth
-        // a mount's cast time, and to arrive on foot, ready to fight.
-        //
-        // The Barrens, not the arena the fighting stages spawn in: a trip needs open, pathable ground in every
-        // direction for a few hundred yards, and that arena is a corner pocket with none -- the nearest walkable
-        // ground outside it is 350 yd off and 50 yd up a hillside, past the objective search's reach, so no episode
-        // could ever be built there. The envs share the continent, each in its own phase, spread over the flats.
         stages.push_back({
-            .Name = "stage9_travel",
-            .Suffix = "_travel",
-            .Extends = "stage1_duel",
-            .Summary = "a place 60-320 yd away by path: mount when it pays, get there, arrive on foot",
-            .Blocks = { Core, Duel, Pet, Travel },
-            .Arenas = { { .Name = "travel", .Against = Opposition::Travel, .EpisodeSeconds = 150 } },
-            .MapId = MAP_KALIMDOR,
-            .SpawnPoints = {
-                { -872.0f, -2642.0f, 92.0f, 0.0f }, { -2298.0f, -1948.0f, 96.0f, 0.0f },
-                { -1967.0f, -2544.0f, 94.0f, 0.0f }, { -2605.0f, -2286.0f, 92.0f, 0.0f },
-                { -609.0f, -1614.0f, 94.0f, 0.0f }, { -881.0f, -3221.0f, 92.0f, 0.0f },
-                { -3077.0f, -1786.0f, 92.0f, 0.0f }, { -3115.0f, -2352.0f, 94.0f, 0.0f },
-            },
-            .MinLevel = 20,
-        });
-
-        // Flight: Outland's Nagrand, where flying mounts fly (a battleground never allows them). The envs share the
-        // continent, each in its own phase, spread over open ground.
-        stages.push_back({
-            .Name = "stage10_flight",
-            .Suffix = "_flight",
-            .Extends = "stage9_travel",
-            .Summary = "a place 350-700 yd away in Nagrand: take off, fly over what is in the way, land, dismount",
-            .Blocks = { Core, Duel, Pet, Travel },
-            .Arenas = { { .Name = "flight", .Against = Opposition::Travel, .EpisodeSeconds = 180, .Flying = true } },
-            .MapId = MAP_OUTLAND,
-            .SpawnPoints = {
-                { -1684.0f, 7167.0f, 2.0f, 0.0f }, { -1060.0f, 7618.0f, 28.0f, 0.0f },
-                { -1820.0f, 8828.0f, 28.0f, 0.0f }, { -1226.0f, 8834.0f, 46.0f, 0.0f },
-                { -2581.0f, 6582.0f, 11.0f, 0.0f }, { -1308.0f, 6816.0f, 36.0f, 0.0f },
-                { -1092.0f, 7304.0f, 33.0f, 0.0f }, { -2533.0f, 7693.0f, -23.0f, 0.0f },
-            },
-            .MinLevel = 60,
-        });
-
-        // Warsong Gulch's rules between two learned seats (self-play): take the other side's flag home, return one's
-        // own, stop the carrier. Mounting between the bases and being dismounted by the flag come from travel; the
-        // fight from the arena.
-        //
-        // The Barrens, for stage 9's reason: the second base is placed by the same objective search, 100-180 yd from
-        // the first, and only open ground has room for it.
-        stages.push_back({
-            .Name = "stage11_flag",
+            .Name = "stage17_flag",
             .Suffix = "_flag",
-            .Extends = "stage7_arena",
-            .Merges = { "stage9_travel" },
+            .Extends = "stage15_arena",
+            .Merges = { "stage6_travel" },
             .Summary = "capture the flag one-on-one: bases 100-180 yd apart, first to three captures",
             .Blocks = { Core, Duel, Pet, Pvp, Travel, Flag },
             .Arenas = { { .Name = "flag", .Seats = SeatPlan::Mirror, .Against = Opposition::Flag, .Pvp = true,
@@ -230,14 +283,10 @@ namespace
             .MinLevel = 20,
         });
 
-        // Warsong Gulch at its proper size: ten a side, both sides learned. The flag rules are stage 11's; what
-        // is new is that a side is ten seats and a group, so the objective has to be shared -- a carrier to escort
-        // home, a base somebody has to hold, and an enemy carrier ten of them can chase. Trained by name, after
-        // stage 11, which it seeds from.
         stages.push_back({
             .Name = "stage18_warsong",
             .Suffix = "_warsong",
-            .Extends = "stage11_flag",
+            .Extends = "stage17_flag",
             .Summary = "ten against ten for the flag: escort the carrier, hold the base, stop theirs",
             .Blocks = { Core, Duel, Pet, Pvp, Travel, Flag, Party },
             .Arenas = { { .Name = "warsong", .Seats = SeatPlan::Teams, .Against = Opposition::Flag, .Pvp = true,
@@ -254,122 +303,10 @@ namespace
             .MinLevel = 20,
         });
 
-        // A planned run: the same eight pulls in the same order every episode, ending on an elite pack two levels
-        // above. Nothing about the fights is left to learn -- stage 3 taught them -- so what is left is the plan:
-        // what to spend on the opener, what to keep for the last pull, when the breather is a rest and when it is a
-        // chance to get ahead. Won by clearing the last pull alive; the clock running out is a loss however far it
-        // got. Trained by name, after stage 3.
-        stages.push_back({
-            .Name = "stage12_endurance",
-            .Suffix = "_endurance",
-            .Extends = "stage3_gauntlet",
-            .Summary = "a known run of eight pulls, won by finishing it",
-            .Blocks = { Core, Duel, Pet, Pack, Gauntlet, Support },
-            .Arenas = { { .Name = "endurance", .Against = Opposition::Pulls, .Schedule = PullSchedule::Sequence,
-                .EpisodeSeconds = 900 } },
-            .InDefaultQueue = false,
-        });
-
-        // Drill stages: one skill each, trained by name and never queued. The curriculum teaches these skills
-        // inside stages whose win condition is something else, so the credit for them is smeared over the clear.
-        // Each drill fixes what the episode is about and leaves everything else as it was.
-
-        // Something on the ground, in every pull. Hazards exist already -- the pack ladder draws a hazard caster
-        // from rung 3 and self-play produces them by the spell (stage7_arena measured 3.1 s of hazard an episode,
-        // stage3_gauntlet 1.1 s) -- but a class/role that stalls below rung 3 never meets one, and a second an
-        // episode is thin to learn from. Here every pull has one, at stage 2's difficulty, so walking out of it is
-        // the thing being learned rather than a detail of a harder fight.
-        stages.push_back({
-            .Name = "stage15_hazards",
-            .Suffix = "_hazards",
-            .Extends = "stage2_pack",
-            .Summary = "a pack with something on the ground in every pull: see it, and walk out of it",
-            .Blocks = { Core, Duel, Pet, Pack, Support },
-            .Arenas = { { .Name = "hazards", .Against = Opposition::Pulls, .Schedule = PullSchedule::SinglePack,
-                .EpisodeSeconds = 120, .Hazards = true } },
-            .InDefaultQueue = false,
-        });
-
-        // Holding what the group pulls. Tanks exist in stages 5, 8, 13 and 14, but the stage is won by the clear,
-        // so a tank that loses an add to the healer and takes it back is scored the same as one that never lost it.
-        // Here seat 0 is always the tank (ArenaDefinition::SeatRoles) and the pulls are a party's, so what the
-        // episode is about is the threat table -- which the seat can now read (Encoding::ThreatShare).
-        //
-        // Read its scores knowing that the hazard charge lands about four times harder on a tank than on a ranged
-        // seat (stage7_arena: paladin_tank -0.834 an episode against priest_dps -0.198), because a tank cannot walk
-        // out of what it is holding an enemy in. That is Hazards.Standing being tuned for a seat with a choice.
-        stages.push_back({
-            .Name = "stage16_tanking",
-            .Suffix = "_tanking",
-            .Extends = "stage5_party",
-            .Summary = "a fixed tank seat beside its group: hold what the pull brings, and keep it off the others",
-            .Blocks = { Core, Duel, Pet, Pack, Gauntlet, Companion, Party, Support },
-            .Arenas = { { .Name = "tanking", .Weight = 1, .Seats = SeatPlan::Party, .Against = Opposition::Pulls,
-                .Schedule = PullSchedule::Gauntlet, .Owner = true, .PartyGroup = true, .EpisodeSeconds = 300,
-                .SeatRoles = { Role::Tank } } },
-            .InDefaultQueue = false,
-        });
-
-        // Keeping a group up when the damage outruns one heal. Stage 5 has healers, but its win is the clear and
-        // stage 4 measured the seat putting 13% of its healing into the owner: triage is never the episode.
-        //
-        // Before reading its numbers, know that stage 5 carries a resurrection exploit this drill inherits: nothing
-        // clears m_resurrectGUID, so one landed Rebirth makes every later death of that ally an instant free
-        // resurrect that pays RewardTerm::Revive again (stage4_companion measured druid_dps at 38.4 revives an
-        // episode, 88% of its return). A forced healer seat will find it faster than anything else in the
-        // curriculum. Fix that before trusting a triage score.
-        stages.push_back({
-            .Name = "stage17_triage",
-            .Suffix = "_triage",
-            .Extends = "stage5_party",
-            .Summary = "a fixed healer seat beside its group: keep the hurt one up, and spend mana to do it",
-            .Blocks = { Core, Duel, Pet, Pack, Gauntlet, Companion, Party, Support },
-            .Arenas = { { .Name = "triage", .Weight = 1, .Seats = SeatPlan::Party, .Against = Opposition::Pulls,
-                .Schedule = PullSchedule::Gauntlet, .Owner = true, .PartyGroup = true, .EpisodeSeconds = 300,
-                .SeatRoles = { Role::Heal } } },
-            .InDefaultQueue = false,
-        });
-
-        // The raid branch: MAX_SEATS learned seats as RAID_GROUPS groups of GROUP_SEATS, each group with its own
-        // tank and healer (SeatPlan::Raid). A raid is not a bigger party -- it is many seats around one large enemy,
-        // which is why the opponents are an elite and its adds rather than a pack per seat, and why the mechanics a
-        // seat can now read (a cast worth interrupting, something on the ground, where it stands on the threat
-        // table) matter far more here than they do alone.
-        //
-        // NOT in the default queue, and not runnable at the usual env count: 40 seats an env is 40 bots an env, so
-        // AnimusForge.Envs has to come down roughly in proportion (a few dozen envs, not 128) before either of these
-        // is started. Train by name: `forge start stage13_raid_single`.
-        stages.push_back({
-            .Name = "stage13_raid_single",
-            .Suffix = "_raid",
-            .Extends = "stage5_party",
-            .Summary = "a raid of eight groups against one elite and its adds, won or lost as the single pack is",
-            .Blocks = { Core, Duel, Pet, Pack, Gauntlet, Companion, Party, Support },
-            .Arenas = { { .Name = "raid_single", .Seats = SeatPlan::Raid, .Against = Opposition::Pulls,
-                .Schedule = PullSchedule::SinglePack, .EpisodeSeconds = 300 } },
-            .InDefaultQueue = false,
-        });
-
-        // The raid's endurance: pull after pull with recovery between, which is what a wing of a raid instance is
-        // before the boss of it. Seeded from the single fight, as the gauntlet is from the pack.
-        stages.push_back({
-            .Name = "stage14_raid_gauntlet",
-            .Suffix = "_raidrun",
-            .Extends = "stage13_raid_single",
-            .Summary = "a raid clearing pull after pull, recovering between them",
-            .Blocks = { Core, Duel, Pet, Pack, Gauntlet, Companion, Party, Support },
-            .Arenas = { { .Name = "raid_gauntlet", .Seats = SeatPlan::Raid, .Against = Opposition::Pulls,
-                .Schedule = PullSchedule::Gauntlet, .EpisodeSeconds = 600 } },
-            .InDefaultQueue = false,
-        });
-
-        // A pilot of arena mixing and merging, not part of the curriculum: the duel and the scripted enemy player in
-        // one stage, merging the two stages that trained them (each teaches its arena). Trained only when named
-        // (forge start mix_duel_pvp).
         stages.push_back({
             .Name = "mix_duel_pvp",
             .Suffix = "_mix",
-            .Extends = "stage6_pvp",
+            .Extends = "stage14_pvp",
             .Merges = { "stage1_duel" },
             .Summary = "pilot arena mix: half the episodes a creature duel, half a scripted enemy player",
             .Blocks = { Core, Duel, Pet, Pvp },

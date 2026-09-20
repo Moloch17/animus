@@ -56,7 +56,7 @@ std::vector<Animus::Curriculum::RewardTerm> Animus::Curriculum::OpponentEncounte
 /// An interrupt counts when the opponent it was cast at had its cast cut short since, and is paid by what it stopped
 /// (IncomingSpell::Prevented) at the duel's weights, which CombatReward::OneOnOne already uses here.
 ///
-/// A scripted enemy player casts and heals -- stage6_pvp at 13.7M saw 3.0 interruptible casts an episode -- so
+/// A scripted enemy player casts and heals -- stage14_pvp at 13.7M saw 3.0 interruptible casts an episode -- so
 /// stopping one is worth at least what it is worth against a creature. Until now nothing in a PvP stage paid for an
 /// interrupt or counted one: the term belonged to the pulls and the duel, so the seats arrived with cast identity,
 /// threat and the hold_interrupt option and no reason to use any of them.

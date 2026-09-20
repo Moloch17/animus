@@ -241,7 +241,7 @@ void Animus::Curriculum::OwnerEncounter::Reward(Env& env, uint32 seatIndex, Play
     // Healing, and what the seat's absorbs soaked and its reductions prevented on the owner, count alike. Every
     // role is paid for it: a paladin or a shaman that tops its owner up between swings is doing the stage's job,
     // and paying only healers left the owner's share of a seat's healing at 0.000-0.005 for every class without a
-    // healing spec (stage4_companion at start, 2026-09-18).
+    // healing spec (stage8_companion at start, 2026-09-18).
     ledger.Add(RewardTerm::OwnerHealing,
         tuning.Healing * float(step.AllyHealingBy[0] + step.AllyProtectionBy[0]) / ownerHealth);
 
