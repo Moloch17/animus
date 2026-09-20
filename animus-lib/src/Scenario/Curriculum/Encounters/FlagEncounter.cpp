@@ -23,6 +23,7 @@
 #include "BattlegroundMgr.h"
 #include "BattlegroundWS.h"
 #include "CombatReward.h"
+#include "GameObject.h"
 #include "CoreHooks.h"
 #include "DBCStores.h"
 #include "EpisodeInfoTable.h"
@@ -547,6 +548,25 @@ void Animus::Curriculum::FlagEncounter::View(Env const& env, uint32 seat, SeatVi
     match.EnemyDropped = enemy.Dropped;
     match.OwnScore = own.Captures;
     match.EnemyScore = enemy.Captures;
+
+    // The flag the seat could use right now. A scripted match scores a pickup or a return only when the player
+    // uses the object, so the seat needs to know which one is in reach -- the other side's to take, its own to
+    // return. A dropped flag is the same object, moved. Stage 11's own rules take by proximity and want none of
+    // this, so it stays empty there.
+    if (Battleground* scripted = flags.Match)
+    {
+        Player const* bot = _scenario.SeatBot(env, seat);
+        float const reach = _scenario.Tuning().Flag.TouchDistance;
+        uint32 const ours = mine == 0 ? BG_WS_OBJECT_A_FLAG : BG_WS_OBJECT_H_FLAG;
+        uint32 const theirs = mine == 0 ? BG_WS_OBJECT_H_FLAG : BG_WS_OBJECT_A_FLAG;
+        for (uint32 which : { theirs, ours })
+            if (GameObject* flag = scripted->GetBGObject(which); flag && bot && flag->IsInWorld()
+                && bot->IsWithinDistInMap(flag, reach))
+            {
+                match.Usable = flag->GetGUID();
+                break;
+            }
+    }
 
     // What its side is doing. Ten seats that cannot see each other play as ten individuals: this is the same
     // RaidView a party reads, over the seat's own team -- how much of it is standing, how much of it is fighting,

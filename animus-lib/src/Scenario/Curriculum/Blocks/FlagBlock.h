@@ -48,12 +48,22 @@ namespace Animus::Curriculum
             OBS_DROPPED_COS             = 14,
             OBS_OWN_SCORE               = 15,   // captures / 3
             OBS_ENEMY_SCORE             = 16,
-            OBS_COUNT                   = 17
+            OBS_CAN_TAKE                = 17,   // a flag is in reach to take or return
+            OBS_COUNT                   = 18
+        };
+
+        enum Action : uint32
+        {
+            /// Use the flag in reach: take the other side's, or return one's own. A scripted battleground scores
+            /// a pickup on the object being used, never on the seat standing over it.
+            ACTION_TAKE_FLAG            = 0,
+            ACTION_COUNT                = 1
         };
 
         [[nodiscard]] BlockId Id() const override { return BlockId::Flag; }
         [[nodiscard]] BlockSize Size(Layout const& layout) const override;
         void Observe(SeatView const& view, float* obs, uint8* mask) const override;
+        void Apply(SeatView& view, uint32 local, SeatActionResult& result) const override;
     };
 }
 

@@ -247,6 +247,11 @@ namespace Animus::Curriculum
             Position EnemyDropped;
             uint32 OwnScore = 0;
             uint32 EnemyScore = 0;
+            /// The flag the seat could take or return right now, if one is in reach. A real battleground scores a
+            /// pickup only when the player uses the object (BattlegroundWS::EventPlayerClickedOnFlag), so
+            /// standing on it does nothing: this is what ACTION_TAKE_FLAG acts on. Empty when none is in reach,
+            /// and always empty for an arena that plays the flag rules by proximity itself.
+            ObjectGuid Usable;
         } Flags;
 
         // PvP: the enemy player.
