@@ -564,13 +564,24 @@ void Animus::Curriculum::FlagEncounter::View(Env const& env, uint32 seat, SeatVi
         float const reach = _scenario.Tuning().Flag.TouchDistance;
         uint32 const ours = mine == 0 ? BG_WS_OBJECT_A_FLAG : BG_WS_OBJECT_H_FLAG;
         uint32 const theirs = mine == 0 ? BG_WS_OBJECT_H_FLAG : BG_WS_OBJECT_A_FLAG;
+
+        // Only a flag there is something to do with. The other side's is always worth using -- at their base it
+        // is a pickup, on the ground it is a pickup. A side's own is worth using only where it fell: at its own
+        // base it is just scenery, and the seats start standing on it, so offering it made almost all of what
+        // the reach metric counted an action that does nothing.
+        bool const ownIsDropped = own.State == State::Dropped;
         for (uint32 which : { theirs, ours })
+        {
+            if (which == ours && !ownIsDropped)
+                continue;
+
             if (GameObject* flag = scripted->GetBGObject(which); flag && bot && flag->IsInWorld()
                 && bot->IsWithinDistInMap(flag, reach))
             {
                 match.Usable = flag->GetGUID();
                 break;
             }
+        }
     }
 
     // Was a flag ever close enough to use? If this stays at zero the seats never reach one and the action is
