@@ -22,6 +22,7 @@
 #include "Battleground.h"
 #include "BattlegroundMgr.h"
 #include "BattlegroundWS.h"
+#include "CombatReward.h"
 #include "CoreHooks.h"
 #include "DBCStores.h"
 #include "EpisodeInfoTable.h"
@@ -531,6 +532,43 @@ void Animus::Curriculum::FlagEncounter::View(Env const& env, uint32 seat, SeatVi
     match.EnemyDropped = enemy.Dropped;
     match.OwnScore = own.Captures;
     match.EnemyScore = enemy.Captures;
+
+    // What its side is doing. Ten seats that cannot see each other play as ten individuals: this is the same
+    // RaidView a party reads, over the seat's own team -- how much of it is standing, how much of it is fighting,
+    // and how badly the worst of it is hurt.
+    uint32 const seats = _scenario.SeatCount();
+    uint32 side = 0, alive = 0, fighting = 0, tanks = 0, healers = 0;
+    float lowest = 1.0f;
+    for (uint32 other = 0; other < seats; ++other)
+    {
+        if (SideOf(env, other) != mine)
+            continue;
+
+        ++side;
+        Player const* mate = _scenario.SeatBot(env, other);
+        if (!mate || !mate->IsAlive())
+            continue;
+
+        ++alive;
+        if (mate->IsInCombat())
+            ++fighting;
+
+        Role const role = _scenario.Data(env).Seats[other].L->PlayRole();
+        if (role == Role::Tank)
+            ++tanks;
+        else if (role == Role::Heal)
+            ++healers;
+
+        lowest = std::min(lowest, CombatReward::HealthLeft(mate));
+    }
+
+    view.Raid.Group = mine;
+    view.Raid.Alive = side ? float(alive) / float(side) : 0.0f;
+    view.Raid.GroupAlive = view.Raid.Alive;
+    view.Raid.InCombat = alive ? float(fighting) / float(alive) : 0.0f;
+    view.Raid.LowestHealth = lowest;
+    view.Raid.TanksAlive = std::min(1.0f, float(tanks) / float(TEAM_SEATS));
+    view.Raid.HealersAlive = std::min(1.0f, float(healers) / float(TEAM_SEATS));
 
     view.HasObjective = CurrentGoal(env, seat, view.Objective) != Goal::None;
 }
