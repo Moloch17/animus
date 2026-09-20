@@ -68,6 +68,7 @@ namespace Animus::Curriculum
         Control,
         SelfHealing,
         GoalMatch,
+        OrderMatch,
         Repeat,
         Hazard,
         HealingMana,

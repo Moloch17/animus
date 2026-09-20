@@ -67,7 +67,9 @@ void Animus::Curriculum::OrderBlock::Observe(SeatView const& view, float* obs, u
     if (focus && focus->IsAlive())
     {
         obs[OBS_HAS_FOCUS] = 1.0f;
-        obs[OBS_FOCUS_IS_TARGET] = bot->GetTarget() == focus->GetGUID() ? 1.0f : 0.0f;
+        // What the seat's own actions aim at. Not UNIT_FIELD_TARGET: that is set by the client's selection
+        // packet, which a sessionless bot never sends, so it reads empty for every seat.
+        obs[OBS_FOCUS_IS_TARGET] = view.Target == focus ? 1.0f : 0.0f;
         WritePlace(bot, *focus, &obs[OBS_FOCUS_DISTANCE]);
         obs[OBS_FOCUS_HEALTH] = CombatReward::HealthLeft(focus);
     }

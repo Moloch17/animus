@@ -17,6 +17,7 @@
  */
 
 #include "Layout.h"
+#include "DirectorLayout.h"
 #include "SpellInfo.h"
 #include "SpellMgr.h"
 #include "StageDefinition.h"
@@ -113,6 +114,38 @@ std::string_view Animus::Curriculum::GoalName(SeatGoal goal)
     return "unknown";
 }
 
+std::string_view Animus::Curriculum::PostureName(TeamPosture posture)
+{
+    switch (posture)
+    {
+        case TeamPosture::Attack:  return "attack";
+        case TeamPosture::Defend:  return "defend";
+        case TeamPosture::Protect: return "protect";
+        case TeamPosture::Recover: return "recover";
+        case TeamPosture::Regroup: return "regroup";
+        case TeamPosture::Count:   break;
+    }
+
+    return "unknown";
+}
+
+std::string_view Animus::Curriculum::RallyName(TeamRally rally)
+{
+    switch (rally)
+    {
+        case TeamRally::None:      return "none";
+        case TeamRally::OwnBase:   return "own_base";
+        case TeamRally::EnemyBase: return "enemy_base";
+        case TeamRally::Carrier:   return "carrier";
+        case TeamRally::Focus:     return "focus";
+        case TeamRally::Spread:    return "spread";
+        case TeamRally::Stack:     return "stack";
+        case TeamRally::Count:     break;
+    }
+
+    return "unknown";
+}
+
 std::string_view Animus::Curriculum::BlockName(BlockId id)
 {
     switch (id)
@@ -187,6 +220,18 @@ Animus::Curriculum::Layout Animus::Curriculum::Layout::Build(ClassRoleProfile co
     return layout;
 }
 
+Animus::Curriculum::Layout Animus::Curriculum::Layout::BuildDirector(StageDefinition const& stage)
+{
+    Layout layout;
+    layout.Stage = &stage;
+    layout.Director = true;
+    layout.ObsDim = DirectorLayout::OBS_COUNT;
+    layout.NumActions = DirectorLayout::ACTION_COUNT;
+    layout.MoveDirections.assign(layout.NumActions, 0);
+    layout.ModeGroups.assign(layout.NumActions, 0);
+    return layout;
+}
+
 std::optional<Animus::Curriculum::BlockId> Animus::Curriculum::Layout::BlockOfAction(uint32 action) const
 {
     for (BlockId id : Blocks)
@@ -213,11 +258,14 @@ boost::json::array Animus::Curriculum::Span(uint32 first, uint32 count)
 
 std::string Animus::Curriculum::Layout::ModelName() const
 {
-    return Profile->Name + Stage->Suffix;
+    return (Director ? DirectorLayout::Name() : Profile->Name) + Stage->Suffix;
 }
 
 std::vector<std::string> Animus::Curriculum::Layout::ActionNames() const
 {
+    if (Director)
+        return DirectorLayout::ActionNames();
+
     std::vector<std::string> names(NumActions);
     for (BlockId id : Blocks)
     {
@@ -239,9 +287,9 @@ std::string Animus::Curriculum::Layout::Manifest() const
     manifest["format"] = MANIFEST_FORMAT;
     manifest["model"] = ModelName();
     manifest["stage"] = Stage->Name;
-    manifest["class_role"] = Profile->Name;
-    manifest["class"] = Profile->Class;
-    manifest["role"] = RoleName(PlayRole());
+    manifest["class_role"] = Director ? DirectorLayout::Name() : Profile->Name.c_str();
+    manifest["class"] = Director ? 0 : Profile->Class;
+    manifest["role"] = Director ? "director" : RoleName(PlayRole());
     manifest["obs_dim"] = ObsDim;
     manifest["num_actions"] = NumActions;
 
@@ -250,8 +298,9 @@ std::string Animus::Curriculum::Layout::Manifest() const
         actionNames.push_back(boost::json::string(name));
 
     boost::json::array& specs = manifest["specs"].emplace_array();
-    for (SpecProfile const& spec : Profile->Specs)
-        specs.push_back(spec.TabPage);
+    if (!Director)
+        for (SpecProfile const& spec : Profile->Specs)
+            specs.push_back(spec.TabPage);
 
     boost::json::array& blocks = manifest["blocks"].emplace_array();
     for (BlockId id : Blocks)

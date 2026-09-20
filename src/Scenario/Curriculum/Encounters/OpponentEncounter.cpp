@@ -137,10 +137,46 @@ void Animus::Curriculum::OpponentEncounter::AddEpisodeInfo(EpisodeInfoTable& tab
     });
 }
 
+uint32 Animus::Curriculum::OpponentEncounter::EnemySeats(Env const& env, uint32 seat,
+    std::array<uint32, PACK_SLOTS>& out) const
+{
+    out.fill(NO_SEAT);
+
+    EnvState const& data = _scenario.Data(env);
+    uint32 const side = _scenario.SideOf(env, seat);
+    uint32 count = 0;
+    for (uint32 other = 0; other < data.ActiveSeats && count < PACK_SLOTS; ++other)
+        if (_scenario.SideOf(env, other) != side && _scenario.SeatBot(env, other))
+            out[count++] = other;
+
+    return count;
+}
+
 Player* Animus::Curriculum::OpponentEncounter::Find(Env const& env, uint32 seat) const
 {
     if (Mirror(env))
-        return env.FindBot(1 - seat);
+    {
+        // The enemy this seat has selected. One a side leaves a single choice, which is the other seat as it
+        // always was; a side of several makes it whichever of them target selection last picked.
+        std::array<uint32, PACK_SLOTS> enemies{};
+        uint32 const count = EnemySeats(env, seat, enemies);
+        if (!count)
+            return nullptr;
+
+        EnvState const& data = _scenario.Data(env);
+        uint32 const slot = seat < data.Seats.size() ? data.Seats[seat].TargetSlot : 0;
+        if (Player* chosen = slot < count ? _scenario.SeatBot(env, enemies[slot]) : nullptr;
+            chosen && chosen->IsAlive())
+            return chosen;
+
+        // Its choice is down or gone: the first of that side still standing, so the seat keeps an opponent to be
+        // scored against rather than dropping out of the fight for the rest of the episode.
+        for (uint32 other = 0; other < count; ++other)
+            if (Player* bot = _scenario.SeatBot(env, enemies[other]); bot && bot->IsAlive())
+                return bot;
+
+        return _scenario.SeatBot(env, enemies[0]);
+    }
 
     Player* opponent = _envs[env.Index].Bot.Active();
     return opponent && opponent->IsInWorld() ? opponent : nullptr;
@@ -162,7 +198,20 @@ bool Animus::Curriculum::OpponentEncounter::Build(Env& env, Map* map, uint8 /*le
     {
         // A scripted opponent of an earlier episode (a stage mixing both kinds) has no place here.
         _envs[env.Index].Bot.Destroy();
-        MakeEnemies(_scenario.SeatBot(env, 0), _scenario.SeatBot(env, 1));
+
+        // Everyone on one side is an enemy of everyone on the other, not only the pair that shares an index:
+        // a seat has to be able to hit whichever of them it chooses, or is told to.
+        for (uint32 seat = 0; seat < data.ActiveSeats; ++seat)
+            for (uint32 other = seat + 1; other < data.ActiveSeats; ++other)
+                if (_scenario.SideOf(env, seat) != _scenario.SideOf(env, other))
+                    if (Player* bot = _scenario.SeatBot(env, seat); bot)
+                        if (Player* enemy = _scenario.SeatBot(env, other); enemy)
+                            MakeEnemies(bot, enemy);
+
+        // Nobody has chosen yet: the first of the enemy side, which is all there is when it holds one seat.
+        for (uint32 seat = 0; seat < data.ActiveSeats; ++seat)
+            data.Seats[seat].TargetSlot = 0;
+
         return true;
     }
 
@@ -201,18 +250,30 @@ bool Animus::Curriculum::OpponentEncounter::RebuildScripted(Env& env, Player* bo
 
 void Animus::Curriculum::OpponentEncounter::Update(Env& env)
 {
+    // Zone updates can drop the PvP flag; the fight needs it on every seat, not only the first.
+    if (Mirror(env))
+    {
+        uint32 const seats = _scenario.Data(env).ActiveSeats;
+        for (uint32 seat = 0; seat < seats; ++seat)
+        {
+            Player* bot = _scenario.SeatBot(env, seat);
+            Player* opponent = Find(env, seat);
+            if (bot && opponent && (!bot->IsPvP() || !opponent->IsPvP()))
+                MakeEnemies(bot, opponent);
+        }
+        return;
+    }
+
     Player* bot = env.FindBot(0);
     Player* opponent = Find(env, 0);
     if (!bot || !opponent)
         return;
 
-    // Zone updates can drop the PvP flag; the fight needs it.
     if (!bot->IsPvP() || !opponent->IsPvP())
         MakeEnemies(bot, opponent);
 
-    if (!Mirror(env))
-        ScriptedPlayer::UpdateOpponent(opponent, bot, env.EpisodeElapsedMs, _envs[env.Index].Script,
-            _scenario.Tuning().ScriptedPlayers);
+    ScriptedPlayer::UpdateOpponent(opponent, bot, env.EpisodeElapsedMs, _envs[env.Index].Script,
+        _scenario.Tuning().ScriptedPlayers);
 }
 
 bool Animus::Curriculum::OpponentEncounter::SelectTarget(Env const& env, uint32 seat, Unit*& target)
@@ -228,9 +289,24 @@ void Animus::Curriculum::OpponentEncounter::View(Env const& env, uint32 seat, Se
 
     if (Mirror(env))
     {
-        SeatState const& other = _scenario.Data(env).Seats[1 - seat];
-        view.OpponentClass = other.L ? other.L->Profile->Class : 0;
-        view.OpponentRole = other.L ? other.L->PlayRole() : Role::Dps;
+        // The side it fights, as slots it can select between. Without this the seat sees no enemies at all --
+        // the env's target list is for spawned packs -- so every target-selection action stays masked and there
+        // is nothing an order to focus one of them could ask for.
+        std::array<uint32, PACK_SLOTS> enemies{};
+        uint32 const count = EnemySeats(env, seat, enemies);
+
+        EnvState const& data = _scenario.Data(env);
+        for (uint32 slot = 0; slot < count; ++slot)
+            view.Enemies[slot] = _scenario.SeatBot(env, enemies[slot]);
+        for (uint32 slot = count; slot < PACK_SLOTS; ++slot)
+            view.Enemies[slot] = nullptr;
+        view.EnemyCount = count;
+        view.TargetSlot = std::min(view.TargetSlot, count ? count - 1 : 0u);
+
+        uint32 const chosen = view.TargetSlot < count ? enemies[view.TargetSlot] : NO_SEAT;
+        SeatState const* other = chosen != NO_SEAT ? &data.Seats[chosen] : nullptr;
+        view.OpponentClass = other && other->L ? other->L->Profile->Class : 0;
+        view.OpponentRole = other && other->L ? other->L->PlayRole() : Role::Dps;
         return;
     }
 
@@ -260,7 +336,24 @@ bool Animus::Curriculum::OpponentEncounter::IsTerminal(Env const& env) const
 
     EnvState const& data = _scenario.Data(env);
     if (Mirror(env))
-        return data.Seats[0].Combat.Died || data.Seats[1].Combat.Died;
+    {
+        // A side is out when every seat on it is down. One seat a side makes that the first death, as before.
+        for (uint32 side = 0; side < TEAM_COUNT; ++side)
+        {
+            bool held = false, standing = false;
+            for (uint32 seat = 0; seat < data.ActiveSeats; ++seat)
+                if (_scenario.SideOf(env, seat) == side)
+                {
+                    held = true;
+                    standing = standing || !data.Seats[seat].Combat.Died;
+                }
+
+            if (held && !standing)
+                return true;
+        }
+
+        return false;
+    }
 
     return data.Seats[0].Combat.Died || data.Seats[0].Combat.Killed;
 }

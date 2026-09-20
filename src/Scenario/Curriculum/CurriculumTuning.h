@@ -192,6 +192,35 @@ namespace Animus::Curriculum
             float Match = 0.02f;
         } Goals;
 
+        /// The director's orders (TeamOrder), in every arena that has one.
+        struct OrderTuning
+        {
+            /// Per decision a seat spends fighting the enemy its director called, while one is called and alive.
+            ///
+            /// Compliance shaping, and the plan is right that an order should end up being followed because
+            /// following it wins fights rather than because it pays. But an advisory channel that correlates
+            /// with nothing cannot bootstrap into that: stage19_duo_led ran 30M steps with the order paying
+            /// nothing, and order_focus_kept sat at chance (0.45 -> 0.42, no trend) while the director's own
+            /// entropy fell 0.17 nats. Seats ignored the call, so the director's actions changed nothing in the
+            /// world, so its advantage was noise and it never left exploration. This is the same job
+            /// Goals.Match does for the goal head -- keep the channel from collapsing into nothing -- and it
+            /// should be annealed towards zero once order_focus_kept holds up without it.
+            ///
+            /// Paid per decision rather than once on arrival, unlike Goals.Match: holding a called target is
+            /// the behaviour wanted, not a place to reach, and paying once per call would pay a side afresh
+            /// every time its director changed its mind.
+            ///
+            /// Small because a per-decision term accumulates over a whole fight. At 0.01 it earned 5.01 an
+            /// episode, 23.7% of the stage's gross reward, level with the kill (5.23) and the death (-5.27)
+            /// and 70 times goal_match (0.07): a seat paid more for staying on the called target than for
+            /// winning would tunnel on it past every reason to switch. This is the mistake Goals.Match's own
+            /// comment records -- paying to sit in a state made standing at range the stage's second largest
+            /// earner. At 0.001 full compliance is worth about 0.5 an episode, a tenth of the kill: enough to
+            /// break the tie between fighting whoever and fighting the one called, and never enough to outbid
+            /// the fight itself.
+            float Focus = 0.001f;
+        } Order;
+
         /// Looking after itself and its friends, in every stage.
         struct SupportTuning
         {
@@ -603,6 +632,8 @@ namespace Animus::Curriculum
             f("Actions.RepeatFree", tuning.Actions.RepeatFree);
 
             f("Goals.Match", tuning.Goals.Match);
+
+            f("Order.Focus", tuning.Order.Focus);
 
             f("Support.SelfHealing", tuning.Support.SelfHealing);
             f("Support.HealingMana", tuning.Support.HealingMana);

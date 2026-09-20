@@ -89,6 +89,11 @@ namespace Animus::Curriculum
         /// concentrates on, the shape it takes and whose turn the next duty is. Off by default -- a solo arena
         /// would pay for an agent with nothing to say.
         bool Directed = false;
+        /// The director is an agent that learns rather than the scripted one (DirectorEncounter). Costs
+        /// TEAM_COUNT more agents an env across the whole stage -- the spec is fixed, so a stage with one
+        /// learned-directed arena carries the pair in every episode and marks them absent where they are not
+        /// used. Ignored unless Directed.
+        bool DirectorLearned = false;
         /// Seats a side in a Teams arena: 2 and 3 are the arena formats, 10 a battleground side. Ignored by
         /// every other seat plan.
         uint32 TeamSeats = TEAM_SEATS;

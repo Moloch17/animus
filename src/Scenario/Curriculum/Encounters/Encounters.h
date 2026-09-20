@@ -22,6 +22,7 @@
 #include "BotSlot.h"
 #include "DifficultyLadder.h"
 #include "Encounter.h"
+#include "DirectorLayout.h"
 #include "Env.h"
 #include "ObjectGuid.h"
 #include "RewardLedger.h"
@@ -406,11 +407,13 @@ namespace Animus::Curriculum
             std::array<uint32, MAX_SEATS> ControlMs{};
         };
 
-        /// Whether the env's opponent is the other seat.
-        /// The other seat is the opponent: self-play, or a flag match.
+        /// Whether the seats fight each other rather than a scripted player: one a side in a Mirror arena,
+        /// TeamSeats of them a side in a Teams arena. A Teams arena read as anything else spawns a scripted
+        /// opponent and points every seat at it, which is a gang-up, not a match.
         [[nodiscard]] bool Mirror(Env const& env) const
         {
-            return _scenario.Arena(env).Seats == SeatPlan::Mirror;
+            SeatPlan const seats = _scenario.Arena(env).Seats;
+            return seats == SeatPlan::Mirror || seats == SeatPlan::Teams;
         }
         [[nodiscard]] bool Flag(Env const& env) const
         {
@@ -418,6 +421,9 @@ namespace Animus::Curriculum
         }
         void TrackInterrupt(Env& env, uint32 seat, Unit const* opponent, RewardLedger& ledger);
         [[nodiscard]] Player* Find(Env const& env, uint32 seat) const;
+        /// The seats of the side `seat` fights, in that side's own seat order, capped at the slots a seat can
+        /// observe. The order has to be stable across a match: target selection indexes it.
+        uint32 EnemySeats(Env const& env, uint32 seat, std::array<uint32, PACK_SLOTS>& out) const;
         bool RebuildScripted(Env& env, Player* bot, Map* map);
 
         std::vector<EnvOpponent> _envs;
@@ -552,10 +558,28 @@ namespace Animus::Curriculum
     public:
         DirectorEncounter(StageScenario& scenario, uint32 envs);
 
+        [[nodiscard]] std::vector<RewardTerm> RewardTerms() const override;
         void AddEpisodeInfo(EpisodeInfoTable& table) override;
         void ResetEpisode(Env& env) override;
         void Update(Env& env) override;
         void View(Env const& env, uint32 seat, SeatView& view) const override;
+        void BeforeRewards(Env& env) override;
+        void Reward(Env& env, uint32 seat, Player* bot, RewardLedger& ledger) override;
+
+        /// What compliance shaping this seat was paid this decision (RewardTerm::OrderMatch). The director's own
+        /// reward takes it back out: it is paid the mean of its side's rewards, and a director that could earn
+        /// from the shaping would learn to call whoever its seats were already fighting -- to look busy rather
+        /// than to lead.
+        [[nodiscard]] float ShapingPaid(Env const& env, uint32 seat) const;
+
+        /// What the agent commanding `side` sees. Built from the seats and the enemy side, then offered to every
+        /// other active encounter (Encounter::ViewDirector) for the objective it alone knows.
+        void ViewSide(Env const& env, uint32 side, DirectorLayout::DirectorView& view) const;
+
+        /// One call from the learned director of `side`: the action names the single field of the standing order
+        /// it changes, and everything else keeps what it was. An action out of range, or one naming a slot that
+        /// is not there, changes nothing -- a masked action may still arrive.
+        void Call(Env& env, uint32 side, int32 action);
 
     private:
         struct SideOrder
@@ -567,16 +591,35 @@ namespace Animus::Curriculum
             ObjectGuid Focus;
             uint32 Duty = NO_SEAT;              // the seat that owes the next interrupt or control
             uint32 Changes = 0;                 // how often the call moved, for the episode info
+            uint32 CalledStep = 0;              // the decision the order last changed on
+            /// Whether the call is worth following, which is upstream of whether it is followed: decisions with
+            /// a living enemy to call, those whose call was one, those whose call was the most hurt of them,
+            /// and what picking at random among the living would have scored.
+            uint32 Decisions = 0;
+            uint32 FocusAlive = 0;
+            uint32 FocusLowest = 0;
+            float ChanceSum = 0.0f;
         };
 
         struct EnvDirector
         {
             std::array<SideOrder, TEAM_COUNT> Sides;
             uint32 Steps = 0;
+            /// Per seat, the shaping paid this decision; cleared before every decision's rewards.
+            std::array<float, MAX_SEATS> Shaping{};
         };
 
-        /// One side's orders, from what its seats and the enemy's are doing.
+        /// One side's orders, from what its seats and the enemy's are doing. The scripted director; a learned one
+        /// is told what to say instead (Call).
         void Command(Env& env, uint32 side);
+        /// Whether the env's arena has the director learn rather than follow the script.
+        [[nodiscard]] bool Learned(Env const& env) const;
+        /// Drop what the side is being asked for once it cannot be done: a call at a corpse is not a call.
+        void Forget(Env& env, uint32 side);
+        /// Tally what the side's standing call is worth this decision, scripted or learned.
+        void Measure(Env& env, uint32 side);
+        /// Note that the order changed, for order_changes and the director's own "how long has this stood".
+        void Changed(SideOrder& order, uint32 steps) const;
 
         std::vector<EnvDirector> _envs;
     };
