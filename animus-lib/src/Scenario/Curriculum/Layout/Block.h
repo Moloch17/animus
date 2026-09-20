@@ -55,10 +55,39 @@ namespace Animus::Curriculum
         Travel,         // mounts, flying and an objective to get to
         Flag,           // a flag match: both flags, both bases, the score (no actions)
         Support,        // friends (self, owner, teammates) to heal, shield and buff, and the heals' rank tier
+        Order,          // what the side's director asked of this seat (no actions: an order is advice, not a lever)
         Count
     };
 
     constexpr std::size_t BLOCK_COUNT = std::size_t(BlockId::Count);
+
+    /// What a director asks of its side. Four channels: the posture the team holds, the enemy it concentrates
+    /// on, the shape it takes, and which seat owes the next duty. A seat reads them and still chooses its own
+    /// actions -- an order is advice, and a seat that has learned better is free to ignore it.
+    enum class TeamPosture : uint8
+    {
+        Attack,         // press the enemy
+        Defend,         // hold what the side has
+        Protect,        // keep one of its own alive
+        Recover,        // disengage, heal, drink
+        Regroup,        // gather before anything else
+        Count
+    };
+
+    enum class TeamRally : uint8
+    {
+        None,           // no shape asked for
+        OwnBase,        // home: the flag room, the graveyard, the safe side
+        EnemyBase,      // theirs
+        Carrier,        // whoever of the side carries the objective
+        Focus,          // on the called target
+        Spread,         // away from each other
+        Stack,          // together
+        Count
+    };
+
+    constexpr uint32 TEAM_POSTURE_COUNT = uint32(TeamPosture::Count);
+    constexpr uint32 TEAM_RALLY_COUNT = uint32(TeamRally::Count);
 
     /// Kinds of standing choice a player makes and keeps (SeatMemory: a change of one kind holds for a while).
     enum class ModeGroup : uint8
