@@ -114,6 +114,16 @@ void Animus::Curriculum::DirectorEncounter::AddEpisodeInfo(EpisodeInfoTable& tab
     {
         return share(env, seat, [](SideOrder const& side) { return side.ChanceSum; });
     });
+    // The call pointed at an enemy the side could not see: a director working from memory, not sight.
+    table.Add("order_focus_unseen", [share](Env const& env, uint32 seat)
+    {
+        return share(env, seat, [](SideOrder const& side) { return float(side.FocusUnseen); });
+    });
+    // Enemy slots the side could see, averaged over the decisions it had something to call.
+    table.Add("director_enemies_seen", [share](Env const& env, uint32 seat)
+    {
+        return share(env, seat, [](SideOrder const& side) { return side.SeenSum; });
+    });
     // Whether the side was doing what it was told: the share of its seats on the called target.
     table.Add("order_focus_kept", [this](Env const& env, uint32 seat)
     {
@@ -140,6 +150,47 @@ void Animus::Curriculum::DirectorEncounter::Changed(SideOrder& order, uint32 ste
     order.CalledStep = steps;
 }
 
+/// What the side can see this decision, and what it keeps of what it has seen.
+///
+/// This is the whole of the director's fog of war. Before it, ViewSide read every enemy's exact health,
+/// position, casting state and even its class/role straight out of the world with no visibility check at all,
+/// which made the commander of a side strictly better informed than every seat in it.
+void Animus::Curriculum::DirectorEncounter::Observe(Env& env, uint32 side)
+{
+    SideKnowledge& known = _envs[env.Index].Knowledge[side];
+
+    std::array<uint32, TEAM_SEATS> theirs{};
+    uint32 const count = std::min(_scenario.SideSeats(env, side ? 0 : 1, theirs), PACK_SLOTS);
+
+    known.Seen.fill(0);
+    for (uint32 slot = 0; slot < count; ++slot)
+    {
+        Player const* bot = _scenario.SeatBot(env, theirs[slot]);
+        EnemyMemory& memory = known.Enemies[slot];
+        if (!bot)
+            continue;
+
+        // A slot reused by a different character starts again: what the side remembers is about whoever is
+        // standing there now, not whoever stood there last episode.
+        if (memory.Guid != bot->GetGUID())
+            memory = EnemyMemory();
+
+        if (!_scenario.SideCanSee(env, side, bot))
+            continue;
+
+        SeatState const& seat = _scenario.Data(env).Seats[theirs[slot]];
+        known.Seen[slot] = 1;
+        memory.Guid = bot->GetGUID();
+        memory.Known = true;
+        memory.LastSeen.Relocate(bot);
+        memory.LastSeenMs = env.EpisodeElapsedMs;
+        memory.Health = CombatReward::HealthLeft(bot);
+        memory.Alive = bot->IsAlive();
+        if (seat.L)
+            memory.PlayRole = seat.L->PlayRole();
+    }
+}
+
 void Animus::Curriculum::DirectorEncounter::Forget(Env& env, uint32 side)
 {
     EnvDirector& state = _envs[env.Index];
@@ -150,12 +201,27 @@ void Animus::Curriculum::DirectorEncounter::Forget(Env& env, uint32 side)
         std::array<uint32, TEAM_SEATS> theirs{};
         uint32 const count = _scenario.SideSeats(env, side ? 0 : 1, theirs);
 
-        Player const* focus = nullptr;
-        for (uint32 slot = 0; slot < count && !focus; ++slot)
-            if (Player const* bot = _scenario.SeatBot(env, theirs[slot]); bot && bot->GetGUID() == order.Focus)
-                focus = bot;
+        // A learned director is told its target is gone only when its own side knows: a call that quietly
+        // cleared itself the instant the target died would be ground truth arriving through the back door,
+        // and a sharper signal than anything the fogged observation gives it. The scripted director reads
+        // the world, because it is the fixed yardstick the learned one is scored against.
+        bool worth = false;
+        if (Learned(env))
+        {
+            SideKnowledge const& known = state.Knowledge[side];
+            for (uint32 slot = 0; slot < count && slot < PACK_SLOTS && !worth; ++slot)
+                worth = known.Enemies[slot].Known && known.Enemies[slot].Alive
+                    && known.Enemies[slot].Guid == order.Focus;
+        }
+        else
+        {
+            for (uint32 slot = 0; slot < count && !worth; ++slot)
+                if (Player const* bot = _scenario.SeatBot(env, theirs[slot]);
+                    bot && bot->GetGUID() == order.Focus && bot->IsAlive())
+                    worth = true;
+        }
 
-        if (!focus || !focus->IsAlive())
+        if (!worth)
         {
             order.Focus = ObjectGuid::Empty;
             Changed(order, state.Steps);
@@ -176,6 +242,7 @@ void Animus::Curriculum::DirectorEncounter::Forget(Env& env, uint32 side)
 void Animus::Curriculum::DirectorEncounter::Measure(Env& env, uint32 side)
 {
     SideOrder& order = _envs[env.Index].Sides[side];
+    SideKnowledge const& known = _envs[env.Index].Knowledge[side];
 
     std::array<uint32, TEAM_SEATS> theirs{};
     uint32 const count = _scenario.SideSeats(env, side ? 0 : 1, theirs);
@@ -208,10 +275,21 @@ void Animus::Curriculum::DirectorEncounter::Measure(Env& env, uint32 side)
     // What naming one of the living at random would have scored, so a side of two and a side of ten are read on
     // the same scale and a director that calls well is told apart from one the arena makes look good.
     order.ChanceSum += 1.0f / float(living);
+
+    // Measured against ground truth on purpose -- this is instrumentation, not an observation, and a yardstick
+    // that could only see what the director sees would measure nothing. Alongside it, how much the side could
+    // actually see, so a call that was hopeless for want of information is distinguishable from a poor one.
+    uint32 seen = 0;
+    for (uint32 slot = 0; slot < count && slot < PACK_SLOTS; ++slot)
+        seen += known.Seen[slot] ? 1 : 0;
+    order.SeenSum += float(seen);
+
     if (!focus)
         return;
 
     ++order.FocusAlive;
+    if (!_scenario.SideCanSee(env, side, focus))
+        ++order.FocusUnseen;
     if (focus == lowest)
         ++order.FocusLowest;
 }
@@ -220,6 +298,11 @@ void Animus::Curriculum::DirectorEncounter::Update(Env& env)
 {
     EnvDirector& state = _envs[env.Index];
     uint32 const steps = state.Steps++;
+
+    // What the side can see, before anything reads it: Forget below asks whether a called target is still
+    // worth calling, and for a learned director that question has to be answered from what its side knows.
+    for (uint32 side = 0; side < TEAM_COUNT; ++side)
+        Observe(env, side);
 
     // Before anything reads the order: a call at a corpse is not a call. The order stands between the
     // director's decisions -- ten of them, and longer still if it never spends another action on the focus --
@@ -288,7 +371,19 @@ void Animus::Curriculum::DirectorEncounter::Call(Env& env, uint32 side, int32 ac
             return;
 
         Player const* enemy = _scenario.SeatBot(env, enemies[slot]);
-        if (!enemy || !enemy->IsAlive() || enemy->GetGUID() == order.Focus)
+        if (!enemy || enemy->GetGUID() == order.Focus)
+            return;
+
+        // Believed alive, not known alive. Refusing a call on an enemy the side has watched die is right;
+        // refusing one on an enemy that died out of sight would tell a learned director so through the
+        // refusal itself -- SinceCall simply would not advance -- which is the leak this closes.
+        if (Learned(env))
+        {
+            EnemyMemory const& memory = state.Knowledge[side].Enemies[slot];
+            if (!memory.Known || !memory.Alive)
+                return;
+        }
+        else if (!enemy->IsAlive())
             return;
 
         order.Focus = enemy->GetGUID();
@@ -417,13 +512,15 @@ void Animus::Curriculum::DirectorEncounter::ViewSide(Env const& env, uint32 side
         centreY /= float(standing);
     }
 
-    auto const spread = [&](Player const* bot)
+    // Takes a position rather than a unit, so a remembered sighting goes through it exactly as a live one
+    // does: for an enemy the side cannot see, where it last stood is the only position there is.
+    auto const spread = [&](Position const& at)
     {
-        if (!standing || !bot)
+        if (!standing)
             return 0.0f;
 
-        float const dx = bot->GetPositionX() - centreX;
-        float const dy = bot->GetPositionY() - centreY;
+        float const dx = at.GetPositionX() - centreX;
+        float const dy = at.GetPositionY() - centreY;
         return std::min(1.0f, std::sqrt(dx * dx + dy * dy) / DirectorLayout::DISTANCE_SCALE);
     };
 
@@ -445,7 +542,7 @@ void Animus::Curriculum::DirectorEncounter::ViewSide(Env const& env, uint32 side
         out.PlayRole = seat.L->PlayRole();
         out.InCombat = bot->IsInCombat();
         out.Casting = bot->IsNonMeleeSpellCast(false, false, true);
-        out.Spread = spread(bot);
+        out.Spread = spread(*bot);
         out.IsDuty = order.Duty == mine[slot];
         if (focus)
         {
@@ -462,25 +559,40 @@ void Animus::Curriculum::DirectorEncounter::ViewSide(Env const& env, uint32 side
     view.OwnHealth = standing ? health / float(standing) : 0.0f;
 
     // Only the enemies a seat of this side could select between: a call it cannot act on is not a call.
+    // And only what the side actually knows about them -- see Observe.
+    SideKnowledge const& known = state.Knowledge[side];
     view.EnemyCount = std::min(enemy, PACK_SLOTS);
     float enemyHealth = 0.0f;
     uint32 enemyStanding = 0;
     for (uint32 slot = 0; slot < view.EnemyCount; ++slot)
     {
         DirectorLayout::DirectorView::EnemySlot& out = view.Enemies[slot];
-        Player const* bot = _scenario.SeatBot(env, theirs[slot]);
-        SeatState const& seat = _scenario.Data(env).Seats[theirs[slot]];
-        out.Present = bot && seat.L;
+        EnemyMemory const& memory = known.Enemies[slot];
+
+        // Never laid eyes on: the side knows it is out there and nothing else.
+        out.Present = memory.Known;
         if (!out.Present)
             continue;
 
-        out.Alive = bot->IsAlive();
-        out.Health = CombatReward::HealthLeft(bot);
-        out.PlayRole = seat.L->PlayRole();
-        out.InCombat = bot->IsInCombat();
-        out.Casting = bot->IsNonMeleeSpellCast(false, false, true);
-        out.Spread = spread(bot);
-        out.IsFocus = bot->GetGUID() == order.Focus;
+        out.Seen = known.Seen[slot] != 0;
+        out.Alive = memory.Alive;
+        out.Health = memory.Health;
+        out.PlayRole = memory.PlayRole;
+        out.IsFocus = memory.Guid == order.Focus;
+        out.Spread = spread(memory.LastSeen);
+        out.UnseenTime = out.Seen ? 0.0f
+            : std::min(1.0f, float(env.EpisodeElapsedMs - std::min(env.EpisodeElapsedMs, memory.LastSeenMs))
+                / DirectorLayout::MAX_UNSEEN_TIME_MS);
+
+        // Only while it is in sight: where it stood is worth remembering, whether it was mid-cast a minute
+        // ago is not, and a remembered one would be a lie the policy learns to trust.
+        if (out.Seen)
+            if (Player const* bot = _scenario.SeatBot(env, theirs[slot]); bot)
+            {
+                out.InCombat = bot->IsInCombat();
+                out.Casting = bot->IsNonMeleeSpellCast(false, false, true);
+            }
+
         if (out.Alive)
         {
             enemyHealth += out.Health;
@@ -488,6 +600,8 @@ void Animus::Curriculum::DirectorEncounter::ViewSide(Env const& env, uint32 side
         }
     }
 
+    // Aggregated over the same fogged slots: taking these from the world would leave the per-slot fog
+    // decorative, since the side's average enemy health is most of what a focus call is chosen from.
     view.EnemyStanding = view.EnemyCount ? float(enemyStanding) / float(view.EnemyCount) : 0.0f;
     view.EnemyHealth = enemyStanding ? enemyHealth / float(enemyStanding) : 0.0f;
 

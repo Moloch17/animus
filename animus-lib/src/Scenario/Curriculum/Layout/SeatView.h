@@ -266,6 +266,10 @@ namespace Animus::Curriculum
             Position RallyPlace;                    // where Rally resolved to, when it names a place
             bool HasRallyPlace = false;
             Unit* Focus = nullptr;                  // the enemy the side concentrates on, when one is called
+            /// A focus was called and this seat cannot see it. Without this, "no call" and "a call I cannot
+            /// see" are the same all-zero observation, and a seat told to kill someone it has lost would read
+            /// it as having been told nothing.
+            bool FocusUnseen = false;
             bool IsDuty = false;                    // this seat owes the next interrupt or control
         } Order;
 

@@ -599,11 +599,44 @@ namespace Animus::Curriculum
             uint32 FocusAlive = 0;
             uint32 FocusLowest = 0;
             float ChanceSum = 0.0f;
+            /// Whether the director could see what it was calling, and how much of the enemy it could see at
+            /// all. Without these a blind director and a bad one read the same: order_focus_lowest falls in
+            /// both cases and nothing says which.
+            uint32 FocusUnseen = 0;
+            float SeenSum = 0.0f;
+        };
+
+        /// What a side remembers of one enemy slot. Keyed by slot rather than by guid: SideSeats hands back
+        /// stable seat indices for the episode and ViewSide already walks them, so an array indexed the same
+        /// way costs nothing and keeps an allocation off the per-decision path. The guid is kept only to
+        /// notice a slot being reassigned.
+        struct EnemyMemory
+        {
+            ObjectGuid Guid;
+            Position LastSeen;
+            uint32 LastSeenMs = 0;
+            float Health = 0.0f;
+            Role PlayRole = Role::Dps;
+            bool Alive = false;
+            bool Known = false;         // the side has seen it at least once
+        };
+
+        /// One side's picture of the enemy: what it remembers, and what it can see this decision.
+        ///
+        /// The seen mask is worked out once a decision in Update rather than inside ViewSide, which runs per
+        /// side per observe: SideCanSee is a loop over the side's seats, so asking it per enemy slot inside
+        /// the view would be forty CanSeeOrDetect calls a side a decision in a ten-a-side match, on the world
+        /// thread.
+        struct SideKnowledge
+        {
+            std::array<EnemyMemory, PACK_SLOTS> Enemies{};
+            std::array<uint8, PACK_SLOTS> Seen{};
         };
 
         struct EnvDirector
         {
             std::array<SideOrder, TEAM_COUNT> Sides;
+            std::array<SideKnowledge, TEAM_COUNT> Knowledge;
             uint32 Steps = 0;
             /// Per seat, the shaping paid this decision; cleared before every decision's rewards.
             std::array<float, MAX_SEATS> Shaping{};
@@ -614,6 +647,8 @@ namespace Animus::Curriculum
         void Command(Env& env, uint32 side);
         /// Whether the env's arena has the director learn rather than follow the script.
         [[nodiscard]] bool Learned(Env const& env) const;
+        /// Refresh what the side can see and what it remembers, once per decision before anything reads it.
+        void Observe(Env& env, uint32 side);
         /// Drop what the side is being asked for once it cannot be done: a call at a corpse is not a call.
         void Forget(Env& env, uint32 side);
         /// Tally what the side's standing call is worth this decision, scripted or learned.
