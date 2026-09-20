@@ -146,6 +146,9 @@ namespace Animus::Curriculum
         /// Whether the env's current episode uses `encounter`.
         [[nodiscard]] bool Uses(Env const& env, Encounter const& encounter) const;
         [[nodiscard]] CurriculumTuning const& Tuning() const { return _tuning; }
+        /// Which side a seat plays for. A Teams arena splits its seats down the middle; anything else has one
+        /// seat a side, which is what a Mirror is.
+        [[nodiscard]] uint32 SideOf(Env const& env, uint32 seat) const;
         [[nodiscard]] Position const& SpawnPoint() const { return _spawnPoint; }
         /// Where the env's seats start: the stage's spawn point for the env (StageDefinition::SpawnPoints), else
         /// SpawnPoint().

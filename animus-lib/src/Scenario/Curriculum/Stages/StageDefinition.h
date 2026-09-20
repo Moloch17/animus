@@ -85,6 +85,13 @@ namespace Animus::Curriculum
         /// the seat it is about -- a tank that has to hold what it pulls, a healer that has to keep a group up --
         /// where the ordinary party draws every role and the lesson is smeared over whoever happened to play it.
         std::vector<Role> SeatRoles{};
+        /// A director commands each side: one more agent a side, choosing the team's posture, the enemy it
+        /// concentrates on, the shape it takes and whose turn the next duty is. Off by default -- a solo arena
+        /// would pay for an agent with nothing to say.
+        bool Directed = false;
+        /// Seats a side in a Teams arena: 2 and 3 are the arena formats, 10 a battleground side. Ignored by
+        /// every other seat plan.
+        uint32 TeamSeats = TEAM_SEATS;
         /// Every pull contains a creature that puts something on the ground (OpponentPool::RandomHazardCaster),
         /// whatever rung the ladder is on. The pack ladder only reaches hazards at rung 3, so a class/role that
         /// stalls below it never meets one; this makes stepping out of a hazard learnable on its own.

@@ -54,9 +54,7 @@ std::vector<Animus::Curriculum::RewardTerm> Animus::Curriculum::FlagEncounter::R
 
 uint32 Animus::Curriculum::FlagEncounter::SideOf(Env const& env, uint32 seat) const
 {
-    // A Teams arena splits its seats down the middle; anything else has a seat a side, as Mirror does.
-    uint32 const perSide = _scenario.Arena(env).Seats == SeatPlan::Teams ? TEAM_SEATS : 1;
-    return std::min<uint32>(seat / perSide, TEAM_COUNT - 1);
+    return _scenario.SideOf(env, seat);
 }
 
 void Animus::Curriculum::FlagEncounter::AddEpisodeInfo(EpisodeInfoTable& table)
@@ -225,7 +223,8 @@ void Animus::Curriculum::FlagEncounter::FormTeams(Env& env)
 
         // The side's first living seat leads it; the rest join.
         Player* leader = nullptr;
-        for (uint32 seat = side * TEAM_SEATS; seat < seats && SideOf(env, seat) == side && !leader; ++seat)
+        uint32 const perSide = _scenario.Arena(env).TeamSeats;
+        for (uint32 seat = side * perSide; seat < seats && SideOf(env, seat) == side && !leader; ++seat)
             leader = _scenario.SeatBot(env, seat);
 
         if (!leader)
@@ -352,12 +351,13 @@ bool Animus::Curriculum::FlagEncounter::Build(Env& env, Map* map, uint8 /*level*
         }
 
         uint32 const mine = SideOf(env, seat);
-        uint32 const place = seat % TEAM_SEATS;
+        uint32 const perSide = std::max<uint32>(1, _scenario.Arena(env).TeamSeats);
+        uint32 const place = seat % perSide;
         Position start = flags.Sides[mine].Base;
         if (place)
         {
             // A ring a few yards out, facing the way the base faces.
-            float const angle = float(place) / float(TEAM_SEATS) * 2.0f * float(M_PI);
+            float const angle = float(place) / float(perSide) * 2.0f * float(M_PI);
             float const reach = BASE_SPREAD * (1.0f + float(place % 3) * 0.5f);
             start.m_positionX += reach * std::cos(angle);
             start.m_positionY += reach * std::sin(angle);
@@ -639,8 +639,8 @@ void Animus::Curriculum::FlagEncounter::View(Env const& env, uint32 seat, SeatVi
     view.Raid.GroupAlive = view.Raid.Alive;
     view.Raid.InCombat = alive ? float(fighting) / float(alive) : 0.0f;
     view.Raid.LowestHealth = lowest;
-    view.Raid.TanksAlive = std::min(1.0f, float(tanks) / float(TEAM_SEATS));
-    view.Raid.HealersAlive = std::min(1.0f, float(healers) / float(TEAM_SEATS));
+    view.Raid.TanksAlive = std::min(1.0f, float(tanks) / float(std::max<uint32>(1, side)));
+    view.Raid.HealersAlive = std::min(1.0f, float(healers) / float(std::max<uint32>(1, side)));
 
     view.HasObjective = CurrentGoal(env, seat, view.Objective) != Goal::None;
 }

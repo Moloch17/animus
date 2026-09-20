@@ -75,6 +75,11 @@ namespace
                 .EpisodeSeconds = 150 } },
         });
 
+        // Something on the ground, in every pull. Hazards exist already -- the pack ladder draws a hazard caster
+        // from rung 3 and self-play produces them by the spell (stage15_arena measured 3.1 s of hazard an episode,
+        // stage4_gauntlet 1.1 s) -- but a class/role that stalls below rung 3 never meets one, and a second an
+        // episode is thin to learn from. Here every pull has one, at stage 2's difficulty, so walking out of it is
+        // the thing being learned rather than a detail of a harder fight.
         stages.push_back({
             .Name = "stage3_hazards",
             .Suffix = "_hazards",
@@ -100,6 +105,11 @@ namespace
                 .EpisodeSeconds = 450 } },
         });
 
+        // A planned run: the same eight pulls in the same order every episode, ending on an elite pack two levels
+        // above. Nothing about the fights is left to learn -- stage 3 taught them -- so what is left is the plan:
+        // what to spend on the opener, what to keep for the last pull, when the breather is a rest and when it is a
+        // chance to get ahead. Won by clearing the last pull alive; the clock running out is a loss however far it
+        // got. Trained by name, after stage 3.
         stages.push_back({
             .Name = "stage5_endurance",
             .Suffix = "_endurance",
@@ -111,10 +121,13 @@ namespace
             .InDefaultQueue = false,
         });
 
-        // Drill stages: one skill each, trained by name and never queued. The curriculum teaches these skills
-        // inside stages whose win condition is something else, so the credit for them is smeared over the clear.
-        // Each drill fixes what the episode is about and leaves everything else as it was.
-
+        // Travel: getting somewhere, off the duel. Characters of 20 and up ride; the policy learns when a trip is worth
+        // a mount's cast time, and to arrive on foot, ready to fight.
+        //
+        // The Barrens, not the arena the fighting stages spawn in: a trip needs open, pathable ground in every
+        // direction for a few hundred yards, and that arena is a corner pocket with none -- the nearest walkable
+        // ground outside it is 350 yd off and 50 yd up a hillside, past the objective search's reach, so no episode
+        // could ever be built there. The envs share the continent, each in its own phase, spread over the flats.
         stages.push_back({
             .Name = "stage6_travel",
             .Suffix = "_travel",
@@ -132,6 +145,8 @@ namespace
             .MinLevel = 20,
         });
 
+        // Flight: Outland's Nagrand, where flying mounts fly (a battleground never allows them). The envs share the
+        // continent, each in its own phase, spread over open ground.
         stages.push_back({
             .Name = "stage7_flight",
             .Suffix = "_flight",
@@ -171,6 +186,14 @@ namespace
                 .Schedule = PullSchedule::Gauntlet, .Owner = true, .PartyGroup = true, .EpisodeSeconds = 450 } },
         });
 
+        // Holding what the group pulls. Tanks exist in stages 5, 8, 13 and 14, but the stage is won by the clear,
+        // so a tank that loses an add to the healer and takes it back is scored the same as one that never lost it.
+        // Here seat 0 is always the tank (ArenaDefinition::SeatRoles) and the pulls are a party's, so what the
+        // episode is about is the threat table -- which the seat can now read (Encoding::ThreatShare).
+        //
+        // Read its scores knowing that the hazard charge lands about four times harder on a tank than on a ranged
+        // seat (stage15_arena: paladin_tank -0.834 an episode against priest_dps -0.198), because a tank cannot walk
+        // out of what it is holding an enemy in. That is Hazards.Standing being tuned for a seat with a choice.
         stages.push_back({
             .Name = "stage10_tanking",
             .Suffix = "_tanking",
@@ -183,6 +206,14 @@ namespace
             .InDefaultQueue = false,
         });
 
+        // Keeping a group up when the damage outruns one heal. Stage 5 has healers, but its win is the clear and
+        // stage 4 measured the seat putting 13% of its healing into the owner: triage is never the episode.
+        //
+        // Before reading its numbers, know that stage 5 carries a resurrection exploit this drill inherits: nothing
+        // clears m_resurrectGUID, so one landed Rebirth makes every later death of that ally an instant free
+        // resurrect that pays RewardTerm::Revive again (stage8_companion measured druid_dps at 38.4 revives an
+        // episode, 88% of its return). A forced healer seat will find it faster than anything else in the
+        // curriculum. Fix that before trusting a triage score.
         stages.push_back({
             .Name = "stage11_triage",
             .Suffix = "_triage",
@@ -195,6 +226,15 @@ namespace
             .InDefaultQueue = false,
         });
 
+        // The raid branch: MAX_SEATS learned seats as RAID_GROUPS groups of GROUP_SEATS, each group with its own
+        // tank and healer (SeatPlan::Raid). A raid is not a bigger party -- it is many seats around one large enemy,
+        // which is why the opponents are an elite and its adds rather than a pack per seat, and why the mechanics a
+        // seat can now read (a cast worth interrupting, something on the ground, where it stands on the threat
+        // table) matter far more here than they do alone.
+        //
+        // NOT in the default queue, and not runnable at the usual env count: 40 seats an env is 40 bots an env, so
+        // AnimusForge.Envs has to come down roughly in proportion (a few dozen envs, not 128) before either of these
+        // is started. Train by name: `forge start stage12_raid_single`.
         stages.push_back({
             .Name = "stage12_raid_single",
             .Suffix = "_raid",
@@ -206,6 +246,8 @@ namespace
             .InDefaultQueue = false,
         });
 
+        // The raid's endurance: pull after pull with recovery between, which is what a wing of a raid instance is
+        // before the boss of it. Seeded from the single fight, as the gauntlet is from the pack.
         stages.push_back({
             .Name = "stage13_raid_gauntlet",
             .Suffix = "_raidrun",
@@ -217,6 +259,7 @@ namespace
             .InDefaultQueue = false,
         });
 
+        // The PvP branch: off the duel, without the PvE blocks it would never fill.
         stages.push_back({
             .Name = "stage14_pvp",
             .Suffix = "_pvp",
@@ -236,6 +279,11 @@ namespace
                 .Pvp = true } },
         });
 
+        // The crossroads: both branches join. It extends the party (the trunk and every PvE block), takes the pvp
+        // block from the arena, and each parent teaches the arenas it trained on. Two new situations need PvE
+        // and PvP in one
+        // episode: an ambush of the owner in the middle of the gauntlet, and a lone enemy player attacking the owner.
+        // Every PvE arena plays long episodes; the one-on-ones stay short.
         stages.push_back({
             .Name = "stage16_crossroads",
             .Suffix = "_crossroads",
@@ -264,6 +312,12 @@ namespace
             },
         });
 
+        // Warsong Gulch's rules between two learned seats (self-play): take the other side's flag home, return one's
+        // own, stop the carrier. Mounting between the bases and being dismounted by the flag come from travel; the
+        // fight from the arena.
+        //
+        // The Barrens, for stage 9's reason: the second base is placed by the same objective search, 100-180 yd from
+        // the first, and only open ground has room for it.
         stages.push_back({
             .Name = "stage17_flag",
             .Suffix = "_flag",
@@ -280,6 +334,27 @@ namespace
                 { -609.0f, -1614.0f, 94.0f, 0.0f }, { -881.0f, -3221.0f, 92.0f, 0.0f },
                 { -3077.0f, -1786.0f, 92.0f, 0.0f }, { -3115.0f, -2352.0f, 94.0f, 0.0f },
             },
+            .MinLevel = 20,
+        });
+
+        // Warsong Gulch at its proper size: ten a side, both sides learned. The flag rules are stage 11's; what
+        // is new is that a side is ten seats and a group, so the objective has to be shared -- a carrier to escort
+        // home, a base somebody has to hold, and an enemy carrier ten of them can chase. Trained by name, after
+        // stage 11, which it seeds from.
+        // Two a side, and a director. The seats already fight one on one from the arena; what is new is being
+        // told what the pair is doing -- concentrate on that one, you take the next interrupt -- and learning
+        // that following it pays. The director is scripted here and deliberately legible: the lowest enemy is the
+        // focus, the duty goes round the side in turn. A learned director comes next, and meets seats that
+        // already know how to be commanded rather than seats that have never heard an order.
+        stages.push_back({
+            .Name = "stage19_duo_led",
+            .Suffix = "_duo",
+            .Extends = "stage15_arena",
+            .Summary = "two against two, told who to kill and whose turn it is: follow the call",
+            .Blocks = { Core, Duel, Pack, Pet, Pvp, Context, Hostiles, Support, Order },
+            .Arenas = { { .Name = "duo", .Seats = SeatPlan::Teams, .Against = Opposition::MirrorSeat,
+                .Pvp = true, .EpisodeSeconds = 180, .Directed = true, .TeamSeats = 2 } },
+            .InDefaultQueue = false,
             .MinLevel = 20,
         });
 
@@ -303,6 +378,9 @@ namespace
             .MinLevel = 20,
         });
 
+        // A pilot of arena mixing and merging, not part of the curriculum: the duel and the scripted enemy player in
+        // one stage, merging the two stages that trained them (each teaches its arena). Trained only when named
+        // (forge start mix_duel_pvp).
         stages.push_back({
             .Name = "mix_duel_pvp",
             .Suffix = "_mix",
@@ -346,8 +424,14 @@ namespace
         bool const selfPlay = arena.Seats == SeatPlan::Mirror || arena.Seats == SeatPlan::Teams;
         if (selfPlay != (arena.Against == Opposition::MirrorSeat || flag))
             return "self-play seats go with fighting the mirror seat or a flag match, and only with them";
-        if (arena.Seats == SeatPlan::Teams && !flag)
-            return "team seats are for a flag match";
+        if (arena.Seats == SeatPlan::Teams && !flag && arena.Against != Opposition::MirrorSeat)
+            return "team seats fight the other team, at a flag or in an arena";
+        if (arena.Seats == SeatPlan::Teams && (arena.TeamSeats < 1 || arena.TeamSeats > TEAM_SEATS))
+            return "a side is between one seat and TEAM_SEATS";
+        if (arena.Directed && !stage.Has(BlockId::Order))
+            return "a director needs the order block: its seats have to read what it asks";
+        if (arena.Directed && arena.Seats != SeatPlan::Teams)
+            return "a director commands a side, so its arena needs team seats";
         if (arena.Ambushers > MAX_AMBUSHERS)
             return "at most " + std::to_string(MAX_AMBUSHERS) + " ambushers";
         if (arena.Ambushers > 0 && !(pulls || ambushOnly))
@@ -440,7 +524,7 @@ uint32 Animus::Curriculum::ArenaDefinition::SeatCount() const
         // returned when MAX_SEATS was 4 and is what it has to keep returning now that MAX_SEATS is a raid.
         case SeatPlan::Party:  return GROUP_MEMBERS;
         case SeatPlan::Raid:   return MAX_SEATS;
-        case SeatPlan::Teams:  return TEAM_MATCH_SEATS;
+        case SeatPlan::Teams:  return std::min(TeamSeats, TEAM_SEATS) * TEAM_COUNT;
         case SeatPlan::Mirror: return 2;
         case SeatPlan::Solo:   break;
     }

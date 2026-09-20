@@ -286,6 +286,7 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
     auto const hasAmbush = [](ArenaDefinition const& arena) { return arena.Ambushers > 0; };
     auto const hasTravel = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Travel; };
     auto const hasFlag = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Flag; };
+    auto const directed = [](ArenaDefinition const& arena) { return arena.Directed; };
 
     // Build order matters: the owner comes before the party group (which it leads) and the pulls (which spawn around
     // it); both check it. Rewards do not depend on each other's order: what several read (a seat's damage taken, the
@@ -308,10 +309,14 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
     // After the opponent, which makes the two seats enemies.
     if (_stage.AnyArena(hasFlag))
         flag = add(std::make_unique<FlagEncounter>(*this, envs));
+    // Last: its orders are read from what every other encounter has already set up.
+    Encounter* director = nullptr;
+    if (_stage.AnyArena(directed))
+        director = add(std::make_unique<DirectorEncounter>(*this, envs));
 
     // The order episode info columns and reward terms are listed in.
     for (Encounter* encounter : std::initializer_list<Encounter*>{ creature, pulls, _owner, _party, opponent, ambush,
-        travel, flag })
+        travel, flag, director })
         if (encounter)
             _rewardOrder.push_back(encounter);
 
@@ -324,7 +329,8 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
             return (encounter == opponent && fightsPlayer(arena)) || (encounter == _owner && arena.Owner)
                 || (encounter == _party && arena.PartyGroup) || (encounter == pulls && hasPulls(arena))
                 || (encounter == creature && hasCreature(arena)) || (encounter == ambush && hasAmbush(arena))
-                || (encounter == travel && hasTravel(arena)) || (encounter == flag && hasFlag(arena));
+                || (encounter == travel && hasTravel(arena)) || (encounter == flag && hasFlag(arena))
+                || (encounter == director && directed(arena));
         };
 
         std::vector<Encounter*>& build = _arenaEncounters.emplace_back();
@@ -1113,6 +1119,12 @@ bool Animus::Curriculum::StageScenario::IsTerminal(Env const& env) const
         [&env](Encounter const* encounter) { return encounter->IsTerminal(env); });
 }
 
+uint32 Animus::Curriculum::StageScenario::SideOf(Env const& env, uint32 seat) const
+{
+    uint32 const perSide = Arena(env).Seats == SeatPlan::Teams ? Arena(env).TeamSeats : 1;
+    return std::min<uint32>(seat / perSide, TEAM_COUNT - 1);
+}
+
 bool Animus::Curriculum::StageScenario::IsOpponentSeat(Env const& env, uint32 agent) const
 {
     // Self-play: the far side of the match is the opponent. One seat a side in a Mirror, TEAM_SEATS of them in
@@ -1120,7 +1132,7 @@ bool Animus::Curriculum::StageScenario::IsOpponentSeat(Env const& env, uint32 ag
     switch (Arena(env).Seats)
     {
         case SeatPlan::Mirror: return agent == 1;
-        case SeatPlan::Teams:  return agent >= TEAM_SEATS;
+        case SeatPlan::Teams:  return agent >= Arena(env).TeamSeats;
         default:               return false;
     }
 }
@@ -1387,7 +1399,7 @@ Player* Animus::Curriculum::StageScenario::BuildSeat(Env& env, uint32 seatIndex,
     std::vector<uint8> pool;
     if (Arena(env).Seats == SeatPlan::Teams)
     {
-        TeamId const want = seatIndex < TEAM_SEATS ? TEAM_ALLIANCE : TEAM_HORDE;
+        TeamId const want = seatIndex < Arena(env).TeamSeats ? TEAM_ALLIANCE : TEAM_HORDE;
         for (uint8 race : races)
             if (Player::TeamIdForRace(race) == want)
                 pool.push_back(race);
