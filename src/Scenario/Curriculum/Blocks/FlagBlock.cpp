@@ -17,6 +17,8 @@
  */
 
 #include "FlagBlock.h"
+#include "GameObject.h"
+#include "ObjectAccessor.h"
 #include "Player.h"
 #include "SeatView.h"
 #include <algorithm>
@@ -38,10 +40,10 @@ namespace
 
 Animus::Curriculum::BlockSize Animus::Curriculum::FlagBlock::Size(Layout const& /*layout*/) const
 {
-    return { OBS_COUNT, 0 };
+    return { OBS_COUNT, ACTION_COUNT };
 }
 
-void Animus::Curriculum::FlagBlock::Observe(SeatView const& view, float* obs, uint8* /*mask*/) const
+void Animus::Curriculum::FlagBlock::Observe(SeatView const& view, float* obs, uint8* mask) const
 {
     SeatView::FlagMatch const& flags = view.Flags;
     if (!flags.Active)
@@ -69,6 +71,25 @@ void Animus::Curriculum::FlagBlock::Observe(SeatView const& view, float* obs, ui
     if (dropped)
         WritePlace(bot, *dropped, obs + OBS_DROPPED_DISTANCE);
 
+    obs[OBS_CAN_TAKE] = flags.Usable ? 1.0f : 0.0f;
+    if (mask)
+        mask[ACTION_TAKE_FLAG] = flags.Usable ? 1 : 0;
+
     obs[OBS_OWN_SCORE] = std::min(1.0f, float(flags.OwnScore) / SCORE_SCALE);
     obs[OBS_ENEMY_SCORE] = std::min(1.0f, float(flags.EnemyScore) / SCORE_SCALE);
+}
+
+void Animus::Curriculum::FlagBlock::Apply(SeatView& view, uint32 local, SeatActionResult& /*result*/) const
+{
+    if (local != ACTION_TAKE_FLAG || !view.Flags.Usable)
+        return;
+
+    Player* bot = view.Bot;
+    GameObject* flag = bot ? ObjectAccessor::GetGameObject(*bot, view.Flags.Usable) : nullptr;
+    if (!flag)
+        return;
+
+    // What a player's click does: the battleground's own handler decides whether this is a pickup, a return or
+    // nothing at all, which is the point of going through the object rather than reimplementing the rules.
+    flag->Use(bot);
 }
