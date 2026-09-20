@@ -422,6 +422,8 @@ namespace Animus::Curriculum
         void TrackInterrupt(Env& env, uint32 seat, Unit const* opponent, RewardLedger& ledger);
         /// Count time out of the hunter's sight, and pay for the moment contact breaks.
         void TrackHiding(Env& env, uint32 seat, Player* bot, Player const* hunter, RewardLedger& ledger);
+        void TrackStalking(Env& env, uint32 seat, Player* bot, Player const* quarry, bool seen,
+            RewardLedger& ledger);
         [[nodiscard]] Player* Find(Env const& env, uint32 seat) const;
         /// The seats of the side `seat` fights, in that side's own seat order, capped at the slots a seat can
         /// observe. The order has to be stable across a match: target selection indexes it.

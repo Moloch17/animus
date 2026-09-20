@@ -30,6 +30,7 @@
 #include "DuelBlock.h"
 #include "EncoderSupport.h"
 #include "Encounters.h"
+#include "SpellMgr.h"
 #include "Env.h"
 #include "EnvPool.h"
 #include "Log.h"
@@ -83,6 +84,27 @@ namespace
     /// How often the nearest hazard is searched for, and how far. A ground effect does not move, so between searches
     /// the cached one is simply measured again: the search is a grid visit, the measurement is arithmetic.
     constexpr uint32 HAZARD_SEARCH_MS = 1000;
+
+    /// Whether the class itself can make itself stealthed, asked of its trainers' spell list.
+    ///
+    /// Not of the action catalog, which is the union over every race the class may be: that union holds
+    /// Shadowmeld (58984), the night elf racial, and answering from it returns eleven of the eighteen
+    /// class/roles. Shadowmeld is a way to hide -- stage 17 is about exactly that and offers it to everyone --
+    /// but it is not stealth: it breaks on movement, so it cannot be used to close on anything, which is the
+    /// whole of what the stealth stage asks for. The kit is per class, so what it holds is true of every
+    /// member of the class rather than of one race of it.
+    bool CanStealth(Animus::Curriculum::ClassRoleAssets const& assets)
+    {
+        if (!assets.Kit)
+            return false;
+
+        for (Animus::Curriculum::ClassKit::KitSpell const& kitSpell : assets.Kit->Spells())
+            if (SpellInfo const* spell = sSpellMgr->GetSpellInfo(kitSpell.SpellId);
+                spell && spell->HasAura(SPELL_AURA_MOD_STEALTH))
+                return true;
+
+        return false;
+    }
 
     /// How long an accepted resurrection is given to land before the offer may be taken again. A delayed
     /// teleport reschedules the resurrect (Player::ProcessDelayedOperations), so it does not always finish on
@@ -239,6 +261,10 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
 
         ClassRoleAssets const& assets = ClassRoleAssets::For(profile);
         if (assets.Races.empty())
+            continue;
+
+        // A stage about closing on someone unseen is played only by the class/roles that can actually do it.
+        if (_stage.NeedsStealth && !CanStealth(assets))
             continue;
 
         Layout layout = Layout::Build(profile, _stage);
@@ -1174,7 +1200,8 @@ bool Animus::Curriculum::StageScenario::Setup(Env& env)
 {
     if (_layouts.empty())
     {
-        LOG_ERROR("module.animus", "{}: no class/role to play (check the host's class/role list)", Name());
+        LOG_ERROR("module.animus", "{}: no class/role to play (check the host's class/role list{})", Name(),
+            _stage.NeedsStealth ? ", and this stage is played only by class/roles whose kit has stealth" : "");
         return false;
     }
 

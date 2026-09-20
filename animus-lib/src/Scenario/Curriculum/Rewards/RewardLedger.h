@@ -71,6 +71,7 @@ namespace Animus::Curriculum
         OrderMatch,
         PlaceMatch,
         BrokeContact,
+        Stalk,
         Repeat,
         Hazard,
         HealingMana,

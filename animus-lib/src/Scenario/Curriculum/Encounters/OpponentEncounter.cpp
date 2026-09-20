@@ -51,7 +51,8 @@ std::vector<Animus::Curriculum::RewardTerm> Animus::Curriculum::OpponentEncounte
 {
     return { RewardTerm::StepCost, RewardTerm::DamageDealt, RewardTerm::DamageTaken, RewardTerm::Casting,
         RewardTerm::Approach, RewardTerm::StealthOpener, RewardTerm::StealthUtility, RewardTerm::Kill,
-        RewardTerm::HealthKept, RewardTerm::Death, RewardTerm::Interrupt, RewardTerm::BrokeContact };
+        RewardTerm::HealthKept, RewardTerm::Death, RewardTerm::Interrupt, RewardTerm::BrokeContact,
+        RewardTerm::Stalk };
 }
 
 /// An interrupt counts when the opponent it was cast at had its cast cut short since, and is paid by what it stopped
@@ -142,11 +143,35 @@ void Animus::Curriculum::OpponentEncounter::AddEpisodeInfo(EpisodeInfoTable& tab
         return breaks > 1 ? float(breaks - 1) : 0.0f;
     });
     // The stealth-aura version of the same thing: reported because it is what a rogue or a druid (or any night
-    // elf, through Shadowmeld) actually presses, never gated, because fourteen class/roles have no such button
-    // and hide with terrain, distance and their own escapes instead.
+    // elf, through Shadowmeld) actually presses, never gated on the hide stage, because fourteen class/roles
+    // have no such button and hide with terrain, distance and their own escapes instead.
     table.Add("re_stealths", [this](Env const& env, uint32 seat)
     {
         return float(_scenario.Data(env).Seats[seat].Combat.ReStealths);
+    });
+    // Stalking, for the stealth stage: stealthed, unseen and inside Stealth.StalkYards of a living opponent.
+    table.Add("stalk_seconds", [this](Env const& env, uint32 seat)
+    {
+        return float(_scenario.Data(env).Seats[seat].Combat.StalkMs) / 1000.0f;
+    });
+    table.Add("stalk_longest_seconds", [this](Env const& env, uint32 seat)
+    {
+        return float(_scenario.Data(env).Seats[seat].Combat.LongestStalkMs) / 1000.0f;
+    });
+    table.Add("stalk_approaches", [this](Env const& env, uint32 seat)
+    {
+        return float(_scenario.Data(env).Seats[seat].Combat.StalkApproaches);
+    });
+    // The nearest it got while stealthed and unseen. Reported as a distance, so lower is better and it cannot
+    // be a gate floor; `stalked_into_range` is the same fact the way a gate can read it.
+    table.Add("closest_stealthed", [this](Env const& env, uint32 seat)
+    {
+        return _scenario.Data(env).Seats[seat].Combat.ClosestStealthedYards;
+    });
+    table.Add("stalked_into_range", [this](Env const& env, uint32 seat)
+    {
+        CombatTally const& tally = _scenario.Data(env).Seats[seat].Combat;
+        return _scenario.Uses(env, *this) && tally.StalkApproaches > 0 ? 1.0f : 0.0f;
     });
     // Got away: out of sight, unbroken, for long enough that the hunter lost it rather than blinked.
     table.Add("escaped", [this](Env const& env, uint32 seat)
@@ -397,11 +422,12 @@ void Animus::Curriculum::OpponentEncounter::TrackHiding(Env& env, uint32 seat, P
         tally.LongestUnseenMs = std::max(tally.LongestUnseenMs, tally.UnseenStreakMs);
     }
 
-    // Back into stealth after losing it in a fight, which is the thing the stealth drill is about and is not
-    // the same as never having left it.
+    // Back into stealth after losing it in a fight, which is not the same as never having left it.
     if (stealthed && !tally.WasStealthed && tally.Engaged)
         ++tally.ReStealths;
     tally.WasStealthed = stealthed;
+
+    TrackStalking(env, seat, bot, hunter, seen, ledger);
 
     if (seen || !tally.WasSeen)
     {
@@ -424,6 +450,52 @@ void Animus::Curriculum::OpponentEncounter::TrackHiding(Env& env, uint32 seat, P
 
     tally.BreakPaidMs = std::max<uint32>(1, env.EpisodeElapsedMs);
     ledger.Add(RewardTerm::BrokeContact, tuning.BrokeContact);
+}
+
+/// Closing on someone while stealthed and unseen, and staying there: the stealth stage's lesson, and the one
+/// reward in the curriculum paid per decision rather than on a transition.
+///
+/// That is deliberate and it is bounded. What made the order nudge farmable was that it paid for a state that
+/// was free to hold -- a focus that never changed still paid every decision. This pays only inside
+/// StalkYards of a living enemy that is actively looking, which is the opposite of free: detection is a
+/// distance check the seat is losing the whole time it stands there. StalkMax caps the episode's total
+/// regardless, so the opener it sets up stays the larger prize and no amount of loitering changes the sum.
+void Animus::Curriculum::OpponentEncounter::TrackStalking(Env& env, uint32 seat, Player* bot,
+    Player const* quarry, bool seen, RewardLedger& ledger)
+{
+    CombatTally& tally = _scenario.Data(env).Seats[seat].Combat;
+    CurriculumTuning::StealthTuning const& tuning = _scenario.Tuning().Stealth;
+
+    bool const stalking = !seen && bot->HasStealthAura() && quarry->IsAlive()
+        && bot->GetExactDist(quarry) <= tuning.StalkYards;
+
+    if (!stalking)
+    {
+        tally.StalkStreakMs = 0;
+        tally.WasStalking = false;
+        return;
+    }
+
+    // Came from outside the band to inside it, still unseen: one approach.
+    if (!tally.WasStalking)
+        ++tally.StalkApproaches;
+    tally.WasStalking = true;
+
+    uint32 const step = _scenario.DecisionMs();
+    tally.StalkMs += step;
+    tally.StalkStreakMs += step;
+    tally.LongestStalkMs = std::max(tally.LongestStalkMs, tally.StalkStreakMs);
+
+    float const distance = bot->GetExactDist(quarry);
+    if (!tally.ClosestStealthedYards || distance < tally.ClosestStealthedYards)
+        tally.ClosestStealthedYards = distance;
+
+    if (tally.StalkPaid >= tuning.StalkMax)
+        return;
+
+    float const pay = std::min(tuning.Stalk, tuning.StalkMax - tally.StalkPaid);
+    tally.StalkPaid += pay;
+    ledger.Add(RewardTerm::Stalk, pay);
 }
 
 void Animus::Curriculum::OpponentEncounter::Reward(Env& env, uint32 seat, Player* bot, RewardLedger& ledger)
