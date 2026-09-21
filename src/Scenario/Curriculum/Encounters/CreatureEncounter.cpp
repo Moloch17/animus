@@ -71,11 +71,12 @@ bool Animus::Curriculum::CreatureEncounter::Build(Env& env, Map* map, uint8 /*le
     SeatState const& seat = data.Seats[0];
 
     // The tier (DifficultyLadder): the one the stage viewer chose, spread over the seeds in an evaluation, the
-    // class/role's own in training (now and then a lower one).
+    // class and role's own in training (now and then a lower one).
     EnvFight& fight = _envs[env.Index];
     fight = EnvFight();
     fight.Layout = seat.L ? seat.L->Index : 0;
-    DifficultyLadder::Pick const pick = _ladder.Draw(env, fight.Layout, difficulty.MaxTier);
+    fight.PlayRole = seat.PlayRole();
+    DifficultyLadder::Pick const pick = _ladder.Draw(env, fight.Layout, fight.PlayRole, difficulty.MaxTier);
     fight.Tier = uint8(pick.Tier);
     fight.Counts = pick.Counts;
 
@@ -198,7 +199,7 @@ void Animus::Curriculum::CreatureEncounter::Reward(Env& env, uint32 seat, Player
     {
         fight.Recorded = true;
         if (fight.Counts)
-            _ladder.Record(fight.Layout, fight.Tier, tally.Killed && !tally.Died,
+            _ladder.Record(fight.Layout, fight.PlayRole, fight.Tier, tally.Killed && !tally.Died,
                 _scenario.Tuning().Difficulty.MaxTier);
     }
 

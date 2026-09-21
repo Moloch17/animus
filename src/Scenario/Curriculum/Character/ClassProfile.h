@@ -16,8 +16,8 @@
  * with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
-#ifndef ANIMUS_LIB_CURRICULUM_CLASS_ROLE_PROFILE_H
-#define ANIMUS_LIB_CURRICULUM_CLASS_ROLE_PROFILE_H
+#ifndef ANIMUS_LIB_CURRICULUM_CLASS_PROFILE_H
+#define ANIMUS_LIB_CURRICULUM_CLASS_PROFILE_H
 
 #include "Define.h"
 #include "SharedDefines.h"
@@ -92,23 +92,42 @@ namespace Animus::Curriculum
     {
         std::string Name;               // "arms"
         uint8 TabPage = 0;              // talent tab: 0, 1 or 2 in TalentTab.dbc order
+        /// The role this spec plays. It belongs to the spec and not to the class: protection tanks and retribution
+        /// deals damage out of the same paladin, and feral_bear and feral_cat are a tank and a damage dealer sharing
+        /// one talent tab. A seat's role is the role of the spec it drew.
+        Role PlayRole = Role::Dps;
         StatProfile Stats = StatProfile::StrengthMelee;
         RangeBand Range = RangeBand::Melee;
         std::vector<WeaponLayout> Weapons;
         bool Wand = false;              // also fill the ranged slot with a wand
     };
 
-    /// One trained model: a class in one role, over every spec that plays the role.
-    struct ClassRoleProfile
+    /// One trained model: a class, over every spec it can be, in every role those specs play.
+    ///
+    /// One model per class rather than per class and role, because the two were never different networks in
+    /// anything but name: a class's kit, talents and action catalog are shared by all of its roles (ClassAssets),
+    /// every Block::Size keys on the catalog or the class, and the built layouts of a class came out with
+    /// byte-identical observation and action dimensions whichever role they were for. What splitting them bought
+    /// was a smaller policy that had to relearn the class from scratch for each role; what joining them buys is a
+    /// paladin that knows it is a paladin whether it is holding the line or healing it.
+    struct ClassProfile
     {
-        std::string Name;               // "<class>_<role>": the layout's name; its models add a stage suffix
+        std::string Name;               // "<class>": the layout's name; its models add a stage suffix
         uint8 Class = 0;
-        Role PlayRole = Role::Dps;
         std::vector<SpecProfile> Specs;
+
+        /// The indices of Specs that play `role`, empty if the class has none.
+        [[nodiscard]] std::vector<uint8> SpecsOf(Role role) const;
+        [[nodiscard]] bool Plays(Role role) const;
     };
 
-    /// Every class/role model, in a stable order.
-    std::vector<ClassRoleProfile> const& ClassRoleProfiles();
+    /// Every class model, in a stable order.
+    std::vector<ClassProfile> const& ClassProfiles();
+
+    /// A random spec of `profile` that plays `role`, as an index into Specs. A class asked for a role it has no
+    /// spec for falls back to any of them, which is what a caller wants when the stage's composition cannot be
+    /// filled exactly (a party needing a tank from a run with no tanking class).
+    [[nodiscard]] uint8 DrawSpec(ClassProfile const& profile, Role role);
 
     [[nodiscard]] char const* RoleName(Role role);
 

@@ -20,7 +20,7 @@
 #define ANIMUS_LIB_CURRICULUM_DIRECTOR_LAYOUT_H
 
 #include "Block.h"
-#include "ClassRoleProfile.h"
+#include "ClassProfile.h"
 #include <array>
 #include <string>
 #include <vector>

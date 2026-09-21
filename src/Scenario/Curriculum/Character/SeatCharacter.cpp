@@ -17,7 +17,7 @@
  */
 
 #include "SeatCharacter.h"
-#include "ClassRoleAssets.h"
+#include "ClassAssets.h"
 #include "Layout.h"
 #include "Player.h"
 #include "Random.h"
@@ -40,7 +40,7 @@ char const* Animus::Curriculum::SeatCharacter::TalentPlanName(TalentPlan plan)
 Animus::Curriculum::SeatCharacter::Built Animus::Curriculum::SeatCharacter::Configure(Player* bot,
     Layout const& layout, uint8 specIndex, bool pvp, TalentPlan plan, uint32 noisePoints)
 {
-    ClassRoleAssets const& assets = *layout.Assets;
+    ClassAssets const& assets = *layout.Assets;
     SpecProfile const& spec = layout.Profile->Specs[specIndex];
 
     // Every talent learned, every spell in the kit and every item equipped below recomputes the character's stats
@@ -140,7 +140,8 @@ bool Animus::Curriculum::SeatCharacter::GivePet(Player* bot, std::vector<uint32>
     }
 }
 
-std::vector<uint32> Animus::Curriculum::SeatCharacter::PrepareFighter(Player* bot, Layout const& layout)
+std::vector<uint32> Animus::Curriculum::SeatCharacter::PrepareFighter(Player* bot, Layout const& layout,
+    Role role)
 {
     using namespace SpellChecks;
 
@@ -150,7 +151,7 @@ std::vector<uint32> Animus::Curriculum::SeatCharacter::PrepareFighter(Player* bo
         ? StablePool::Instance().Random(STABLE_SLOTS) : std::vector<uint32>();
 
     if (layout.Profile->Class == CLASS_WARRIOR)
-        bot->CastSpell(bot, layout.PlayRole() == Role::Tank && bot->HasSpell(SPELL_DEFENSIVE_STANCE)
+        bot->CastSpell(bot, role == Role::Tank && bot->HasSpell(SPELL_DEFENSIVE_STANCE)
             ? SPELL_DEFENSIVE_STANCE : SPELL_BATTLE_STANCE, true);
 
     return stable;

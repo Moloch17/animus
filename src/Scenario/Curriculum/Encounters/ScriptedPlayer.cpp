@@ -384,10 +384,12 @@ namespace
     }
 }
 
-void Animus::Curriculum::ScriptedPlayer::Configure(Player* player, ClassRoleAssets const& assets, State& state,
-    bool pvp)
+void Animus::Curriculum::ScriptedPlayer::Configure(Player* player, ClassAssets const& assets, Role role,
+    State& state, bool pvp)
 {
-    SpecProfile const& spec = assets.Profile->Specs[urand(0, uint32(assets.Profile->Specs.size()) - 1)];
+    // The role is the caller's, not the profile's: one class profile now holds every spec the class can be, so
+    // which of them this player draws is what decides whether it tanks, heals or deals damage.
+    SpecProfile const& spec = assets.Profile->Specs[DrawSpec(*assets.Profile, role)];
 
     GearBuilder::LearnProficiencies(player);
     assets.Talents->Apply(player, assets.Talents->Standard(spec.Name, spec.TabPage, player->GetFreeTalentPoints()));
@@ -402,7 +404,7 @@ void Animus::Curriculum::ScriptedPlayer::Configure(Player* player, ClassRoleAsse
     player->SetPower(POWER_ENERGY, player->GetMaxPower(POWER_ENERGY));
 
     state = State();
-    state.PlayRole = assets.Profile->PlayRole;
+    state.PlayRole = spec.PlayRole;
     state.Ranged = spec.Range == RangeBand::Ranged;
 
     if (player->getClass() == CLASS_WARRIOR)

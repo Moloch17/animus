@@ -17,7 +17,7 @@
  */
 
 #include "HostilesBlock.h"
-#include "ClassRoleProfile.h"
+#include "ClassProfile.h"
 #include "Player.h"
 #include "SeatView.h"
 #include "Spell.h"

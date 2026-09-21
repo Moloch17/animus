@@ -47,8 +47,9 @@ namespace Animus
         /// Episode info means are kept every this many finished episodes (EnvPool::LastEpisodeMeans).
         uint32 ReportEpisodes = 256;
 
-        /// The class/roles the seats play (warrior_tank, ...); empty = every class/role.
-        std::vector<std::string> ClassRoles;
+        /// The classes the seats play (warrior, druid, ...); empty = every class. A class brings every role it
+        /// can play with it -- there is one model per class, not per class and role.
+        std::vector<std::string> Classes;
 
         /// The instanceable map and position every env's seats start at.
         uint32 SpawnMapId = 560;

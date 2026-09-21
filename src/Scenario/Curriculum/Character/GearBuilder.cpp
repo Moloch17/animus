@@ -450,7 +450,7 @@ SpellInfo const* Animus::Curriculum::GearStats::ItemUseSpell(ItemTemplate const*
     return nullptr;
 }
 
-Animus::Curriculum::GearBuilder::GearBuilder(ClassRoleProfile const& profile, ClassKit const& kit)
+Animus::Curriculum::GearBuilder::GearBuilder(ClassProfile const& profile, ClassKit const& kit)
     : _kit(kit), _class(profile.Class)
 {
     for (SpecProfile const& spec : profile.Specs)

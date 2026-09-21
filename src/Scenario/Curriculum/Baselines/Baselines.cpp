@@ -57,6 +57,10 @@ namespace
             return _obs[_layout.Slice(block).ObsFirst + feature];
         }
 
+        /// A feature by its absolute index in the row, for the parts of a block that sit past its named features
+        /// (the core block's per-talent and per-tree tail, whose offsets the block computes).
+        [[nodiscard]] float ObsAt(uint32 feature) const { return _obs[feature]; }
+
         /// The row's action for `action` of `block`, if the layout has it and it is allowed.
         [[nodiscard]] std::optional<int32> Allowed(BlockId block, uint32 action) const
         {
@@ -138,15 +142,59 @@ namespace
         return std::nullopt;
     }
 
-    /// The seat's spec, read from the core block's spec one-hot; null if none is set.
+    /// The role the seat is playing, read from the core block's role one-hot. A baseline sees only what the model
+    /// sees, so it reads the row rather than asking the layout -- which no longer knows, one model now covering
+    /// every role its class can play.
+    Role RoleOf(Row const& row)
+    {
+        for (uint32 role = 0; role < ROLE_COUNT; ++role)
+            if (row.Obs(BlockId::Core, CoreBlock::OBS_ROLE_FIRST + role) > 0.0f)
+                return Role(role);
+
+        return Role::Dps;
+    }
+
+    /// The seat's spec, worked out from what it actually spent its talents on: the tree it put the most points
+    /// into (a spec's TabPage is its tree), and where two specs share a tree -- a druid's feral cat and bear --
+    /// the role it is playing tells them apart. Null if it has spent nothing yet.
+    ///
+    /// There is no spec in the observation to read instead, deliberately (CoreBlock::OBS_ROLE_FIRST says why), and
+    /// a baseline sees only what the model sees. So it does here what the model has to do: read the build.
     SpecProfile const* SpecOf(Row const& row, Layout const& layout)
     {
-        std::vector<SpecProfile> const& specs = layout.Profile->Specs;
-        for (uint32 spec = 0; spec < specs.size() && spec < CoreBlock::MAX_SPECS; ++spec)
-            if (row.Obs(BlockId::Core, CoreBlock::OBS_SPEC_FIRST + spec) > 0.0f)
-                return &specs[spec];
+        if (!row.Has(BlockId::Core))
+            return nullptr;
 
-        return nullptr;
+        uint32 best = TalentBuilder::TREE_COUNT;
+        float most = 0.0f;
+        for (uint32 tree = 0; tree < TalentBuilder::TREE_COUNT; ++tree)
+        {
+            float const points = row.ObsAt(CoreBlock::TreeObsFirst(layout) + tree);
+            if (points > most)
+            {
+                most = points;
+                best = tree;
+            }
+        }
+
+        // Below level 10 nothing has been spent and every tree reads 0. The role is always set, so fall back to a
+        // spec that plays it: a level 5 mage still fights from range, and the spec one-hot this replaced did not
+        // wait for talents either.
+        Role const role = RoleOf(row);
+        SpecProfile const* fallback = nullptr;
+        for (SpecProfile const& spec : layout.Profile->Specs)
+        {
+            bool const tree = best != TalentBuilder::TREE_COUNT && spec.TabPage == best;
+            if (tree && spec.PlayRole == role)
+                return &spec;
+            if (!fallback && spec.PlayRole == role)
+                fallback = &spec;
+        }
+
+        if (fallback)
+            return fallback;
+
+        return layout.Profile->Specs.empty() ? nullptr : &layout.Profile->Specs.front();
     }
 
     /// Whether the seat's spec fights from range (hunters, casters, healers).
@@ -387,12 +435,12 @@ namespace
                 return cast;
 
             // Heals cannot be cast in most forms.
-            if (layout.PlayRole() == Role::Heal)
+            if (RoleOf(row) == Role::Heal)
                 if (std::optional<int32> cancel = row.Allowed(BlockId::Duel, DuelBlock::ACTION_CANCEL_FORM))
                     return cancel;
         }
 
-        if (layout.PlayRole() != Role::Heal)
+        if (RoleOf(row) != Role::Heal)
             return std::nullopt;
 
         for (uint32 slot = FRIEND_OWNER; slot < FRIEND_SLOTS; ++slot)

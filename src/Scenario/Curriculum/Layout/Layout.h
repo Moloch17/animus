@@ -21,8 +21,8 @@
 
 #include "ActionCatalog.h"
 #include "Block.h"
-#include "ClassRoleAssets.h"
-#include "ClassRoleProfile.h"
+#include "ClassAssets.h"
+#include "ClassProfile.h"
 #include <string>
 #include <vector>
 
@@ -39,8 +39,8 @@ namespace Animus::Curriculum
     {
         uint16 Index = 0;                           // position among the layouts of a run (the learner's id)
         StageDefinition const* Stage = nullptr;
-        ClassRoleProfile const* Profile = nullptr;
-        ClassRoleAssets const* Assets = nullptr;
+        ClassProfile const* Profile = nullptr;
+        ClassAssets const* Assets = nullptr;
         uint32 ObsDim = 0;
         uint32 NumActions = 0;
         /// The side's commander rather than a character: no class, no role, no catalog, and its own fixed
@@ -59,7 +59,7 @@ namespace Animus::Curriculum
         std::vector<uint8> ModeGroups;
 
         /// The layout of `profile` at `stage` (Index 0). Builds the profile's assets on first use.
-        [[nodiscard]] static Layout Build(ClassRoleProfile const& profile, StageDefinition const& stage);
+        [[nodiscard]] static Layout Build(ClassProfile const& profile, StageDefinition const& stage);
 
         /// The director's layout at `stage` (Index 0). Carries no blocks: what a director sees and says is one
         /// fixed thing in every scenario, which is the whole point of having one network for all of them.
@@ -68,7 +68,7 @@ namespace Animus::Curriculum
         [[nodiscard]] bool Has(BlockId block) const { return (_blockMask >> uint32(block)) & 1; }
         [[nodiscard]] BlockSlice const& Slice(BlockId block) const { return Slices[std::size_t(block)]; }
         [[nodiscard]] ActionCatalog const& Catalog() const { return *Assets->Catalog; }
-        [[nodiscard]] Role PlayRole() const { return Profile ? Profile->PlayRole : Role::Dps; }
+        [[nodiscard]] uint8 PlayerClass() const { return Profile ? Profile->Class : 0; }
 
         /// The block whose actions contain `action`, if any.
         [[nodiscard]] std::optional<BlockId> BlockOfAction(uint32 action) const;

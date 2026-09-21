@@ -19,7 +19,7 @@
 #ifndef ANIMUS_LIB_CURRICULUM_GEAR_BUILDER_H
 #define ANIMUS_LIB_CURRICULUM_GEAR_BUILDER_H
 
-#include "ClassRoleProfile.h"
+#include "ClassProfile.h"
 #include <array>
 #include <map>
 #include <unordered_map>
@@ -50,7 +50,7 @@ namespace Animus::Curriculum
     class GearBuilder
     {
     public:
-        GearBuilder(ClassRoleProfile const& profile, ClassKit const& kit);
+        GearBuilder(ClassProfile const& profile, ClassKit const& kit);
 
         /// Grants every weapon and armor skill the bot's race and class can have, at the level's value.
         static void LearnProficiencies(Player* bot);

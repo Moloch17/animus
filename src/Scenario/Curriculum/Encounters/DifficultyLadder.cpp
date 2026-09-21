@@ -25,28 +25,29 @@
 #include <algorithm>
 
 Animus::Curriculum::DifficultyLadder::DifficultyLadder(StageScenario const& scenario, std::string what)
-    : _scenario(scenario), _what(std::move(what)), _tiers(scenario.Layouts().size())
+    : _scenario(scenario), _what(std::move(what)), _tiers(scenario.Layouts().size() * ROLE_COUNT)
 {
 }
 
 Animus::Curriculum::DifficultyLadder::Pick Animus::Curriculum::DifficultyLadder::Draw(Env const& env, uint16 layout,
-    uint32 maxTier) const
+    Role role, uint32 maxTier) const
 {
     Pick pick;
     if (_scenario.ForcedTier() != NO_TIER)
         pick.Tier = std::min(_scenario.ForcedTier(), maxTier);
     else if (env.EpisodeSeedIndex != NO_EPISODE_SEED)
     {
-        // Seed i plays class/role i mod layouts (StageScenario::DrawLayout), and rung (i / layouts) mod rungs, so every
-        // class/role meets every rung: i mod rungs ties each class/role to one rung when the two counts share a
-        // factor (6 pack rungs and 18 class/roles).
-        uint32 const layouts = std::max<uint32>(1, uint32(_scenario.Layouts().size()));
-        pick.Tier = (env.EpisodeSeedIndex / layouts) % (maxTier + 1);
+        // Seed i plays (class, role) pair i mod pairs (StageScenario::DrawCasting), and rung (i / pairs) mod
+        // rungs, so every pair meets every rung. It has to be the pair count and not the layout count: dividing by
+        // ten classes while the seeds cycle through eighteen pairs leaves the two out of step, and a pair would
+        // wait far longer than it should to see a rung -- i mod rungs would otherwise tie each pair to one.
+        uint32 const pairs = std::max<uint32>(1, _scenario.CastingCount());
+        pick.Tier = (env.EpisodeSeedIndex / pairs) % (maxTier + 1);
     }
     else
     {
         CurriculumTuning::DifficultyTuning const& difficulty = _scenario.Tuning().Difficulty;
-        uint32 const current = std::min(Tier(layout), maxTier);
+        uint32 const current = std::min(Tier(layout, role), maxTier);
         pick.Tier = current;
         pick.Counts = true;
         if (current && roll_chance_i(difficulty.ReviewChance))
@@ -66,14 +67,15 @@ Animus::Curriculum::DifficultyLadder::Pick Animus::Curriculum::DifficultyLadder:
     return pick;
 }
 
-void Animus::Curriculum::DifficultyLadder::Record(uint16 layout, uint32 fightTier, bool won, uint32 maxTier)
+void Animus::Curriculum::DifficultyLadder::Record(uint16 layout, Role role, uint32 fightTier, bool won,
+    uint32 maxTier)
 {
     CurriculumTuning::DifficultyTuning const& difficulty = _scenario.Tuning().Difficulty;
     std::lock_guard<std::mutex> guard(_lock);
-    if (layout >= _tiers.size())
+    if (Row(layout, role) >= _tiers.size())
         return;
 
-    LayoutTier& tier = _tiers[layout];
+    LayoutTier& tier = _tiers[Row(layout, role)];
     if (tier.Tier != fightTier)
         return;         // the rung moved while this fight was on
 
@@ -92,12 +94,12 @@ void Animus::Curriculum::DifficultyLadder::Record(uint16 layout, uint32 fightTie
     tier.Fights = 0;
     tier.Wins = 0;
     if (tier.Tier != was)
-        LOG_INFO("module.animus", "{}: {} moves from {} {} to {} ({:.0f}% won)", _scenario.Name(),
-            _scenario.Layouts()[layout].Profile->Name, _what, was, tier.Tier, rate * 100.0f);
+        LOG_INFO("module.animus", "{}: {} {} moves from {} {} to {} ({:.0f}% won)", _scenario.Name(),
+            _scenario.Layouts()[layout].Profile->Name, RoleName(role), _what, was, tier.Tier, rate * 100.0f);
 }
 
-uint32 Animus::Curriculum::DifficultyLadder::Tier(uint16 layout) const
+uint32 Animus::Curriculum::DifficultyLadder::Tier(uint16 layout, Role role) const
 {
     std::lock_guard<std::mutex> guard(_lock);
-    return layout < _tiers.size() ? _tiers[layout].Tier : 0;
+    return Row(layout, role) < _tiers.size() ? _tiers[Row(layout, role)].Tier : 0;
 }

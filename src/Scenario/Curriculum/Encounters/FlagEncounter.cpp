@@ -625,7 +625,7 @@ void Animus::Curriculum::FlagEncounter::View(Env const& env, uint32 seat, SeatVi
         if (mate->IsInCombat())
             ++fighting;
 
-        Role const role = _scenario.Data(env).Seats[other].L->PlayRole();
+        Role const role = _scenario.Data(env).Seats[other].PlayRole();
         if (role == Role::Tank)
             ++tanks;
         else if (role == Role::Heal)
