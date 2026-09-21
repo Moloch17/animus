@@ -498,6 +498,11 @@ namespace Animus::Curriculum
             uint32 HoldInterruptMs = 10000;     // interrupt the target as soon as it casts
             uint32 KeepRangeMs = 10000;         // a ranged spec: back to its range whenever the target closes in
             uint32 StayOnTargetMs = 10000;      // a melee spec: back into melee reach whenever the target leaves it
+            /// How long a chosen bearing keeps being walked before it lapses (MoveBlock). Shorter than the others
+            /// on purpose: the positioning options are a standing instruction about a target that stays true while
+            /// the fight does, where a direction chosen against the ground goes stale as soon as the seat has
+            /// covered it. The policy re-presses to keep going, which is what a held key is.
+            uint32 MoveBearingMs = 3000;
         } Options;
 
         /// Ground effects: damage from something standing on the ground rather than aimed at the seat (a fire pool,
@@ -784,6 +789,7 @@ namespace Animus::Curriculum
             f("Hazards.Max", tuning.Hazards.Max);
             f("Options.KeepRangeMs", tuning.Options.KeepRangeMs);
             f("Options.StayOnTargetMs", tuning.Options.StayOnTargetMs);
+            f("Options.MoveBearingMs", tuning.Options.MoveBearingMs);
             f("Owner.LevelSpread", tuning.Owner.LevelSpread);
             f("Owner.TankChance", tuning.Owner.TankChance);
             f("Owner.HealerChance", tuning.Owner.HealerChance);

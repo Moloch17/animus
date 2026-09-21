@@ -89,7 +89,7 @@ namespace Animus::Curriculum
             /// already resting, holding an interrupt or keeping range -- and the seat runs two at once (a
             /// positioning option and a standby), so one slot with one clock could not say which.
             OBS_OPTION_FIRST            = 67,
-            OBS_GLOBAL_COUNT            = 71
+            OBS_GLOBAL_COUNT            = 72
 
             // Then, per catalog action: ACTION_FEATURES features (known, cooldown, aura on target, aura on self,
             // stacks, time since the seat pressed it / 10 s). Then per talent of the class: rank / max rank. Then

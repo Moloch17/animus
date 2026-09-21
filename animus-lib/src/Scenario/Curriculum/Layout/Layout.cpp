@@ -32,7 +32,7 @@
 namespace
 {
     /// Manifest format: 3 lists blocks generically (format 2 had one fixed field per stage block).
-    constexpr uint32 MANIFEST_FORMAT = 3;
+    constexpr uint32 MANIFEST_FORMAT = 4;
 
     /// The catalog's long buffs, grouped by what a unit can have at once: chains joined when any of their ranks share
     /// a spell group (spell_group, whose stack rules keep one of them per target) or an exclusive kind (a seal, an
@@ -196,6 +196,7 @@ std::string_view Animus::Curriculum::BlockName(BlockId id)
     switch (id)
     {
         case BlockId::Core:      return "core";
+        case BlockId::Move:      return "move";
         case BlockId::Duel:      return "duel";
         case BlockId::Pack:      return "pack";
         case BlockId::Gauntlet:  return "gauntlet";

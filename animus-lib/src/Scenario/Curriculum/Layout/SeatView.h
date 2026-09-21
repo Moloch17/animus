@@ -53,6 +53,7 @@ namespace Animus::Curriculum
         HoldInterrupt,      // interrupt the target as soon as it casts
         KeepRange,          // a ranged spec: back to its range whenever the target closes in
         StayOnTarget,       // a melee spec: back into melee reach whenever the target leaves it
+        MoveBearing,        // walking a compass point of its own choosing (MoveBlock), until it chooses another
         Count
     };
 
@@ -62,7 +63,8 @@ namespace Animus::Curriculum
     /// while it stood in melee reach 96% of the time).
     [[nodiscard]] constexpr bool IsPositioning(SeatOptionKind kind)
     {
-        return kind == SeatOptionKind::KeepRange || kind == SeatOptionKind::StayOnTarget;
+        return kind == SeatOptionKind::KeepRange || kind == SeatOptionKind::StayOnTarget
+            || kind == SeatOptionKind::MoveBearing;
     }
 
     /// Holding an interrupt is a standby, not something the seat does: it waits for the target to cast while the seat
@@ -162,6 +164,11 @@ namespace Animus::Curriculum
         uint8 Race = 0;
         uint8 Spec = 0;
         Role PlayRole = Role::Dps;                  // the drawn spec's role (SeatState::PlayRole)
+        /// The compass point the seat is walking (MoveBlock::Bearing), or BEARING_COUNT for none, and how it is
+        /// holding its head while it does (MoveBlock::ACTION_FACE_*). Feet and eyes are chosen apart, which is what
+        /// lets a seat strafe or back away without turning round.
+        uint8 HeldBearing = 0xFF;
+        uint8 FacingMode = 0xFF;
         TalentBuilder::Build const* Build = nullptr;
         float LastStepDamage = 0.0f;                // damage done / the level's damage scale
         float LastStepPowerDelta = 0.0f;            // primary power change, as a fraction of max

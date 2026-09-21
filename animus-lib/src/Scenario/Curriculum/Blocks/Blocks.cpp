@@ -24,6 +24,7 @@
 #include "ContextBlock.h"
 #include "CoreBlock.h"
 #include "DuelBlock.h"
+#include "MoveBlock.h"
 #include "FlagBlock.h"
 #include "OrderBlock.h"
 #include "GauntletBlock.h"
@@ -38,6 +39,7 @@
 Animus::Curriculum::Block const& Animus::Curriculum::GetBlock(BlockId id)
 {
     static CoreBlock const core;
+    static MoveBlock const move;
     static DuelBlock const duel;
     static PackBlock const pack;
     static GauntletBlock const gauntlet;
@@ -55,8 +57,8 @@ Animus::Curriculum::Block const& Animus::Curriculum::GetBlock(BlockId id)
     // In BlockId order.
     static std::array<Block const*, BLOCK_COUNT> const blocks =
     {
-        &core, &duel, &pack, &gauntlet, &companion, &party, &pvp, &context, &hostiles, &pet, &travel, &flag,
-        &support, &order
+        &core, &move, &duel, &pack, &gauntlet, &companion, &party, &pvp, &context, &hostiles, &pet, &travel,
+        &flag, &support, &order
     };
 
     return *blocks[std::size_t(id)];
