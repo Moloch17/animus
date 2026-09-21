@@ -388,7 +388,7 @@ bool Animus::Curriculum::PullsEncounter::SpawnPull(Env& env, Map* map)
     {
         bool const raid = arena.Seats == SeatPlan::Raid;
         uint16 const layout = data.Seats[0].L ? data.Seats[0].L->Index : 0;
-        DifficultyLadder::Pick const pick = _ladder.Draw(env, layout, MaxRung());
+        DifficultyLadder::Pick const pick = _ladder.Draw(env, layout, MaxRung(env));
         PackRung const& rung = raid ? RAID_RUNGS[pick.Tier] : PACK_RUNGS[pick.Tier];
         pulls.Rung = pick.Tier;
         pulls.RungLayout = layout;
@@ -1058,7 +1058,7 @@ void Animus::Curriculum::PullsEncounter::Reward(Env& env, uint32 seatIndex, Play
     if (seatIndex == 0 && pulls.RungCounts && !pulls.RungRecorded && (tally.Killed || tally.Died || tally.TimedOut))
     {
         pulls.RungRecorded = true;
-        _ladder.Record(pulls.RungLayout, pulls.Rung, tally.Killed && !tally.Died, MaxRung());
+        _ladder.Record(pulls.RungLayout, pulls.Rung, tally.Killed && !tally.Died, MaxRung(env));
     }
 }
 
@@ -1270,9 +1270,14 @@ void Animus::Curriculum::PullsEncounter::ControlPreventedTerm(Env& env, SeatStat
     }
 }
 
-uint32 Animus::Curriculum::PullsEncounter::MaxRung() const
+uint32 Animus::Curriculum::PullsEncounter::MaxRung(Env const& env) const
 {
-    return std::min<uint32>(_scenario.Tuning().Pulls.MaxTier, uint32(PACK_RUNGS.size()) - 1);
+    uint32 const top = std::min<uint32>(_scenario.Tuning().Pulls.MaxTier, uint32(PACK_RUNGS.size()) - 1);
+    // A drill can pin its arena's ladder (ArenaDefinition::MaxRung) so the only thing that varies is the thing
+    // being drilled. A pin of 0 holds every class/role on the bottom rung: Draw's review and stretch branches
+    // have nowhere to go, and Record cannot promote past the cap it is given.
+    int32 const pinned = _scenario.ArenaMaxRung(env);
+    return pinned < 0 ? top : std::min<uint32>(uint32(pinned), top);
 }
 
 void Animus::Curriculum::PullsEncounter::AfterRewards(Env& env)

@@ -105,6 +105,16 @@ namespace Animus::Curriculum
         /// whatever rung the ladder is on. The pack ladder only reaches hazards at rung 3, so a class/role that
         /// stalls below it never meets one; this makes stepping out of a hazard learnable on its own.
         bool Hazards = false;
+        /// Pin the pack ladder instead of letting it climb: -1 leaves it to Pulls.MaxTier, 0 and up hold every
+        /// class/role at that rung for training and evaluation alike (DifficultyLadder::Draw takes it as the cap,
+        /// and a cap of 0 leaves review and stretch draws nowhere to go).
+        ///
+        /// A drill wants one variable. With the ladder climbing, the thing being drilled and the difficulty of
+        /// everything around it move together, and a metric that rises can mean either "it is not learning" or
+        /// "there is more of it to meet" -- stage3_hazards spent 7M steps with its hazard seconds rising against a
+        /// rising rung and neither reading could be ruled out. Overridden per arena by
+        /// `<TuningPrefix>Arena.<stage>.<arena>.MaxRung`.
+        int32 MaxRung = -1;
         /// Travel: the objective is far enough that flying beats riding (the stage's map must allow flight).
         bool Flying = false;
         /// Travel: no mount may be summoned, so the trip is made on the seat's own legs. What is left to learn

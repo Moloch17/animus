@@ -145,6 +145,9 @@ namespace Animus::Curriculum
         [[nodiscard]] StageDefinition const& Stage() const { return _stage; }
         /// The env's current episode's arena.
         [[nodiscard]] ArenaDefinition const& Arena(Env const& env) const;
+
+        /// The arena's pinned pack rung, or -1 when the ladder is free to climb (ArenaDefinition::MaxRung).
+        [[nodiscard]] int32 ArenaMaxRung(Env const& env) const;
         /// Whether the env's current episode uses `encounter`.
         [[nodiscard]] bool Uses(Env const& env, Encounter const& encounter) const;
         /// The encounters the env's current episode uses, in build order.
@@ -329,6 +332,7 @@ namespace Animus::Curriculum
         /// Per arena: its share of episodes (<TuningPrefix>Arena.<stage>.<arena>.Weight) and episode length.
         std::vector<uint32> _arenaWeights;
         std::vector<uint32> _arenaEpisodeMs;
+        std::vector<int32> _arenaMaxRung;       // -1: the ladder's own cap (Pulls.MaxTier)
         uint32 _forcedArena = NO_ARENA;
         uint32 _forcedLayout = NO_LAYOUT;
         uint32 _forcedLevel = 0;
