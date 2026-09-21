@@ -37,7 +37,7 @@ class Unit;
 
 namespace Animus
 {
-    /// Module root: settings, the models, every player's class/role party and every game master's stage viewer.
+    /// Module root: settings, the models, every player's class party and every game master's stage viewer.
     ///
     /// Everything except RecordDamage runs on the world thread (config load, commands, world update, shutdown), and
     /// none of it while maps are updating. RecordDamage runs on map threads and only reads the bot index and the
@@ -55,13 +55,13 @@ namespace Animus
         bool Dismiss(Player* owner, std::string& message);
 
         /// A companion of `race` (human, nightelf, ...), `playerClass` (priest, deathknight, ...) and `role` (dps, tank,
-        /// heal) joins the owner's group and plays its class/role's model for Animus.Curriculum.Stage. Refused for a
+        /// heal) joins the owner's group and plays its class's model for Animus.Curriculum.Stage. Refused for a
         /// name that is not one, a class that has no such role, a race the class does not allow, or a race of the
         /// other faction.
         bool Summon(Player* owner, std::string_view race, std::string_view playerClass, std::string_view role,
             std::string& message);
 
-        /// One line per class/role companion of `owner`.
+        /// One line per class companion of `owner`.
         [[nodiscard]] std::vector<std::string> List(Player* owner);
 
         /// Stage viewer commands (see StageViewer): every stage and its arenas; open one where the stage happens, its
@@ -94,7 +94,7 @@ namespace Animus
         void RemoveAll();
 
         /// The layout of a profile at the configured stage, built on first use and kept (companions point at it).
-        Curriculum::Layout const& LayoutFor(Curriculum::ClassRoleProfile const& profile);
+        Curriculum::Layout const& LayoutFor(Curriculum::ClassProfile const& profile);
 
         AnimusConfig _config;
         ModelLibrary _models;

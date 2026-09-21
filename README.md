@@ -6,7 +6,7 @@ changes, together with [animus-lib](https://github.com/Moloch17/animus-lib), the
 
 - **Class/role companions.** Up to four characters of the race, class and role you choose join your party at your
   level and level up with you. They follow you through loading screens, into instances and onto transports, and play
-  their class/role model in every fight.
+  their class model in every fight.
 - **The stage viewer.** A game master runs any curriculum stage exactly as the forge trains it, in their own instance,
   and watches the seats play their models, a scripted baseline or random actions.
 
@@ -26,7 +26,7 @@ Both run the same scenario and encoding code as training, so a model sees and do
    none, and never overwrites one; under Docker the container copies it to your config volume on its first start.
    AzerothCore reads a module's settings from the `.conf` only: without it every `Animus.*` key logs "Missing
    property" at startup.
-4. Models: installing copies the ones in `models/` (`stage1_duel`'s, one per class/role, each `.amdl` with its `.json`
+4. Models: installing copies the ones in `models/` (`stage1_duel`'s, one per class, each `.amdl` with its `.json`
    manifest; confirmed at 60M steps, trained with animus-lib 99cbe94) to `<config dir>/modules/animus`, which reaches
    a Docker runtime image (only `bin/` and `etc/` do). Companions play them by default
    (`Animus.Curriculum.Stage = stage1_duel`). Models you place by hand go in `<DataDir>/animus`, which is searched
@@ -53,7 +53,7 @@ Game master commands, not available from the console.
 | `.animus dismiss` | Remove all your companions |
 | `.animus stage list` | Every curriculum stage and its arenas |
 | `.animus stage open <stage> [policy] [arena]` | Build a stage in your own instance and spawn its first episode, frozen. `policy` is `model` (the default), `random`, `greedy` or `fight` |
-| `.animus stage spawn [tier] [class_role] [level]` | Replace the episode with a new one, frozen: a difficulty tier (stages that fight one creature or one pack), what the first seat plays (`warlock_dps`), every character's level. Each is `any` or left out for the curriculum's own, and holds for later episodes |
+| `.animus stage spawn [tier] [class] [level]` | Replace the episode with a new one, frozen: a difficulty tier (stages that fight one creature or one pack), what the first seat plays (`warlock_dps`), every character's level. Each is `any` or left out for the curriculum's own, and holds for later episodes |
 | `.animus stage start` | Let it play: episodes follow one another until `stop` |
 | `.animus stage stop` | Freeze everything where it is |
 | `.animus stage status` | The open stage: frozen or playing, episode, arena, spawn choices, seats and their models |

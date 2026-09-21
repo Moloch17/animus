@@ -74,11 +74,14 @@ namespace
         return value;
     }
 
-    /// "warrior_tank" for a class and role, "class 1" when no class/role has them.
+    /// "warrior_tank" for a class and role, "class 1" when no class has them.
+    /// "warrior_tank" from the class and role an episode reports. One model is a whole class, so the two are
+    /// read separately and joined here for the label -- which is what these were called when a class and a role
+    /// were two different networks.
     std::string ClassRoleName(uint8 playerClass, uint32 role)
     {
-        for (ClassRoleProfile const& profile : ClassRoleProfiles())
-            if (profile.Class == playerClass && uint32(profile.PlayRole) == role)
+        for (ClassProfile const& profile : ClassProfiles())
+            if (profile.Class == playerClass && role < ROLE_COUNT && profile.Plays(Role(role)))
                 return profile.Name;
 
         return Acore::StringFormat("class {}", playerClass);
@@ -227,13 +230,13 @@ Animus::StageViewer::Status Animus::StageViewer::Update(uint32 diff, ModelLibrar
 bool Animus::StageViewer::Build(Player* viewer, ModelLibrary& models)
 {
     Map* map = viewer->GetMap();
-    Tell(Acore::StringFormat("Building {} (the first build of a class/role's assets takes a few seconds)...",
+    Tell(Acore::StringFormat("Building {} (the first build of a class's assets takes a few seconds)...",
         _stage->Name));
 
     _scenario = std::make_unique<StageScenario>(_settings, *_stage);
     if (_scenario->Layouts().empty())
     {
-        End("no class/role can play it (check Animus.Stage.ClassRoles)");
+        End("no class can play it (check Animus.Stage.Classes)");
         return false;
     }
 
@@ -273,7 +276,7 @@ bool Animus::StageViewer::Build(Player* viewer, ModelLibrary& models)
 
     for (std::string const& line : Describe(models))
         Tell(line);
-    Tell("Everything is frozen: `.animus stage spawn [tier] [class_role] [level]` spawns another episode, "
+    Tell("Everything is frozen: `.animus stage spawn [tier] [class] [level]` spawns another episode, "
         "`.animus stage start` lets it play.");
     return true;
 }
@@ -359,7 +362,7 @@ bool Animus::StageViewer::Spawn(std::string_view tier, std::string_view classRol
             [classRole](Layout const& layout) { return layout.Profile->Name == classRole; });
         if (itr == layouts.end())
         {
-            message = Acore::StringFormat("{} is not a class/role this stage plays. Its class/roles:", classRole);
+            message = Acore::StringFormat("{} is not a class this stage plays. Its classes:", classRole);
             for (Layout const& layout : layouts)
                 message += " " + layout.Profile->Name;
             return false;
@@ -581,8 +584,8 @@ std::vector<std::string> Animus::StageViewer::Describe(ModelLibrary& models) con
     lines.push_back(Acore::StringFormat("{} (policy {}{}): {}, episode {}, arena {}, {:.0f} of {:.0f} s", name, _policy,
         forced, _frozen ? "frozen" : "playing", _episodes + 1, _scenario->Arena(env).Name,
         float(env.EpisodeElapsedMs) / 1000.0f, float(env.EpisodeLengthMs) / 1000.0f));
-    lines.push_back(Acore::StringFormat("  spawning: tier {}, class/role {}, level {}",
-        _tier == NO_TIER ? "any (the class/role's training tier)" : std::to_string(_tier),
+    lines.push_back(Acore::StringFormat("  spawning: tier {}, class and role {}, level {}",
+        _tier == NO_TIER ? "any (the class and role's training tier)" : std::to_string(_tier),
         _layout < _scenario->Layouts().size() ? _scenario->Layouts()[_layout].Profile->Name : "any",
         _level ? std::to_string(_level) : "any"));
 

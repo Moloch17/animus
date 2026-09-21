@@ -48,7 +48,7 @@ namespace Animus
     ///
     /// An episode is spawned frozen, for the game master to inspect: its seats, pets and creatures are held with the
     /// GM freeze aura and nobody decides. Spawn builds a new one in its place, with a chosen difficulty tier,
-    /// class/role and level if asked; Run lets it play, and episodes then follow one another, each reported in chat
+    /// class and level if asked; Run lets it play, and episodes then follow one another, each reported in chat
     /// as it ends, until Freeze holds everything where it is again.
     ///
     /// World thread only. Holds its viewer by GUID.

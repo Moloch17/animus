@@ -19,7 +19,7 @@
 #include "CompanionParty.h"
 #include "BotFactory.h"
 #include "Chat.h"
-#include "ClassRoleAssets.h"
+#include "ClassAssets.h"
 #include "Creature.h"
 #include "EncoderSupport.h"
 #include "Group.h"
@@ -95,7 +95,8 @@ Animus::CompanionParty::CompanionParty(ObjectGuid owner) : _owner(owner)
 
 Animus::CompanionParty::~CompanionParty() = default;
 
-bool Animus::CompanionParty::Add(Player* owner, Layout const& layout, uint8 race, std::string& message)
+bool Animus::CompanionParty::Add(Player* owner, Layout const& layout, Role role, uint8 race,
+    std::string& message)
 {
     if (_members.size() >= MAX_COMPANIONS)
     {
@@ -103,8 +104,8 @@ bool Animus::CompanionParty::Add(Player* owner, Layout const& layout, uint8 race
         return false;
     }
 
-    ClassRoleProfile const& profile = *layout.Profile;
-    ClassRoleAssets const& assets = *layout.Assets;
+    ClassProfile const& profile = *layout.Profile;
+    ClassAssets const& assets = *layout.Assets;
 
     // A class that starts above level 1 (death knights) starts there, whatever the owner's level.
     uint8 const level = std::max<uint8>(owner->GetLevel(), assets.Kit->MinLevel());
@@ -145,13 +146,16 @@ bool Animus::CompanionParty::Add(Player* owner, Layout const& layout, uint8 race
     member->L = &layout;
     member->Race = race;
     member->Level = level;
-    member->Spec = uint8(urand(0, uint32(profile.Specs.size()) - 1));
+    // A spec that plays the role it was asked for, as the forge's character generator does when it builds a seat
+    // (StageScenario::BuildSeat). The model is told the role and its talents, never which spec it drew.
+    member->PlayRole = role;
+    member->Spec = DrawSpec(profile, role);
 
     // As the forge builds a seat (StageScenario::BuildSeat, Configure, PrepareFighter, StockSeats). Talent points
     // depend on the map for death knights; the bot is on the owner's map now.
     bot->InitTalentForLevel();
     member->Build = SeatCharacter::Configure(bot, layout, member->Spec, false).Build;
-    member->Stable = SeatCharacter::PrepareFighter(bot, layout);
+    member->Stable = SeatCharacter::PrepareFighter(bot, layout, member->PlayRole);
 
     member->Obs.resize(layout.ObsDim);
     member->Mask.resize(layout.NumActions);
@@ -200,7 +204,7 @@ void Animus::CompanionParty::Restock(Member& member, Player* bot, Player* owner)
         if (other->L->Profile->Class == CLASS_WARLOCK)
             warlockInParty = true;
 
-    ClassRoleProfile const& profile = *member.L->Profile;
+    ClassProfile const& profile = *member.L->Profile;
     ConsumablePool const& pool = ConsumablePool::Instance();
     member.Supplies = pool.Supplies(member.Level, bot->GetMaxPower(POWER_MANA) > 0, profile.Class == CLASS_WARLOCK,
         warlockInParty || profile.Class == CLASS_WARLOCK);
@@ -562,6 +566,7 @@ Animus::Curriculum::SeatView Animus::CompanionParty::View(Member const& member, 
     view.Level = member.Level;
     view.Race = member.Race;
     view.Spec = member.Spec;
+    view.PlayRole = member.PlayRole;
     view.Build = &member.Build;
     view.Memory = &member.Memory;
     view.Options = settings.Options;
@@ -617,13 +622,13 @@ Animus::Curriculum::SeatView Animus::CompanionParty::View(Member const& member, 
             teammate = nullptr;
 
         // The goal a teammate is pursuing, as a forge party seat sees it: what its own model last chose.
-        view.Teammates[slot++] = { teammate, other->Goal, other->L->PlayRole(), other->L->Profile->Class };
+        view.Teammates[slot++] = { teammate, other->Goal, other->PlayRole, other->L->Profile->Class };
     }
 
     // As the forge's PartyTank: the first living tank of the party, the bot itself included.
     for (std::unique_ptr<Member> const& other : _members)
     {
-        if (other->L->PlayRole() != Role::Tank)
+        if (other->PlayRole != Role::Tank)
             continue;
 
         Player* tank = other.get() == &member ? bot : FindBot(other->Bot);

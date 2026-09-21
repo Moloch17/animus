@@ -50,7 +50,7 @@ namespace Animus
         uint32 StageDecisionMs = 250;
         uint32 StageEpisodeSeconds = 60;
         std::string StagePolicy = "model";
-        std::vector<std::string> StageClassRoles;
+        std::vector<std::string> StageClasses;
         uint32 StageLevel = 0;
         uint32 StageMaxViewers = 4;
         uint32 StageSpawnMapId = 560;

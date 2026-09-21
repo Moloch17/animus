@@ -41,8 +41,8 @@ namespace Animus
     class MlpPolicy;
     class ModelLibrary;
 
-    /// A player's class/role companions: characters of a class and role at the player's level, built as the forge
-    /// builds a stage's seats (Curriculum::SeatCharacter), in the player's group. Each plays its class/role model for
+    /// A player's class companions: characters of a class and role at the player's level, built as the forge
+    /// builds a stage's seats (Curriculum::SeatCharacter), in the player's group. Each plays its class model for
     /// the configured stage (ModelLibrary) through the SeatEncoder.
     ///
     /// The party stands in for a training env: the owner is the scripted owner, the companions are the seats, and
@@ -77,7 +77,8 @@ namespace Animus
         /// transport -- and add it to the owner's group (creating the group when the owner has none). It is
         /// the owner's level, or its class's first level when that is higher (death knights: 55), and levels up with
         /// the owner. The race must be one the class allows. False with `message` set when refused.
-        bool Add(Player* owner, Curriculum::Layout const& layout, uint8 race, std::string& message);
+        bool Add(Player* owner, Curriculum::Layout const& layout, Curriculum::Role role, uint8 race,
+            std::string& message);
 
         Status Update(uint32 diff, Settings const& settings, ModelLibrary& models);
 
@@ -96,7 +97,7 @@ namespace Animus
         [[nodiscard]] bool HasBot(ObjectGuid bot) const;
         [[nodiscard]] std::size_t Size() const { return _members.size(); }
 
-        /// One line per companion: name, class/role, level, model state.
+        /// One line per companion: name, class, level, model state.
         [[nodiscard]] std::vector<std::string> Describe(ModelLibrary& models) const;
 
     private:
@@ -108,6 +109,9 @@ namespace Animus
             uint8 Race = 0;
             uint8 Level = 1;
             uint8 Spec = 0;
+            /// The role it was added as, and the role of the spec it drew. Its layout is its class and covers
+            /// every role the class plays, so the layout cannot answer this any more.
+            Curriculum::Role PlayRole = Curriculum::Role::Dps;
             Curriculum::TalentBuilder::Build Build;
             Curriculum::BattleSupplies Supplies;
             uint32 FoodItem = 0;

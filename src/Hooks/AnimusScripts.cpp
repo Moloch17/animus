@@ -92,10 +92,10 @@ namespace
             return Reply(handler, sAnimusMod->Summon(handler->GetPlayer(), race, playerClass, role, message), message);
         }
 
-        /// .animus list: your class/role companions and their models.
+        /// .animus list: your class companions and their models.
         static bool HandleListCommand(ChatHandler* handler)
         {
-            return ReplyLines(handler, sAnimusMod->List(handler->GetPlayer()), "You have no class/role companions.");
+            return ReplyLines(handler, sAnimusMod->List(handler->GetPlayer()), "You have no class companions.");
         }
 
         /// .animus dismiss: remove all your companions.
@@ -122,8 +122,8 @@ namespace
                 arena.value_or(""), message), message);
         }
 
-        /// .animus stage spawn [tier] [class_role] [level]: remove the episode and spawn a new one, frozen. tier: a
-        /// difficulty tier of a stage that fights a creature or a pack; class_role: what the first seat plays
+        /// .animus stage spawn [tier] [class] [level]: remove the episode and spawn a new one, frozen. tier: a
+        /// difficulty tier of a stage that fights a creature or a pack; class: what the first seat plays
         /// (warlock_dps); level: every character's level. Each is "any" or left out for the curriculum's own, and holds
         /// for the episodes after it.
         static bool HandleStageSpawnCommand(ChatHandler* handler, Optional<std::string_view> tier,

@@ -18,8 +18,8 @@
 
 #include "AnimusMod.h"
 #include "BotFactory.h"
-#include "ClassRoleAssets.h"
-#include "ClassRoleProfile.h"
+#include "ClassAssets.h"
+#include "ClassProfile.h"
 #include "Log.h"
 #include "Map.h"
 #include "ObjectMgr.h"
@@ -214,13 +214,15 @@ bool Animus::AnimusMod::Summon(Player* owner, std::string_view race, std::string
     std::string const className = NameOf(CLASS_NAMES, *classId);
     Curriculum::Role const playRole = Curriculum::Role(*roleId);
 
-    Curriculum::ClassRoleProfile const* profile = Curriculum::ClassRoleAssets::FindProfile(*classId, playRole);
-    if (!profile)
+    Curriculum::ClassProfile const* profile = Curriculum::ClassAssets::FindProfile(*classId);
+    if (!profile || !profile->Plays(playRole))
     {
         std::string roles;
-        for (Curriculum::ClassRoleProfile const& candidate : Curriculum::ClassRoleProfiles())
-            if (candidate.Class == *classId)
-                roles += (roles.empty() ? "" : ", ") + std::string(Curriculum::RoleName(candidate.PlayRole));
+        if (profile)
+            for (uint32 role = 0; role < Curriculum::ROLE_COUNT; ++role)
+                if (profile->Plays(Curriculum::Role(role)))
+                    roles += (roles.empty() ? "" : ", ") + std::string(Curriculum::RoleName(Curriculum::Role(role)));
+
         message = Acore::StringFormat("A {} cannot be a {}. A {} can be: {}.", className,
             Curriculum::RoleName(playRole), className, roles);
         return false;
@@ -259,7 +261,7 @@ bool Animus::AnimusMod::Summon(Player* owner, std::string_view race, std::string
     if (!party)
         party = std::make_unique<CompanionParty>(owner->GetGUID());
 
-    if (!party->Add(owner, layout, *raceId, message))
+    if (!party->Add(owner, layout, playRole, *raceId, message))
     {
         if (!party->Size())
             _parties.erase(owner->GetGUID());
@@ -452,14 +454,14 @@ void Animus::AnimusMod::RemoveAll()
         RemoveViewer(_viewers.begin()->first);
 }
 
-Animus::Curriculum::Layout const& Animus::AnimusMod::LayoutFor(Curriculum::ClassRoleProfile const& profile)
+Animus::Curriculum::Layout const& Animus::AnimusMod::LayoutFor(Curriculum::ClassProfile const& profile)
 {
     Curriculum::StageDefinition const& stage = *Curriculum::FindStage(_config.CurriculumStage);
     std::string const name = profile.Name + stage.Suffix;
     auto itr = _layouts.find(name);
     if (itr == _layouts.end())
     {
-        // Builds the class/role's assets on first use (trainer data and item pools: a few seconds).
+        // Builds the class's assets on first use (trainer data and item pools: a few seconds).
         itr = _layouts.emplace(name, Curriculum::Layout::Build(profile, stage)).first;
         LOG_INFO("module.animus", "Animus built the {} layout (obs {}, actions {})", name, itr->second.ObsDim,
             itr->second.NumActions);

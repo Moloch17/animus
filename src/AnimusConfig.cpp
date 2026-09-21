@@ -122,7 +122,7 @@ void Animus::AnimusConfig::Load()
     StageDecisionMs = std::max<uint32>(1, sConfigMgr->GetOption<uint32>("Animus.Stage.DecisionMs", 250));
     StageEpisodeSeconds = std::max<uint32>(1, sConfigMgr->GetOption<uint32>("Animus.Stage.EpisodeSeconds", 60));
     StagePolicy = sConfigMgr->GetOption<std::string>("Animus.Stage.Policy", "model");
-    StageClassRoles = GetList("Animus.Stage.ClassRoles");
+    StageClasses = GetList("Animus.Stage.Classes");
     StageLevel = std::min<uint32>(DEFAULT_MAX_LEVEL, sConfigMgr->GetOption<uint32>("Animus.Stage.Level", 0));
     StageMaxViewers = sConfigMgr->GetOption<uint32>("Animus.Stage.MaxViewers", 4);
 
@@ -142,7 +142,7 @@ Animus::StageSettings Animus::AnimusConfig::ViewerSettings(uint32 envId) const
     settings.DecisionMs = StageDecisionMs;
     settings.EpisodeSeconds = StageEpisodeSeconds;
     settings.ReportEpisodes = 1;
-    settings.ClassRoles = StageClassRoles;
+    settings.Classes = StageClasses;
     settings.SpawnMapId = StageSpawnMapId;
     settings.SpawnPosition = StageSpawnPosition;
     settings.Level = StageLevel;
