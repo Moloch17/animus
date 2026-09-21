@@ -152,6 +152,14 @@ Animus.Stage.SpawnPoint.O     = 2.96
 #        Default:     the stage definition's weight (1 for every arena of the current stages)
 
 #
+#    Animus.Curriculum.Arena.<stage>.<arena>.MaxRung
+#        Description: Hold one arena's pack ladder at a rung instead of letting it climb, e.g.
+#                     Animus.Curriculum.Arena.stage3_hazards.hazards.MaxRung = 0 for the bottom rung.
+#                     Binds training and evaluation alike. A drill uses it so the thing being drilled is
+#                     the only thing that varies; -1 lets the ladder climb to Pulls.MaxTier as usual.
+#        Default:     the stage definition's (0 for stage3_hazards, -1 for every other arena)
+
+#
 #    Animus.Curriculum.Characters.*
 #        The seat characters.
 
