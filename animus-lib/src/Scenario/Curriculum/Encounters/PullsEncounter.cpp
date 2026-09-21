@@ -382,16 +382,18 @@ bool Animus::Curriculum::PullsEncounter::SpawnPull(Env& env, Map* map)
                 entries.push_back(entry);
     }
 
-    // A single pack is its class/role's rung on the ladder; a raid's is the raid ladder, since forty seats against
+    // A single pack is its class and role's rung on the ladder; a raid's is the raid ladder, since forty seats against
     // a pack of four is not a fight.
     if (entries.empty() && SinglePack(env))
     {
         bool const raid = arena.Seats == SeatPlan::Raid;
         uint16 const layout = data.Seats[0].L ? data.Seats[0].L->Index : 0;
-        DifficultyLadder::Pick const pick = _ladder.Draw(env, layout, MaxRung(env));
+        Role const role = data.Seats[0].PlayRole();
+        DifficultyLadder::Pick const pick = _ladder.Draw(env, layout, role, MaxRung(env));
         PackRung const& rung = raid ? RAID_RUNGS[pick.Tier] : PACK_RUNGS[pick.Tier];
         pulls.Rung = pick.Tier;
         pulls.RungLayout = layout;
+        pulls.RungRole = role;
         pulls.RungCounts = pick.Counts;
 
         level = uint8(std::min<uint32>(HIGHEST_OPPONENT_LEVEL, botLevel + rung.Levels));
@@ -1054,11 +1056,11 @@ void Animus::Curriculum::PullsEncounter::Reward(Env& env, uint32 seatIndex, Play
             pullHealth > 0.0f ? pullLeft / pullHealth : 1.0f));
     }
 
-    // The outcome moves the class/role on the ladder, once: a clear without a death is a win.
+    // The outcome moves that class and role on the ladder, once: a clear without a death is a win.
     if (seatIndex == 0 && pulls.RungCounts && !pulls.RungRecorded && (tally.Killed || tally.Died || tally.TimedOut))
     {
         pulls.RungRecorded = true;
-        _ladder.Record(pulls.RungLayout, pulls.Rung, tally.Killed && !tally.Died, MaxRung(env));
+        _ladder.Record(pulls.RungLayout, pulls.RungRole, pulls.Rung, tally.Killed && !tally.Died, MaxRung(env));
     }
 }
 

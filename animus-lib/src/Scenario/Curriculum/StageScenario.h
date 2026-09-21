@@ -38,7 +38,7 @@ namespace Animus::Curriculum
     class OwnerEncounter;
     class PartyEncounter;
 
-    /// One curriculum stage (see StageDefinition) for every class/role of StageSettings::ClassRoles, as layouts of one
+    /// One curriculum stage (see StageDefinition) for every class of StageSettings::Classes, as layouts of one
     /// policy.
     ///
     /// Each learned agent of an env is a seat: every episode it becomes a new character of a class/role -- a race the
@@ -193,6 +193,10 @@ namespace Animus::Curriculum
         /// Every class/role layout of the run, by Layout::Index (the index AgentLayouts reports).
         [[nodiscard]] std::vector<Layout> const& Layouts() const { return _layouts; }
 
+        /// How many (class, role) pairs the run can field, which is what an evaluation spreads its seeds over.
+        /// The difficulty ladder divides by the same number, so every pair meets every rung.
+        [[nodiscard]] uint32 CastingCount() const { return uint32(Castings(std::nullopt).size()); }
+
         /// Play only arena `arena` (an index into the stage's arenas) from the next reset on; NO_ARENA draws by weight
         /// again. The stage viewer uses it to show one situation of a mixed stage.
         void ForceArena(uint32 arena) { _forcedArena = arena; }
@@ -237,16 +241,25 @@ namespace Animus::Curriculum
         [[nodiscard]] bool SeatCanResurrect(Env const& env, uint32 seat) const;
 
     private:
-        /// The layouts a seat may play: those of `role`, or every layout of the run when it has none of that role
-        /// (StageSettings::ClassRoles may leave roles out). No role: every layout of the run.
-        [[nodiscard]] std::vector<Layout const*> LayoutCandidates(std::optional<Role> role) const;
+        /// One thing a seat can be: a class, and a role that class has a spec for.
+        struct Casting
+        {
+            Layout const* L = nullptr;
+            Role PlayRole = Role::Dps;
+        };
 
-        /// The class/role `seat` plays this episode. An evaluation episode takes its layout from its seed index, so
-        /// the seeds spread evenly over the class/roles; a training episode draws one, weighted by SetLayoutWeights.
-        [[nodiscard]] Layout const& DrawLayout(Env const& env, uint32 seat, std::optional<Role> role) const;
+        /// What a seat may be: every (class, role) the run can field, narrowed to `role` when the arena's
+        /// composition asked for one. A run whose classes cannot fill that role falls back to all of them
+        /// (StageSettings::Classes may leave classes out, and a run of rogues and mages has no tank to offer).
+        [[nodiscard]] std::vector<Casting> Castings(std::optional<Role> role) const;
 
-        /// How often a training episode draws `layout`, relative to the others; 1 without weights.
-        [[nodiscard]] float Weight(Layout const& layout) const;
+        /// The class and role `seat` plays this episode. An evaluation episode takes both from its seed index, so
+        /// the seeds spread evenly over the (class, role) pairs -- one model per class, but a paladin's healing is
+        /// still scored on its own share of the seeds. A training episode draws one, weighted by SetLayoutWeights.
+        [[nodiscard]] Casting DrawCasting(Env const& env, uint32 seat, std::optional<Role> role) const;
+
+        /// How often a training episode draws this class in this role, relative to the others; 1 without weights.
+        [[nodiscard]] float Weight(Layout const& layout, Role role) const;
         void AddCoreEpisodeInfo();
         void WriteStageFiles(StageSettings const& settings) const;
 

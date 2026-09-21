@@ -198,7 +198,7 @@ void Animus::Curriculum::CoreBlock::ObserveCharacter(SeatView const& view, float
 
     core[OBS_LEVEL] = float(view.Level) / float(DEFAULT_MAX_LEVEL);
     WriteOneHot(PLAYABLE_RACES, view.Race, core + OBS_RACE_FIRST);
-    core[OBS_SPEC_FIRST + std::min<uint32>(view.Spec, MAX_SPECS - 1)] = 1.0f;
+    core[OBS_ROLE_FIRST + std::min<uint32>(uint32(view.PlayRole), ROLE_COUNT - 1)] = 1.0f;
 
     if (!view.Build)
         return;

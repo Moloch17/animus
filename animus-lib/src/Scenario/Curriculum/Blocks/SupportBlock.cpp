@@ -78,7 +78,7 @@ namespace
     std::optional<Role> RoleOf(SeatView const& view, uint32 slot)
     {
         if (slot == FRIEND_SELF)
-            return view.L->PlayRole();
+            return view.PlayRole;
         if (slot == FRIEND_OWNER)
             return view.OwnerRole;
         return view.Teammates[slot - FRIEND_TEAMMATE_FIRST].Bot

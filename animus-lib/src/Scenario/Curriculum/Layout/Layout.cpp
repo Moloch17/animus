@@ -224,13 +224,13 @@ std::optional<Animus::Curriculum::BlockId> Animus::Curriculum::FindBlock(std::st
     return std::nullopt;
 }
 
-Animus::Curriculum::Layout Animus::Curriculum::Layout::Build(ClassRoleProfile const& profile,
+Animus::Curriculum::Layout Animus::Curriculum::Layout::Build(ClassProfile const& profile,
     StageDefinition const& stage)
 {
     Layout layout;
     layout.Stage = &stage;
     layout.Profile = &profile;
-    layout.Assets = &ClassRoleAssets::For(profile);
+    layout.Assets = &ClassAssets::For(profile);
     layout.Blocks = stage.Blocks;
 
     // Resurrections and the soulstone are cast on a dead or living ally (companion and party blocks). Heals, shields
@@ -332,9 +332,17 @@ std::string Animus::Curriculum::Layout::Manifest() const
     manifest["format"] = MANIFEST_FORMAT;
     manifest["model"] = ModelName();
     manifest["stage"] = Stage->Name;
-    manifest["class_role"] = Director ? DirectorLayout::Name() : Profile->Name.c_str();
+    manifest["class_name"] = Director ? DirectorLayout::Name() : Profile->Name.c_str();
     manifest["class"] = Director ? 0 : Profile->Class;
-    manifest["role"] = Director ? "director" : RoleName(PlayRole());
+    // Every role the class can play, because one model plays all of them. Which one a seat is in is in its
+    // observation (CoreBlock::OBS_ROLE_FIRST) and in its episode info ("role"), not in the layout.
+    boost::json::array& roles = manifest["roles"].emplace_array();
+    if (Director)
+        roles.push_back("director");
+    else
+        for (uint32 role = 0; role < ROLE_COUNT; ++role)
+            if (Profile->Plays(Role(role)))
+                roles.push_back(boost::json::string(RoleName(Role(role))));
     manifest["obs_dim"] = ObsDim;
     manifest["num_actions"] = NumActions;
 
@@ -345,7 +353,13 @@ std::string Animus::Curriculum::Layout::Manifest() const
     boost::json::array& specs = manifest["specs"].emplace_array();
     if (!Director)
         for (SpecProfile const& spec : Profile->Specs)
-            specs.push_back(spec.TabPage);
+        {
+            boost::json::object entry;
+            entry["name"] = spec.Name;
+            entry["tree"] = spec.TabPage;
+            entry["role"] = RoleName(spec.PlayRole);
+            specs.push_back(std::move(entry));
+        }
 
     boost::json::array& blocks = manifest["blocks"].emplace_array();
     for (BlockId id : Blocks)

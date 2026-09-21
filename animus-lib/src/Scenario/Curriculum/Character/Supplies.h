@@ -19,7 +19,7 @@
 #ifndef ANIMUS_LIB_CURRICULUM_SUPPLIES_H
 #define ANIMUS_LIB_CURRICULUM_SUPPLIES_H
 
-#include "ClassRoleProfile.h"
+#include "ClassProfile.h"
 #include "Define.h"
 #include <map>
 #include <utility>

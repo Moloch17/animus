@@ -236,7 +236,7 @@ void Animus::Curriculum::DirectorEncounter::Observe(Env& env, uint32 side)
         memory.Health = CombatReward::HealthLeft(bot);
         memory.Alive = bot->IsAlive();
         if (seat.L)
-            memory.PlayRole = seat.L->PlayRole();
+            memory.PlayRole = seat.PlayRole();
     }
 }
 
@@ -811,7 +811,7 @@ void Animus::Curriculum::DirectorEncounter::ViewSide(Env const& env, uint32 side
         out.Health = CombatReward::HealthLeft(bot);
         out.Power = bot->GetMaxPower(bot->getPowerType())
             ? float(bot->GetPower(bot->getPowerType())) / float(bot->GetMaxPower(bot->getPowerType())) : 0.0f;
-        out.PlayRole = seat.L->PlayRole();
+        out.PlayRole = seat.PlayRole();
         out.InCombat = bot->IsInCombat();
         out.Casting = bot->IsNonMeleeSpellCast(false, false, true);
         out.Spread = spread(*bot);

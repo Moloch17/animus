@@ -98,6 +98,7 @@ namespace Animus::Curriculum
         void BeforeRebuild(Env& env) override;
         bool Build(Env& env, Map* map, uint8 level) override;
         void Update(Env& env) override;
+        bool SelectTarget(Env const& env, uint32 seat, Unit*& target) override;
         [[nodiscard]] bool IsTerminal(Env const& env) const override;
 
     private:
@@ -127,7 +128,7 @@ namespace Animus::Curriculum
         [[nodiscard]] bool IsTerminal(Env const& env) const override;
 
         /// Class/role `layout`'s current training tier.
-        [[nodiscard]] uint32 Tier(uint16 layout) const { return _ladder.Tier(layout); }
+        [[nodiscard]] uint32 Tier(uint16 layout, Role role) const { return _ladder.Tier(layout, role); }
 
     private:
         struct EnvFight
@@ -135,6 +136,7 @@ namespace Animus::Curriculum
             uint8 Tier = 0;
             bool Elite = false;
             uint16 Layout = 0;
+            Role PlayRole = Role::Dps;      // ... and the role it drew, which has its own rung
             bool Counts = false;        // a training fight at its class/role's current tier: its outcome moves it
             bool Recorded = false;      // the outcome is in
             ObjectGuid PendingInterrupt;// a casting opponent the seat just cast an interrupt at
@@ -242,7 +244,8 @@ namespace Animus::Curriculum
             uint32 PullsArrived = 0;            // pulls that came to the seat before it engaged them
             bool EliteOrHigher = false;
             uint32 Rung = 0;                    // single pack: its ladder rung ...
-            uint16 RungLayout = 0;              // ... for this class/role
+            uint16 RungLayout = 0;              // ... for this class
+            Role RungRole = Role::Dps;          // ... playing this role, which is what the rung is kept against
             bool RungCounts = false;            // ... a training pack at the class/role's own rung
             bool RungRecorded = false;          // ... whose outcome is in
             uint32 Wipes = 0;                   // owner stages: pulls that killed everyone and were cleared away

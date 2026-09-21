@@ -93,7 +93,7 @@ namespace
     /// but it is not stealth: it breaks on movement, so it cannot be used to close on anything, which is the
     /// whole of what the stealth stage asks for. The kit is per class, so what it holds is true of every
     /// member of the class rather than of one race of it.
-    bool CanStealth(Animus::Curriculum::ClassRoleAssets const& assets)
+    bool CanStealth(Animus::Curriculum::ClassAssets const& assets)
     {
         if (!assets.Kit)
             return false;
@@ -252,18 +252,18 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
     if (MapEntry const* mapEntry = sMapStore.LookupEntry(_spawnMapId))
         _continent = !mapEntry->Instanceable();
 
-    // The class/roles this run plays: StageSettings::ClassRoles, or all of them.
-    for (ClassRoleProfile const& profile : ClassRoleProfiles())
+    // The classes this run plays: StageSettings::Classes, or all of them.
+    for (ClassProfile const& profile : ClassProfiles())
     {
-        if (!settings.ClassRoles.empty() && std::find(settings.ClassRoles.begin(), settings.ClassRoles.end(),
-            profile.Name) == settings.ClassRoles.end())
+        if (!settings.Classes.empty() && std::find(settings.Classes.begin(), settings.Classes.end(),
+            profile.Name) == settings.Classes.end())
             continue;
 
-        ClassRoleAssets const& assets = ClassRoleAssets::For(profile);
+        ClassAssets const& assets = ClassAssets::For(profile);
         if (assets.Races.empty())
             continue;
 
-        // A stage about closing on someone unseen is played only by the class/roles that can actually do it.
+        // A stage about closing on someone unseen is played only by the classes that can actually do it.
         if (_stage.NeedsStealth && !CanStealth(assets))
             continue;
 
@@ -272,14 +272,14 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
         _layouts.push_back(std::move(layout));
     }
 
-    // A scripted owner or enemy player can be any class/role, whatever StageSettings::ClassRoles says: build every
+    // A scripted owner or enemy player can be any class, whatever StageSettings::Classes says: build every
     // profile's assets now (seconds each) rather than on the world thread in the middle of an episode reset.
     if (_stage.AnyArena([](ArenaDefinition const& arena)
         {
             return arena.Owner || arena.Against == Opposition::ScriptedPlayer;
         }))
-        for (ClassRoleProfile const& profile : ClassRoleProfiles())
-            ClassRoleAssets::For(profile);
+        for (ClassProfile const& profile : ClassProfiles())
+            ClassAssets::For(profile);
 
     // A stage with any learned-directed arena carries the two director agents in every episode: the spec is
     // fixed for the run, so the undirected episodes mark them absent instead (AgentPresence).
@@ -592,10 +592,12 @@ void Animus::Curriculum::StageScenario::AddCoreEpisodeInfo()
         Layout const* layout = seat(env, index).L;
         return layout ? float(layout->Profile->Class) : 0.0f;
     });
+    // The seat's role is its drawn spec's, so a class model's episodes carry the role each one actually played:
+    // this is what lets a run judge a paladin's healing apart from its tanking (target.role_metrics).
     _info.Add("role", [seat](Env const& env, uint32 index)
     {
-        Layout const* layout = seat(env, index).L;
-        return layout ? float(uint32(layout->PlayRole())) : 0.0f;
+        SeatState const& state = seat(env, index);
+        return state.L ? float(uint32(state.PlayRole())) : 0.0f;
     });
     // A party seat left empty this episode reports 0: ignore its row.
     _info.Add("present", [seat](Env const& env, uint32 index) { return seat(env, index).L ? 1.0f : 0.0f; });
@@ -1080,6 +1082,11 @@ Player* Animus::Curriculum::StageScenario::SeatBot(Env const& env, uint32 seat) 
     return _data[env.Index].Seats[seat].Bot.Active();
 }
 
+Animus::Curriculum::Role Animus::Curriculum::SeatState::PlayRole() const
+{
+    return L && L->Profile && Spec < L->Profile->Specs.size() ? L->Profile->Specs[Spec].PlayRole : Role::Dps;
+}
+
 Player* Animus::Curriculum::StageScenario::Owner(Env const& env) const
 {
     return _owner && Arena(env).Owner ? _owner->Find(env) : nullptr;
@@ -1090,62 +1097,71 @@ Player* Animus::Curriculum::StageScenario::PartyTank(Env const& env) const
     return _party && Arena(env).PartyGroup ? _party->Tank(env) : nullptr;
 }
 
-std::vector<Animus::Curriculum::Layout const*> Animus::Curriculum::StageScenario::LayoutCandidates(
+std::vector<Animus::Curriculum::StageScenario::Casting> Animus::Curriculum::StageScenario::Castings(
     std::optional<Role> role) const
 {
-    // A class/role of the role if the run has one; any otherwise (StageSettings::ClassRoles may leave roles out).
-    std::vector<Layout const*> candidates;
+    std::vector<Casting> castings;
     if (role)
         for (Layout const& layout : _layouts)
-            if (!layout.Director && layout.PlayRole() == *role)
-                candidates.push_back(&layout);
+            if (!layout.Director && layout.Profile->Plays(*role))
+                castings.push_back({ &layout, *role });
 
-    if (candidates.empty())
+    // Nothing in the run can play it, or nothing was asked for: every class in every role it has a spec for. The
+    // pairs, not the classes, because a class that tanks and heals is two different things to be.
+    if (castings.empty())
         for (Layout const& layout : _layouts)
             if (!layout.Director)
-                candidates.push_back(&layout);
+                for (uint32 each = 0; each < ROLE_COUNT; ++each)
+                    if (layout.Profile->Plays(Role(each)))
+                        castings.push_back({ &layout, Role(each) });
 
-    return candidates;
+    return castings;
 }
 
-Animus::Curriculum::Layout const& Animus::Curriculum::StageScenario::DrawLayout(Env const& env, uint32 seat,
-    std::optional<Role> role) const
+Animus::Curriculum::StageScenario::Casting Animus::Curriculum::StageScenario::DrawCasting(Env const& env,
+    uint32 seat, std::optional<Role> role) const
 {
     // The stage viewer's choice for the first seat (ForceLayout).
     if (seat == 0 && _forcedLayout < _layouts.size())
-        return _layouts[_forcedLayout];
-
-    std::vector<Layout const*> const candidates = LayoutCandidates(role);
-
-    // An evaluation spreads its seeds over the class/roles instead of drawing them: seed i plays candidate
-    // (i + seat) % count. Every class/role is then scored on an equal share of the seeds, whatever the env count,
-    // so its score is as well measured as the run's and two checkpoints meet the same characters.
-    if (env.EpisodeSeedIndex != NO_EPISODE_SEED)
-        return *candidates[(env.EpisodeSeedIndex + seat) % candidates.size()];
-
-    // Training: the learner's weights (the forge's WEIGHTS message), so the class/roles furthest below their
-    // baseline get more of the data. Without them, or when none of the candidates carries one, draw evenly.
-    float total = 0.0f;
-    for (Layout const* layout : candidates)
-        total += Weight(*layout);
-
-    if (total <= 0.0f)
-        return *candidates[urand(0, uint32(candidates.size()) - 1)];
-
-    float roll = frand(0.0f, total);
-    for (Layout const* layout : candidates)
     {
-        roll -= Weight(*layout);
-        if (roll <= 0.0f)
-            return *layout;
+        Layout const& forced = _layouts[_forcedLayout];
+        Role const want = role && forced.Profile->Plays(*role) ? *role
+            : forced.Profile->Specs.empty() ? Role::Dps : forced.Profile->Specs.front().PlayRole;
+        return { &forced, want };
     }
 
-    return *candidates.back();
+    std::vector<Casting> const castings = Castings(role);
+
+    // An evaluation spreads its seeds over the (class, role) pairs instead of drawing them: seed i plays pair
+    // (i + seat) % count. Each pair is then scored on an equal share of the seeds, whatever the env count, so a
+    // paladin's healing is as well measured as its tanking and two checkpoints meet the same characters.
+    if (env.EpisodeSeedIndex != NO_EPISODE_SEED)
+        return castings[(env.EpisodeSeedIndex + seat) % castings.size()];
+
+    // Training: the learner's weights (the forge's WEIGHTS message), so the pairs furthest below their baseline
+    // get more of the data. Without them, or when none of the pairs carries one, draw evenly.
+    float total = 0.0f;
+    for (Casting const& casting : castings)
+        total += Weight(*casting.L, casting.PlayRole);
+
+    if (total <= 0.0f)
+        return castings[urand(0, uint32(castings.size()) - 1)];
+
+    float roll = frand(0.0f, total);
+    for (Casting const& casting : castings)
+    {
+        roll -= Weight(*casting.L, casting.PlayRole);
+        if (roll <= 0.0f)
+            return casting;
+    }
+
+    return castings.back();
 }
 
-float Animus::Curriculum::StageScenario::Weight(Layout const& layout) const
+float Animus::Curriculum::StageScenario::Weight(Layout const& layout, Role role) const
 {
-    return layout.Index < _layoutWeights.size() ? _layoutWeights[layout.Index] : 1.0f;
+    std::size_t const row = std::size_t(layout.Index) * ROLE_COUNT + std::size_t(role);
+    return row < _layoutWeights.size() ? _layoutWeights[row] : 1.0f;
 }
 
 void Animus::Curriculum::StageScenario::SetLayoutWeights(std::vector<float> const& weights)
@@ -1156,10 +1172,12 @@ void Animus::Curriculum::StageScenario::SetLayoutWeights(std::vector<float> cons
         return;
     }
 
-    if (weights.size() != _layouts.size())
+    // One weight per (class, role), layout-major: a class that tanks and heals is weighted as two things, because
+    // it is two things to be bad at.
+    if (weights.size() != _layouts.size() * ROLE_COUNT)
     {
-        LOG_ERROR("module.animus", "{}: {} layout weights for {} layouts; keeping the ones in use", Name(),
-            weights.size(), _layouts.size());
+        LOG_ERROR("module.animus", "{}: {} layout weights for {} layouts by {} roles; keeping the ones in use",
+            Name(), weights.size(), _layouts.size(), ROLE_COUNT);
         return;
     }
 
@@ -1335,14 +1353,24 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
             roles[seat] = arena.SeatRoles[seat];
 
         for (uint32 seat = 0; seat < _seatCount; ++seat)
-            data.Seats[seat].L = seat < data.ActiveSeats ? &DrawLayout(env, seat, roles[seat]) : nullptr;
+        {
+            Casting const casting = seat < data.ActiveSeats ? DrawCasting(env, seat, roles[seat]) : Casting();
+            data.Seats[seat].L = casting.L;
+            data.Seats[seat].WantRole = casting.PlayRole;
+        }
     }
     else
     {
-        // Any class/role of the run: drawn (evenly, or by the learner's weights), or spread over the seeds in an
-        // evaluation.
+        // Any class in any role the run can field: drawn (evenly, or by the learner's weights), or spread over the
+        // seeds in an evaluation.
         for (uint32 seat = 0; seat < _seatCount; ++seat)
-            data.Seats[seat].L = seat < data.ActiveSeats ? &DrawLayout(env, seat, std::nullopt) : nullptr;
+        {
+            // No composition to honour, so the class and the role are drawn together, over every pair the run can
+            // field: what keeps a class that tanks and heals training both.
+            Casting const casting = seat < data.ActiveSeats ? DrawCasting(env, seat, std::nullopt) : Casting();
+            data.Seats[seat].L = casting.L;
+            data.Seats[seat].WantRole = casting.PlayRole;
+        }
     }
 
     // One level every seat's class/role can be.
@@ -1495,7 +1523,9 @@ Player* Animus::Curriculum::StageScenario::BuildSeat(Env& env, uint32 seatIndex,
     std::vector<uint8> const& from = pool.empty() ? races : pool;
     seat.Race = from[urand(0, uint32(from.size()) - 1)];
     seat.Level = level;
-    seat.Spec = uint8(urand(0, uint32(layout.Profile->Specs.size()) - 1));
+    // Of the specs that play what this seat was drawn for. The layout picked the class and the role was known
+    // then (SeatState::WantRole); which spec carries it is settled here, when the character is built.
+    seat.Spec = DrawSpec(*layout.Profile, seat.WantRole);
     seat.DamageScale = DamageScale(level);
 
     uint8 const session = seat.Bot.NextSession();
@@ -1563,7 +1593,7 @@ void Animus::Curriculum::StageScenario::Configure(Player* bot, SeatState& seat, 
 
 void Animus::Curriculum::StageScenario::PrepareFighter(Player* bot, SeatState& seat) const
 {
-    seat.Stable = SeatCharacter::PrepareFighter(bot, *seat.L);
+    seat.Stable = SeatCharacter::PrepareFighter(bot, *seat.L, seat.PlayRole());
 }
 
 void Animus::Curriculum::StageScenario::StockSeats(Env& env)
@@ -1823,6 +1853,7 @@ Animus::Curriculum::SeatView Animus::Curriculum::StageScenario::ViewSeat(Env con
     view.Level = seat.Level;
     view.Race = seat.Race;
     view.Spec = seat.Spec;
+    view.PlayRole = seat.PlayRole();
     view.Build = &seat.Build;
     view.KnownRanks = &seat.KnownRanks;
     view.Memory = &seat.Memory;
@@ -2493,7 +2524,7 @@ void Animus::Curriculum::StageScenario::WriteState(Env const& env, float* state)
             features[STATE_SEAT_MANA] = float(bot->GetPower(POWER_MANA)) / float(maxMana);
         features[STATE_SEAT_OTHER_POWER] = OtherPower(bot);
         features[STATE_SEAT_LEVEL] = float(slot.Level) / float(DEFAULT_MAX_LEVEL);
-        features[STATE_SEAT_ROLE_FIRST + uint32(slot.L->PlayRole())] = 1.0f;
+        features[STATE_SEAT_ROLE_FIRST + uint32(slot.PlayRole())] = 1.0f;
         WriteOneHot(PLAYABLE_CLASSES, slot.L->Profile->Class, features + STATE_SEAT_CLASS_FIRST);
         features[STATE_SEAT_IN_COMBAT] = bot->IsInCombat() ? 1.0f : 0.0f;
         features[STATE_SEAT_CASTING] = bot->IsNonMeleeSpellCast(false, false, true) ? 1.0f : 0.0f;
@@ -2534,8 +2565,8 @@ void Animus::Curriculum::StageScenario::WriteState(Env const& env, float* state)
             uint32 const group = seat / GROUP_SEATS;
             if (group < RAID_GROUPS)
                 features[STATE_ENEMY_SEAT_GROUP_FIRST + group] = 1.0f;
-            if (Layout const* layout = data.Seats[seat].L)
-                features[STATE_ENEMY_SEAT_ROLE_FIRST + uint32(layout->PlayRole())] = 1.0f;
+            if (data.Seats[seat].L)
+                features[STATE_ENEMY_SEAT_ROLE_FIRST + uint32(data.Seats[seat].PlayRole())] = 1.0f;
             break;
         }
 

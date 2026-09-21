@@ -16,15 +16,15 @@
  * with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include "ClassRoleAssets.h"
+#include "ClassAssets.h"
 #include "ObjectMgr.h"
 #include <algorithm>
 #include <array>
 
 namespace
 {
-    /// A class's kit, talents and catalog: the same for all of its roles.
-    struct ClassAssets
+    /// A class's kit, talents and catalog, owned apart from the assets so they outlive any one lookup.
+    struct SharedClassAssets
     {
         std::unique_ptr<Animus::Curriculum::ClassKit> Kit;
         std::unique_ptr<Animus::Curriculum::TalentBuilder> Talents;
@@ -32,16 +32,16 @@ namespace
     };
 }
 
-Animus::Curriculum::ClassRoleAssets const& Animus::Curriculum::ClassRoleAssets::For(
-    ClassRoleProfile const& profile)
+Animus::Curriculum::ClassAssets const& Animus::Curriculum::ClassAssets::For(
+    ClassProfile const& profile)
 {
-    static std::map<uint8, ClassAssets> classes;
-    static std::map<ClassRoleProfile const*, ClassRoleAssets> assets;
+    static std::map<uint8, SharedClassAssets> classes;
+    static std::map<ClassProfile const*, ClassAssets> assets;
 
     if (auto const itr = assets.find(&profile); itr != assets.end())
         return itr->second;
 
-    ClassAssets& shared = classes[profile.Class];
+    SharedClassAssets& shared = classes[profile.Class];
     if (!shared.Kit)
     {
         shared.Kit = std::make_unique<ClassKit>(profile.Class);
@@ -49,7 +49,7 @@ Animus::Curriculum::ClassRoleAssets const& Animus::Curriculum::ClassRoleAssets::
         shared.Catalog = std::make_unique<ActionCatalog>(profile.Class, *shared.Kit, *shared.Talents);
     }
 
-    ClassRoleAssets& entry = assets[&profile];
+    ClassAssets& entry = assets[&profile];
     entry.Profile = &profile;
     for (uint8 race : PLAYABLE_RACES)
         if (sObjectMgr->GetPlayerInfo(race, profile.Class))
@@ -62,23 +62,22 @@ Animus::Curriculum::ClassRoleAssets const& Animus::Curriculum::ClassRoleAssets::
     return entry;
 }
 
-Animus::Curriculum::ClassRoleProfile const* Animus::Curriculum::ClassRoleAssets::FindProfile(
-    uint8 playerClass, Role role)
+Animus::Curriculum::ClassProfile const* Animus::Curriculum::ClassAssets::FindProfile(uint8 playerClass)
 {
-    for (ClassRoleProfile const& profile : ClassRoleProfiles())
-        if (profile.Class == playerClass && profile.PlayRole == role)
+    for (ClassProfile const& profile : ClassProfiles())
+        if (profile.Class == playerClass)
             return &profile;
 
     return nullptr;
 }
 
-std::vector<uint8> Animus::Curriculum::ClassRoleAssets::ClassesForRole(uint8 level, Role role)
+std::vector<uint8> Animus::Curriculum::ClassAssets::ClassesForRole(uint8 level, Role role)
 {
     // Cheap checks only: building a profile's assets takes seconds (see StageScenario, which warms them).
     std::vector<uint8> classes;
-    for (ClassRoleProfile const& profile : ClassRoleProfiles())
+    for (ClassProfile const& profile : ClassProfiles())
     {
-        if (profile.PlayRole != role || ClassKit::MinLevelOf(profile.Class) > level)
+        if (!profile.Plays(role) || ClassKit::MinLevelOf(profile.Class) > level)
             continue;
 
         if (std::any_of(PLAYABLE_RACES.begin(), PLAYABLE_RACES.end(),

@@ -19,13 +19,14 @@
 #ifndef ANIMUS_LIB_CURRICULUM_SEAT_CHARACTER_H
 #define ANIMUS_LIB_CURRICULUM_SEAT_CHARACTER_H
 
+#include "ClassProfile.h"
 #include "TalentBuilder.h"
 #include <vector>
 
 class Player;
 
 /*
- * A learned character as a stage's seats are built, for everyone who plays a class/role model: the forge's seats and
+ * A learned character as a stage's seats are built, for everyone who plays a class model: the forge's seats and
  * mod-animus's companions. What a model saw in training (talents, trainer spells, gear, a stance) is what it must get
  * in play.
  */
@@ -64,7 +65,7 @@ namespace Animus::Curriculum
         /// Get a character ready to fight something that fights back: no XP (levelling up would change the character
         /// under the model) and a warrior's stance (nothing works without one, and only a first login casts it).
         /// Returns a hunter's stable offer (STABLE_SLOTS beasts), empty for other classes.
-        std::vector<uint32> PrepareFighter(Player* bot, Layout const& layout);
+        std::vector<uint32> PrepareFighter(Player* bot, Layout const& layout, Role role);
 
         /// Put the character's pet out as a returning player has it, without spending a cast: a hunter one of the
         /// `stable` beasts, a warlock a demon it knows, a death knight with Master of Ghouls its ghoul, a frost mage with

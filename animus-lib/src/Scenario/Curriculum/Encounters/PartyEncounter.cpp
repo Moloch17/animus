@@ -68,7 +68,7 @@ Player* Animus::Curriculum::PartyEncounter::Tank(Env const& env) const
 {
     EnvState const& data = _scenario.Data(env);
     for (uint32 seat = 0; seat < _scenario.SeatCount(); ++seat)
-        if (data.Seats[seat].L && data.Seats[seat].L->PlayRole() == Role::Tank)
+        if (data.Seats[seat].L && data.Seats[seat].PlayRole() == Role::Tank)
             if (Player* tank = _scenario.SeatBot(env, seat); tank && tank->IsAlive())
                 return tank;
 
@@ -149,9 +149,9 @@ void Animus::Curriculum::PartyEncounter::View(Env const& env, uint32 seatIndex, 
     };
     auto const fill = [&](uint32 slot, uint32 seat)
     {
-        Layout const& other = *data.Seats[seat].L;
+        SeatState const& other = data.Seats[seat];
         shown[seat] = true;
-        view.Teammates[slot] = { env.FindBot(seat), data.Seats[seat].Goal, other.PlayRole(), other.Profile->Class };
+        view.Teammates[slot] = { env.FindBot(seat), other.Goal, other.PlayRole(), other.L->Profile->Class };
     };
 
     // The seat's own group fills the first slots: in a party that is everyone, and in a raid it is who the seat
@@ -179,7 +179,7 @@ void Animus::Curriculum::PartyEncounter::View(Env const& env, uint32 seatIndex, 
         if (!other->IsAlive())
             continue;
 
-        if (tank == MAX_SEATS && data.Seats[seat].L->PlayRole() == Role::Tank)
+        if (tank == MAX_SEATS && data.Seats[seat].PlayRole() == Role::Tank)
             tank = seat;
 
         float const health = other->GetHealthPct();
@@ -233,8 +233,8 @@ void Animus::Curriculum::PartyEncounter::View(Env const& env, uint32 seatIndex, 
         groupAlive += ownGroup ? 1 : 0;
         inCombat += other->IsInCombat() ? 1 : 0;
         lowestHealth = std::min(lowestHealth, other->GetHealthPct() / 100.0f);
-        tanks += data.Seats[seat].L->PlayRole() == Role::Tank ? 1 : 0;
-        healers += data.Seats[seat].L->PlayRole() == Role::Heal ? 1 : 0;
+        tanks += data.Seats[seat].PlayRole() == Role::Tank ? 1 : 0;
+        healers += data.Seats[seat].PlayRole() == Role::Heal ? 1 : 0;
     }
 
     view.Raid.Group = groupFirst / GROUP_SEATS;
@@ -257,7 +257,7 @@ void Animus::Curriculum::PartyEncounter::Reward(Env& env, uint32 seatIndex, Play
     EnvState const& data = _scenario.Data(env);
     SeatParty& seat = _envs[env.Index].Seats[seatIndex];
     AgentStats const& step = env.StepStats[seatIndex];
-    Role const role = data.Seats[seatIndex].L->PlayRole();
+    Role const role = data.Seats[seatIndex].PlayRole();
 
     // Every other seat, not only the ones the observation has slots for: a heal lands on whoever needed it, and a
     // raider outside the seat's group is still the party's to keep alive.
@@ -267,7 +267,7 @@ void Animus::Curriculum::PartyEncounter::Reward(Env& env, uint32 seatIndex, Play
         if (!teammate || !data.Seats[teammateSeat].L)
             continue;
 
-        Role const teammateRole = data.Seats[teammateSeat].L->PlayRole();
+        Role const teammateRole = data.Seats[teammateSeat].PlayRole();
         float const health = float(std::max<uint32>(1, teammate->GetMaxHealth()));
         uint64 const taken = env.StepStats[teammateSeat].DamageTaken;
         // Healing, and what the seat's absorbs soaked and its reductions prevented on the teammate, count alike.

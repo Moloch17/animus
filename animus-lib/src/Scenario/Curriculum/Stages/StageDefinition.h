@@ -20,7 +20,7 @@
 #define ANIMUS_LIB_CURRICULUM_STAGE_DEFINITION_H
 
 #include "Block.h"
-#include "ClassRoleProfile.h"
+#include "ClassProfile.h"
 #include "Position.h"
 #include <string>
 #include <string_view>

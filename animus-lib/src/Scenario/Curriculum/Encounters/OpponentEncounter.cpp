@@ -206,7 +206,7 @@ void Animus::Curriculum::OpponentEncounter::AddEpisodeInfo(EpisodeInfoTable& tab
         if (seat > 1)
             return 0.0f;
         SeatState const& other = _scenario.Data(env).Seats[1 - seat];
-        return other.L ? float(uint32(other.L->PlayRole())) : 0.0f;
+        return other.L ? float(uint32(other.PlayRole())) : 0.0f;
     });
 }
 
@@ -380,7 +380,7 @@ void Animus::Curriculum::OpponentEncounter::View(Env const& env, uint32 seat, Se
         uint32 const chosen = view.TargetSlot < count ? enemies[view.TargetSlot] : NO_SEAT;
         SeatState const* other = chosen != NO_SEAT ? &data.Seats[chosen] : nullptr;
         view.OpponentClass = other && other->L ? other->L->Profile->Class : 0;
-        view.OpponentRole = other && other->L ? other->L->PlayRole() : Role::Dps;
+        view.OpponentRole = other && other->L ? other->PlayRole() : Role::Dps;
         return;
     }
 

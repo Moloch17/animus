@@ -106,17 +106,17 @@ bool Animus::Curriculum::OwnerEncounter::Build(Env& env, Map* map, uint8 level)
 
     // The owner stands in for a player of any role.
     Role role = RollRole(tuning.TankChance, tuning.HealerChance);
-    std::vector<uint8> classes = ClassRoleAssets::ClassesForRole(ownerLevel, role);
+    std::vector<uint8> classes = ClassAssets::ClassesForRole(ownerLevel, role);
     if (classes.empty())
     {
         role = Role::Dps;
-        classes = ClassRoleAssets::ClassesForRole(ownerLevel, role);
+        classes = ClassAssets::ClassesForRole(ownerLevel, role);
     }
     if (classes.empty())
         return false;
 
     uint8 const playerClass = classes[urand(0, uint32(classes.size()) - 1)];
-    ClassRoleAssets const& assets = ClassRoleAssets::For(*ClassRoleAssets::FindProfile(playerClass, role));
+    ClassAssets const& assets = ClassAssets::For(*ClassAssets::FindProfile(playerClass));
 
     owner.Bot.Begin();
     uint8 const session = owner.Bot.NextSession();
@@ -136,7 +136,7 @@ bool Animus::Curriculum::OwnerEncounter::Build(Env& env, Map* map, uint8 level)
         return false;
 
     bot->InitTalentForLevel();
-    ScriptedPlayer::Configure(bot, assets, owner.Script, false);
+    ScriptedPlayer::Configure(bot, assets, role, owner.Script, false);
 
     // Either faction's races can be paired: give the owner the seats' faction so they are friends (heals and buffs
     // land, neither can attack the other).
@@ -229,7 +229,7 @@ void Animus::Curriculum::OwnerEncounter::Reward(Env& env, uint32 seatIndex, Play
     SeatState const& seat = _scenario.Data(env).Seats[seatIndex];
     SeatOwner& seatOwner = state.Seats[seatIndex];
     AgentStats const& step = env.StepStats[seatIndex];
-    Role const role = seat.L->PlayRole();
+    Role const role = seat.PlayRole();
     float const ownerHealth = float(std::max<uint32>(1, owner->GetMaxHealth()));
 
     seatOwner.Healing += step.AllyHealingBy[0];

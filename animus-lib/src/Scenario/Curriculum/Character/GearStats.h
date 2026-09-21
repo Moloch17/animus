@@ -19,7 +19,7 @@
 #ifndef ANIMUS_LIB_CURRICULUM_GEAR_STATS_H
 #define ANIMUS_LIB_CURRICULUM_GEAR_STATS_H
 
-#include "ClassRoleProfile.h"
+#include "ClassProfile.h"
 #include "Define.h"
 #include <array>
 #include <unordered_map>

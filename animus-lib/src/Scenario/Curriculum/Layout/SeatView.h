@@ -20,7 +20,7 @@
 #define ANIMUS_LIB_CURRICULUM_SEAT_VIEW_H
 
 #include "Block.h"
-#include "ClassRoleProfile.h"
+#include "ClassProfile.h"
 #include "CurriculumTuning.h"
 #include "ObjectGuid.h"
 #include "Position.h"
@@ -161,6 +161,7 @@ namespace Animus::Curriculum
         uint8 Level = 1;
         uint8 Race = 0;
         uint8 Spec = 0;
+        Role PlayRole = Role::Dps;                  // the drawn spec's role (SeatState::PlayRole)
         TalentBuilder::Build const* Build = nullptr;
         float LastStepDamage = 0.0f;                // damage done / the level's damage scale
         float LastStepPowerDelta = 0.0f;            // primary power change, as a fraction of max

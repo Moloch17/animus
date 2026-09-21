@@ -51,8 +51,19 @@
  * have a fight. Fire that lands where the seat is standing removes that option -- the only way to spend less is to
  * move -- so the penalty alone is enough and the drill needs no objective of its own.
  *
- * What it is not: a fight. No creature is spawned, nothing is targetable, and the episode runs its full length.
- * The numbers to read are hazard_seconds and hazard_damage, both of which should fall.
+ * Why the emitter is also the seat's target, which is the part the first build got wrong. Every movement action
+ * in the game is target-relative: DuelBlock masks MOVE_TO_TARGET, MOVE_TO_RANGE, BACK_OFF, KEEP_RANGE,
+ * STAY_ON_TARGET and STOP behind `if (!target || !target->IsAlive()) return false`. A stage with nothing to
+ * target therefore has nothing it can do -- the first run of this drill spent four million steps with
+ * allowed_actions at 1.00, entropy at 0 and the seats standing perfectly still while the fire burned them.
+ *
+ * So the emitter is alive and is handed to the seat as its target, while staying immune and unattackable so it
+ * can never be killed or usefully hit. The seat has legs and something to orient on; what it cannot do is end the
+ * episode by winning. BACK_OFF in particular is allowed whenever the seat can move, which is the action a dodge
+ * needs.
+ *
+ * What it is not: a fight. Nothing can be killed and the episode always runs its full length. The numbers to read
+ * are hazard_seconds and hazard_damage, both of which should fall.
  */
 
 namespace
@@ -122,12 +133,25 @@ bool Animus::Curriculum::HazardEncounter::Build(Env& env, Map* map, uint8 level)
         return false;
 
     emitter->SetFaction(EMITTER_FACTION);
-    emitter->SetUnitFlag(UnitFlags(UNIT_FLAG_NOT_SELECTABLE | UNIT_FLAG_NON_ATTACKABLE | UNIT_FLAG_IMMUNE_TO_PC
-        | UNIT_FLAG_IMMUNE_TO_NPC));
+    // Unattackable and immune, so it can never be killed and the episode can never be won; not NOT_SELECTABLE,
+    // because the seat is handed it as a target and the encoders read it. Staying alive is what keeps the
+    // movement actions unmasked.
+    emitter->SetUnitFlag(UnitFlags(UNIT_FLAG_NON_ATTACKABLE | UNIT_FLAG_IMMUNE_TO_PC | UNIT_FLAG_IMMUNE_TO_NPC));
     emitter->SetImmuneToAll(true);
     emitter->SetReactState(REACT_PASSIVE);
-    emitter->SetVisible(false);
     state.Emitter = emitter->GetGUID();
+    return true;
+}
+
+bool Animus::Curriculum::HazardEncounter::SelectTarget(Env const& env, uint32 /*seat*/, Unit*& target)
+{
+    if (_scenario.Arena(env).Against != Opposition::Hazards)
+        return false;
+
+    // Something to orient on, and the only reason the seat can move at all: every movement action is masked
+    // without a living target. It cannot be killed, so the fire still decides the episode.
+    Map* map = env.FindMap();
+    target = map ? map->GetCreature(_envs[env.Index].Emitter) : nullptr;
     return true;
 }
 

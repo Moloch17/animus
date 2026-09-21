@@ -19,6 +19,7 @@
 #ifndef ANIMUS_LIB_CURRICULUM_DIFFICULTY_LADDER_H
 #define ANIMUS_LIB_CURRICULUM_DIFFICULTY_LADDER_H
 
+#include "ClassProfile.h"
 #include "Define.h"
 #include <mutex>
 #include <string>
@@ -33,15 +34,20 @@ namespace Animus::Curriculum
 {
     class StageScenario;
 
-    /// Difficulty that adapts per class/role (CurriculumTuning::DifficultyTuning): each class/role fights at its own
-    /// rung, 0 up to the encounter's top one. After Window fights at a rung it moves up one once it won RaiseAbove of
-    /// them, down one below LowerBelow; ReviewChance of its training fights are at a lower rung and StretchChance at
-    /// the next one up, neither of which count, so nothing is forgotten and nothing is met for the first time in an
-    /// evaluation. A fight that simple play wins every time teaches nothing a plan would add.
+    /// Difficulty that adapts per class and role (CurriculumTuning::DifficultyTuning): each of them fights at its
+    /// own rung, 0 up to the encounter's top one. After Window fights at a rung it moves up one once it won
+    /// RaiseAbove of them, down one below LowerBelow; ReviewChance of its training fights are at a lower rung and
+    /// StretchChance at the next one up, neither of which count, so nothing is forgotten and nothing is met for the
+    /// first time in an evaluation. A fight that simple play wins every time teaches nothing a plan would add.
     ///
-    /// An evaluation spreads its seeds over the rungs instead (every class/role over every rung), so two checkpoints
-    /// meet the same fights, and a stage viewer's forced tier (StageScenario::ForceTier) wins over both. Rungs start at
-    /// 0 with the worldserver.
+    /// The rung is per (class, role) and not per model, even though a model is now a whole class. A paladin that
+    /// tanks well and heals badly would otherwise share one rung between them: the tank's wins would carry it up
+    /// and the healer would drown at a difficulty it never earned, which is the failure this granularity exists to
+    /// prevent. Its own class is still what it learns from; only the pacing is split.
+    ///
+    /// An evaluation spreads its seeds over the rungs instead (every class over every rung), so two checkpoints
+    /// meet the same fights, and a stage viewer's forced tier (StageScenario::ForceTier) wins over both. Rungs start
+    /// at 0 with the worldserver.
     class DifficultyLadder
     {
     public:
@@ -51,18 +57,19 @@ namespace Animus::Curriculum
         struct Pick
         {
             uint32 Tier = 0;
-            bool Counts = false;        // a training fight at its class/role's own rung: its outcome moves it
+            bool Counts = false;        // a training fight at this class and role's own rung: its outcome moves it
         };
 
-        /// The rung of an episode of class/role `layout` on a ladder whose top rung is `maxTier`. World thread (it
-        /// rolls the review chance).
-        [[nodiscard]] Pick Draw(Env const& env, uint16 layout, uint32 maxTier) const;
+        /// The rung of an episode of class `layout` playing `role`, on a ladder whose top rung is `maxTier`. World
+        /// thread (it rolls the review chance).
+        [[nodiscard]] Pick Draw(Env const& env, uint16 layout, Role role, uint32 maxTier) const;
 
-        /// A fight drawn with Counts ended: count it, and move the class/role once its window is full. Any thread.
-        void Record(uint16 layout, uint32 tier, bool won, uint32 maxTier);
+        /// A fight drawn with Counts ended: count it, and move that class and role once its window is full. Any
+        /// thread.
+        void Record(uint16 layout, Role role, uint32 tier, bool won, uint32 maxTier);
 
-        /// Class/role `layout`'s current rung.
-        [[nodiscard]] uint32 Tier(uint16 layout) const;
+        /// Class `layout` playing `role`'s current rung.
+        [[nodiscard]] uint32 Tier(uint16 layout, Role role) const;
 
     private:
         struct LayoutTier
@@ -71,6 +78,12 @@ namespace Animus::Curriculum
             uint32 Fights = 0;          // at this rung, since it was reached
             uint32 Wins = 0;
         };
+
+        /// Row of (layout, role) in _tiers, which is layout-major: ROLE_COUNT rungs per class.
+        [[nodiscard]] std::size_t Row(uint16 layout, Role role) const
+        {
+            return std::size_t(layout) * ROLE_COUNT + std::size_t(role);
+        }
 
         StageScenario const& _scenario;
         std::string _what;

@@ -32,7 +32,16 @@ namespace Animus::Curriculum
         {
             OBS_LEVEL                   = 0,    // level / 80
             OBS_RACE_FIRST              = 1,    // one-hot over PLAYABLE_RACES
-            OBS_SPEC_FIRST              = 11,   // one-hot over the role's specs (MAX_SPECS slots)
+            /// Which role the seat is playing this episode, one-hot over Role. One model per class has to be told,
+            /// because the role is not a fact about the character but the contract it is graded under: a paladin
+            /// that cannot see whether it is holding the line or healing it has no way to choose between them.
+            ///
+            /// There is deliberately no spec here. The spec is a name for a talent build, and the build itself is
+            /// already observed further down -- every talent's rank and every tree's points -- so a label would be
+            /// a redundant shortcut that invites the policy to play the name instead of the talents. It would also
+            /// sometimes be false: TalentPlan::Noisy and ::Random hand the seat a build its nominal spec did not
+            /// choose, and the label would keep insisting on the spec. What the seat can do is what it has.
+            OBS_ROLE_FIRST              = 11,
             OBS_HEALTH                  = 14,
             OBS_MANA                    = 15,   // fraction of max; 0 without mana
             OBS_RAGE                    = 16,   // / 100
@@ -96,7 +105,6 @@ namespace Animus::Curriculum
         /// The first two catalog actions are the no-op and cancel-queued.
         static constexpr uint32 FIRST_CAST_ACTION = 2;
         static constexpr uint32 ACTION_FEATURES = 6;
-        static constexpr uint32 MAX_SPECS = 3;
 
         void BeforeApply(SeatView& view, SeatActionResult& result) const override;
 

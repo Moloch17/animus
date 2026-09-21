@@ -46,17 +46,17 @@ Animus::Curriculum::EnemyPlayers::Spawned Animus::Curriculum::EnemyPlayers::Crea
     uint32 mapId, ScriptedPlayer::State& state)
 {
     Role role = RollRole(tuning.TankChance, tuning.HealerChance);
-    std::vector<uint8> classes = ClassRoleAssets::ClassesForRole(level, role);
+    std::vector<uint8> classes = ClassAssets::ClassesForRole(level, role);
     if (classes.empty())
     {
         role = Role::Dps;
-        classes = ClassRoleAssets::ClassesForRole(level, role);
+        classes = ClassAssets::ClassesForRole(level, role);
     }
     if (classes.empty())
         return {};
 
     uint8 const playerClass = classes[urand(0, uint32(classes.size()) - 1)];
-    ClassRoleAssets const& assets = ClassRoleAssets::For(*ClassRoleAssets::FindProfile(playerClass, role));
+    ClassAssets const& assets = ClassAssets::For(*ClassAssets::FindProfile(playerClass));
 
     slot.Begin();
     uint8 const session = slot.NextSession();
@@ -77,7 +77,7 @@ Animus::Curriculum::EnemyPlayers::Spawned Animus::Curriculum::EnemyPlayers::Crea
         return {};
 
     enemy->InitTalentForLevel();
-    ScriptedPlayer::Configure(enemy, assets, state, true);
+    ScriptedPlayer::Configure(enemy, assets, role, state, true);
     slot.Promote();
     return { enemy, playerClass, role };
 }
