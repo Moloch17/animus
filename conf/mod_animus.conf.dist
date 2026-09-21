@@ -20,7 +20,7 @@ Animus.Enable = 1
 #
 #    Animus.ModelDir
 #        Description: Directory holding the exported class models (<class>_<stage>.amdl,
-#                     each with its layout manifest <class>_<role>_<stage>.json beside it), written
+#                     each with its layout manifest <class>_<stage>.json beside it), written
 #                     by `forge export` in mod-animus-forge. A relative path is looked for under
 #                     DataDir (worldserver.conf) first, for models placed by hand, then where the
 #                     build installs the module's models/ with its configs:
@@ -34,7 +34,7 @@ Animus.Enable = 1
 Animus.ModelDir = "animus"
 
 ###################################################################################################
-# CLASS/ROLE COMPANIONS
+# CLASS COMPANIONS
 #
 #    Animus.Curriculum.Stage
 #        Description: Which curriculum stage's models class companions (".animus summon")
@@ -96,10 +96,8 @@ Animus.Stage.EpisodeSeconds = 60
 #        Description: Comma-separated classes the seats are drawn from. A class brings every role it
 #                     has a spec for: one model per class, not one per class and role. Unlike the forge's
 #                     list it does not change the layouts, only which characters appear.
-#                     Available: warrior_dps, warrior_tank, paladin_heal, paladin_tank, paladin_dps,
-#                     hunter_dps, rogue_dps, priest_heal, priest_dps, deathknight_tank,
-#                     deathknight_dps, shaman_dps, shaman_heal, mage_dps, warlock_dps, druid_dps,
-#                     druid_tank, druid_heal
+#                     Available: warrior, paladin, hunter, rogue, priest, deathknight, shaman, mage,
+#                     warlock, druid
 #        Default:     "" - (all of them)
 
 Animus.Stage.Classes = ""
@@ -142,7 +140,7 @@ Animus.Stage.SpawnPoint.O     = 2.96
 # AnimusForge.Curriculum.* under this prefix: to watch a stage as a model was trained, copy the
 # values of that run (its stage.json "tuning") here. Every key is optional; a missing one keeps the
 # default shown. Per-decision reward terms are tuned per 50 ms decision and scaled with
-# Animus.Stage.DecisionMs. Class/role companions use only the Actions.* keys (pacing, and the
+# Animus.Stage.DecisionMs. Class companions use only the Actions.* keys (pacing, and the
 # movement and stance locks), so they play with the masks their models trained with.
 
 #
@@ -526,6 +524,11 @@ Animus.Curriculum.Options.HoldInterruptMs = 10000
 Animus.Curriculum.Options.KeepRangeMs = 10000
 #   ... and a melee spec back into melee reach whenever the target leaves it (ms)
 Animus.Curriculum.Options.StayOnTargetMs = 10000
+#   ... and how long a bearing chosen with the move block keeps being walked before it lapses (ms). The move block is
+#   where a companion puts its feet with no reference to what it is fighting, so unlike the options above it still
+#   works with nothing to target. Shorter than they are on purpose: a direction chosen against the ground goes stale
+#   as soon as the ground is covered, where a standing instruction about a target stays true while the fight does.
+Animus.Curriculum.Options.MoveBearingMs = 3000
 
 #   Ground effects: damage from something standing on the ground rather than aimed at the companion, charged per
 #   fraction of maximum health on top of the damage itself. The only term that pays for moving its feet.
