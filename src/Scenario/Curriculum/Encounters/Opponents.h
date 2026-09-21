@@ -69,6 +69,13 @@ namespace Animus::Curriculum::Opponents
         /// "step out of it" stays unlearnable until a dungeon.
         [[nodiscard]] uint32 RandomHazardCaster(uint8 level) const;
 
+        /// A spell that puts something on the ground, from the same set the hazard casters use: a persistent area
+        /// aura, so it leaves a DynamicObject behind. That is what the sensing and the charge both read
+        /// (Encoding::StandingInHazards counts DYNOBJ_AURA_TYPE auras and nothing else), which is why a stage that
+        /// wants hazards without a fight casts one of these rather than dropping a trap gameobject: a trap burns
+        /// but is invisible to both. 0 when the world has none.
+        [[nodiscard]] uint32 RandomHazardSpell(uint8 level) const;
+
     private:
         OpponentPool();
 
@@ -79,6 +86,7 @@ namespace Animus::Curriculum::Opponents
         std::array<std::vector<uint32>, 81> _elitesByLevel;
         std::array<std::vector<uint32>, 81> _castersByLevel;
         std::array<std::vector<uint32>, 81> _hazardCastersByLevel;
+        std::array<std::vector<uint32>, 81> _hazardSpellsByLevel;   // what those casters put on the ground
     };
 
     /// A random spot 40-50 yd from the bot, in line of sight on roughly level ground the bot can walk to (so a
