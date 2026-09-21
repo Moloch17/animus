@@ -269,7 +269,8 @@ namespace Animus::Curriculum
         /// Whether any arena of the stage is: its supplies, episode info columns.
         [[nodiscard]] bool AnyGauntlet() const;
         /// The single pack's top rung: Pulls.MaxTier, no higher than the ladder has.
-        [[nodiscard]] uint32 MaxRung() const;
+        /// The top rung this env's arena may draw: its pin when it has one, else Pulls.MaxTier.
+        [[nodiscard]] uint32 MaxRung(Env const& env) const;
         bool SpawnPull(Env& env, Map* map);
         /// The field is empty: schedule the next pull and restart the seats' target selection.
         void EndPull(Env& env, EnvPulls& pulls);

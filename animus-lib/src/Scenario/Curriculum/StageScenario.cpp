@@ -394,6 +394,10 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
             Acore::StringFormat("{}Arena.{}.{}.Weight", settings.TuningPrefix, _stage.Name, arena.Name), arena.Weight,
             false));
 
+        _arenaMaxRung.push_back(sConfigMgr->GetOption<int32>(
+            Acore::StringFormat("{}Arena.{}.{}.MaxRung", settings.TuningPrefix, _stage.Name, arena.Name),
+            arena.MaxRung, false));
+
         uint32 const episodeMs = (arena.EpisodeSeconds ? arena.EpisodeSeconds : settings.EpisodeSeconds)
             * IN_MILLISECONDS;
         _arenaEpisodeMs.push_back(episodeMs);
@@ -472,6 +476,12 @@ Animus::Curriculum::ArenaDefinition const& Animus::Curriculum::StageScenario::Ar
 {
     uint32 const arena = Data(env).Arena;
     return _stage.Arenas[arena < _stage.Arenas.size() ? arena : 0];
+}
+
+int32 Animus::Curriculum::StageScenario::ArenaMaxRung(Env const& env) const
+{
+    uint32 const arena = Data(env).Arena;
+    return arena < _arenaMaxRung.size() ? _arenaMaxRung[arena] : -1;
 }
 
 bool Animus::Curriculum::StageScenario::Uses(Env const& env, Encounter const& encounter) const
