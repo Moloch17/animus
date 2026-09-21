@@ -48,6 +48,7 @@ namespace Animus::Curriculum
         Ambush,         // only ambushers: scripted enemy players attacking the owner (ArenaDefinition::Ambushers)
         Travel,         // a place to get to (ArenaDefinition::Flying for one best reached in the air)
         Flag,           // Warsong Gulch's rules between the two mirror seats: take the other's flag home
+        Hazards,        // nothing to fight: ground to get off (HazardEncounter)
     };
 
     enum class PullSchedule : uint8

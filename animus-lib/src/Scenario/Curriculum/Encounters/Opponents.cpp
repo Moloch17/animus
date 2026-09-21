@@ -37,6 +37,7 @@
 #include <cmath>
 #include <map>
 #include <optional>
+#include <unordered_map>
 #include <unordered_set>
 
 namespace
@@ -143,6 +144,7 @@ Animus::Curriculum::Opponents::OpponentPool::OpponentPool()
     // something on the ground: a persistent area aura to walk out of.
     std::unordered_set<uint32> castTimeSmart;
     std::unordered_set<uint32> hazardSmart;
+    std::unordered_map<uint32, uint32> hazardSpellOf;       // creature entry -> the ground it lays
     if (QueryResult result = WorldDatabase.Query("SELECT entryorguid, action_param1 FROM smart_scripts "
         "WHERE source_type = 0 AND entryorguid > 0 AND action_type = 11"))
     {
@@ -157,7 +159,10 @@ Animus::Curriculum::Opponents::OpponentPool::OpponentPool()
             if (spell->CastTimeEntry && spell->CastTimeEntry->CastTime > 0)
                 castTimeSmart.insert(entry);
             if (spell->HasEffect(SPELL_EFFECT_PERSISTENT_AREA_AURA) || spell->HasAreaAuraEffect())
+            {
                 hazardSmart.insert(entry);
+                hazardSpellOf.emplace(entry, spell->Id);
+            }
         } while (result->NextRow());
     }
 
@@ -200,7 +205,11 @@ Animus::Curriculum::Opponents::OpponentPool::OpponentPool()
                 if (caster)
                     _castersByLevel[level].push_back(entry);
                 if (hazard)
+                {
                     _hazardCastersByLevel[level].push_back(entry);
+                    if (auto const spell = hazardSpellOf.find(entry); spell != hazardSpellOf.end())
+                        _hazardSpellsByLevel[level].push_back(spell->second);
+                }
             }
 
             opponents += defaultAI ? 1 : 0;
@@ -263,6 +272,11 @@ uint32 Animus::Curriculum::Opponents::OpponentPool::RandomCaster(uint8 level) co
 uint32 Animus::Curriculum::Opponents::OpponentPool::RandomHazardCaster(uint8 level) const
 {
     return PickNear(_hazardCastersByLevel, level);
+}
+
+uint32 Animus::Curriculum::Opponents::OpponentPool::RandomHazardSpell(uint8 level) const
+{
+    return PickNear(_hazardSpellsByLevel, level);
 }
 
 Position Animus::Curriculum::Opponents::FindSpawnPoint(Player* bot, Map* map)

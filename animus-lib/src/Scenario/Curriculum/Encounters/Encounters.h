@@ -85,6 +85,36 @@ namespace Animus::Curriculum
     /// fights at a tier, its opponents come from the next one -- a level or more above it, then elites. A fight that
     /// simple play wins every time teaches nothing a plan would add. An evaluation spreads its seeds over every tier
     /// instead, so two checkpoints meet the same fights.
+    /// A hazard drill with nothing to fight: fire lands under each seat every few seconds and stays, so the only
+    /// thing that hurts is standing still. A trap gameobject is the one ground hazard with no unit behind it, which
+    /// is what lets the stage have fire without an enemy (see HazardEncounter.cpp for why it is placed there).
+    class HazardEncounter final : public Encounter
+    {
+    public:
+        HazardEncounter(StageScenario& scenario, uint32 envs);
+
+        void AddEpisodeInfo(EpisodeInfoTable& table) override;
+        void ResetEpisode(Env& env) override;
+        void BeforeRebuild(Env& env) override;
+        bool Build(Env& env, Map* map, uint8 level) override;
+        void Update(Env& env) override;
+        [[nodiscard]] bool IsTerminal(Env const& env) const override;
+
+    private:
+        struct EnvHazards
+        {
+            ObjectGuid Emitter;             // the invisible trigger that lays the ground
+            uint32 Spell = 0;               // the persistent area aura it casts, drawn per episode for the level
+            uint32 Placed = 0;              // patches this episode, for the episode info
+            uint32 NextMs = 0;              // episode time the next patch is due
+        };
+
+        /// Remove whatever is still burning.
+        void Clear(Env& env);
+
+        std::vector<EnvHazards> _envs;
+    };
+
     class CreatureEncounter final : public Encounter
     {
     public:

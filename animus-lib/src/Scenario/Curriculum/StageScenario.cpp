@@ -326,6 +326,7 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
     };
     auto const hasPulls = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Pulls; };
     auto const hasCreature = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Creature; };
+    auto const hasHazards = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Hazards; };
     auto const hasAmbush = [](ArenaDefinition const& arena) { return arena.Ambushers > 0; };
     auto const hasTravel = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Travel; };
     auto const hasFlag = [](ArenaDefinition const& arena) { return arena.Against == Opposition::Flag; };
@@ -344,6 +345,10 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
         pulls = add(std::make_unique<PullsEncounter>(*this, envs));
     if (_stage.AnyArena(hasCreature))
         creature = add(std::make_unique<CreatureEncounter>(*this, envs));
+    // Nothing to fight and nothing to order: it only puts fire on the ground, so it can go anywhere in the order.
+    Encounter* hazards = nullptr;
+    if (_stage.AnyArena(hasHazards))
+        hazards = add(std::make_unique<HazardEncounter>(*this, envs));
     // After the owner and the pulls: ambushers find the owner and take the slots the pull leaves.
     if (_stage.AnyArena(hasAmbush))
         ambush = add(std::make_unique<AmbushEncounter>(*this, envs));
@@ -361,9 +366,11 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
         director = add(std::move(owned));
     }
 
-    // The order episode info columns and reward terms are listed in.
-    for (Encounter* encounter : std::initializer_list<Encounter*>{ creature, pulls, _owner, _party, opponent, ambush,
-        travel, flag, director })
+    // The order episode info columns and reward terms are listed in. An encounter left out of this list still
+    // runs -- it is only the columns and the terms that are missed -- which is how hazard_patches went missing
+    // while the drill around it worked.
+    for (Encounter* encounter : std::initializer_list<Encounter*>{ creature, pulls, hazards, _owner, _party,
+        opponent, ambush, travel, flag, director })
         if (encounter)
             _rewardOrder.push_back(encounter);
 
@@ -377,6 +384,7 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
                 || (encounter == _party && arena.PartyGroup) || (encounter == pulls && hasPulls(arena))
                 || (encounter == creature && hasCreature(arena)) || (encounter == ambush && hasAmbush(arena))
                 || (encounter == travel && hasTravel(arena)) || (encounter == flag && hasFlag(arena))
+                || (encounter == hazards && hasHazards(arena))
                 || (encounter == director && directed(arena));
         };
 
@@ -412,8 +420,11 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
 
     _spec.LongestEpisodeSeconds = longestMs / IN_MILLISECONDS;
 
-    if (_stage.AnyArena(hasCreature) || _stage.AnyArena(hasPulls))
-        Opponents::OpponentPool::Instance();    // load it at startup rather than on the first episode
+    // Load it at startup rather than on the first episode. A hazard stage fights nothing but still draws its
+    // ground from the pool (OpponentPool::RandomHazardSpell), and without this the first episode of every env
+    // paid for the load.
+    if (_stage.AnyArena(hasCreature) || _stage.AnyArena(hasPulls) || _stage.AnyArena(hasHazards))
+        Opponents::OpponentPool::Instance();
     ConsumablePool::Instance();
 
     AddCoreEpisodeInfo();

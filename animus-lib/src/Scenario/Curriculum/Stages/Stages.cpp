@@ -85,13 +85,14 @@ namespace
             .Name = "stage3_hazards",
             .Suffix = "_hazards",
             .Extends = "stage2_pack",
-            .Summary = "a pack with something on the ground in every pull: see it, and walk out of it",
+            .Summary = "nothing to fight, only ground to get off: fire lands underfoot and stays",
             .Blocks = { Core, Duel, Pet, Pack, Support },
-            // Pinned to the bottom rung: two creatures, one of them putting something on the ground. The drill
-            // is stepping out of it, so that is the only thing allowed to be hard. With the ladder free the pack
-            // grew around the hazard and the stage stopped being about the hazard.
-            .Arenas = { { .Name = "hazards", .Against = Opposition::Pulls, .Schedule = PullSchedule::SinglePack,
-                .EpisodeSeconds = 120, .Hazards = true, .MaxRung = 0 } },
+            // Nothing is spawned to fight. Fire lands under each seat every few seconds and lingers, so standing
+            // still is the only thing that hurts and moving is the only way to spend less. With a pack in the
+            // arena the hazard was one charge among many and its numbers could not be read on their own; with the
+            // pack gone, hazard_seconds and hazard_damage are the whole stage.
+            .Arenas = { { .Name = "hazards", .Against = Opposition::Hazards, .Schedule = PullSchedule::None,
+                .EpisodeSeconds = 120 } },
         });
 
         stages.push_back({
