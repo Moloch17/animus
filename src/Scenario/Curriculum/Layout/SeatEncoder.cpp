@@ -114,10 +114,21 @@ void Animus::Curriculum::SeatEncoder::Apply(SeatView& view, int32 action, SeatAc
                 continue;
             }
 
+            // A bearing is the seat steering, so any other movement ends it -- there is no direction that agrees
+            // with a compass point the seat chose for itself. A fresh bearing ends it here and Apply starts the new
+            // one straight after, which is how one bearing replaces another.
+            if (option.Kind == SeatOptionKind::MoveBearing)
+            {
+                if (movement)
+                    option = SeatOption();
+                continue;
+            }
+
             // Only movement that contradicts it: backing off ends staying on the target, closing in ends keeping
-            // range, and a step that does neither (to casting range, stop, follow) leaves both alone.
+            // range, and a step that does neither (to casting range, stop, follow) leaves both alone. A bearing has
+            // no direction of its own (MoveBlock::MoveDirection), so it ends these through `movement` below.
             int8 const against = option.Kind == SeatOptionKind::StayOnTarget ? -1 : 1;
-            if (movement && direction == against)
+            if (movement && (direction == against || direction == 0))
                 option = SeatOption();
         }
     }

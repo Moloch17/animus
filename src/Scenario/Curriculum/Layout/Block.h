@@ -43,6 +43,7 @@ namespace Animus::Curriculum
     enum class BlockId : uint8
     {
         Core,           // the character, its spells, trinkets and talents
+        Move,           // where it puts its feet, with no reference to a target: bearings and facing
         Duel,           // movement, auto-attack, pets, stopping casts and forms, the opponent's position
         Pack,           // enemy slots, target selection, tactical spells
         Gauntlet,       // pull timing, food, drink, sustain spells
