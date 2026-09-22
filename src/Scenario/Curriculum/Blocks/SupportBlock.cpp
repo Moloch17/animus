@@ -74,15 +74,15 @@ namespace
         return std::clamp(left, 0.0f, 1.0f);
     }
 
-    /// The role of the unit in friend slot `slot`, if the seat knows it.
-    std::optional<Role> RoleOf(SeatView const& view, uint32 slot)
+    /// What the unit in friend slot `slot` can do, if the seat knows.
+    std::optional<Aptitude> AptitudeOf(SeatView const& view, uint32 slot)
     {
         if (slot == FRIEND_SELF)
-            return view.PlayRole;
+            return view.Apt;
         if (slot == FRIEND_OWNER)
-            return view.OwnerRole;
+            return view.OwnerApt;
         return view.Teammates[slot - FRIEND_TEAMMATE_FIRST].Bot
-            ? std::optional<Role>(view.Teammates[slot - FRIEND_TEAMMATE_FIRST].PlayRole) : std::nullopt;
+            ? std::optional<Aptitude>(view.Teammates[slot - FRIEND_TEAMMATE_FIRST].Apt) : std::nullopt;
     }
 }
 
@@ -146,8 +146,8 @@ void Animus::Curriculum::SupportBlock::Observe(SeatView const& view, float* obs,
             ++attackers;
         features[FRIEND_ATTACKERS] = std::min(1.0f, float(attackers) / float(PACK_SLOTS));
 
-        if (std::optional<Role> role = RoleOf(view, slot))
-            features[FRIEND_ROLE_FIRST + uint32(*role)] = 1.0f;
+        if (std::optional<Aptitude> aptitude = AptitudeOf(view, slot))
+            aptitude->WriteBrief(features + FRIEND_APTITUDE_FIRST);
 
         if (other->IsAlive())
         {

@@ -384,12 +384,13 @@ namespace
     }
 }
 
-void Animus::Curriculum::ScriptedPlayer::Configure(Player* player, ClassAssets const& assets, Role role,
-    State& state, bool pvp)
+void Animus::Curriculum::ScriptedPlayer::Configure(Player* player, ClassAssets const& assets,
+    AptitudeDemand demand, State& state, bool pvp)
 {
-    // The role is the caller's, not the profile's: one class profile now holds every spec the class can be, so
-    // which of them this player draws is what decides whether it tanks, heals or deals damage.
-    SpecProfile const& spec = assets.Profile->Specs[DrawSpec(*assets.Profile, role)];
+    // What this player is there for is the caller's business, not the profile's: one class profile holds every
+    // build the class can have, and which of them it draws is what decides what it can do.
+    uint8 const specIndex = DrawSpec(assets, demand);
+    SpecProfile const& spec = assets.Profile->Specs[specIndex];
 
     GearBuilder::LearnProficiencies(player);
     assets.Talents->Apply(player, assets.Talents->Standard(spec.Name, spec.TabPage, player->GetFreeTalentPoints()));
@@ -404,11 +405,15 @@ void Animus::Curriculum::ScriptedPlayer::Configure(Player* player, ClassAssets c
     player->SetPower(POWER_ENERGY, player->GetMaxPower(POWER_ENERGY));
 
     state = State();
-    state.PlayRole = spec.PlayRole;
+    state.Spec = specIndex;
     state.Ranged = spec.Range == RangeBand::Ranged;
+    // Read after the build and the gear are on, so it describes the player that is actually standing there.
+    state.Apt = Aptitude::Of(assets, assets.Talents->Standard(spec.Name, spec.TabPage,
+        TalentBuilder::MAX_POINTS), player);
 
     if (player->getClass() == CLASS_WARRIOR)
-        player->CastSpell(player, state.PlayRole == Role::Tank && player->HasSpell(SPELL_DEFENSIVE_STANCE)
+        player->CastSpell(player, AptitudeDemand::HoldsThePull().MetBy(state.Apt)
+            && state.Apt[Aptitude::TAUNT] > 0.0f && player->HasSpell(SPELL_DEFENSIVE_STANCE)
             ? SPELL_DEFENSIVE_STANCE : SPELL_BATTLE_STANCE, true);
 
     // Its repertoire, highest ranks only: harmful single-target combat spells, heals and taunts.
@@ -454,19 +459,21 @@ void Animus::Curriculum::ScriptedPlayer::UpdateMember(Player* member, std::vecto
     if (!member || !member->IsAlive())
         return;
 
-    switch (state.PlayRole)
+    // What it does follows from what it can do. Holding the pull comes first: a build that can do both is more
+    // use in front of the enemies than behind them.
+    if (AptitudeDemand::HoldsThePull().MetBy(state.Apt) && state.Apt[Aptitude::TAUNT] > 0.0f)
     {
-        case Role::Tank:
-            UpdateTank(member, enemies, nowMs, home, state, tuning);
-            return;
-        case Role::Heal:
-            UpdateHealer(member, party, tank, enemies, nowMs, home, state, tuning);
-            return;
-        case Role::Dps:
-            break;
+        UpdateTank(member, enemies, nowMs, home, state, tuning);
+        return;
     }
 
-    // A damage dealer fights the tank's target once the tank has one.
+    if (AptitudeDemand::KeepsThemUp().MetBy(state.Apt))
+    {
+        UpdateHealer(member, party, tank, enemies, nowMs, home, state, tuning);
+        return;
+    }
+
+    // Anything else fights the tank's target once the tank has one.
     Unit* tankTarget = tank && tank != member && tank->IsAlive() ? tank->GetVictim() : nullptr;
     Unit* target = tankTarget && tankTarget->IsAlive() ? tankTarget : DefaultTarget(member, enemies);
     if (!target)
@@ -506,7 +513,7 @@ void Animus::Curriculum::ScriptedPlayer::UpdateOpponent(Player* player, Player* 
     if (player->IsNonMeleeSpellCast(false))
         return;
 
-    if (state.PlayRole == Role::Heal && player->GetHealthPct() < tuning.SelfHealBelow * 100.0f
+    if (AptitudeDemand::KeepsThemUp().MetBy(state.Apt) && player->GetHealthPct() < tuning.SelfHealBelow * 100.0f
         && !state.Heals.empty() && nowMs >= state.NextHealMs)
     {
         player->GetMotionMaster()->Clear();

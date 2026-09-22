@@ -219,7 +219,19 @@ namespace Animus::Curriculum::Encoding
     /// only happens for something already detectable.
     [[nodiscard]] bool CanSee(WorldObject const* watcher, WorldObject const* target);
 
-    void MoveTo(Player* bot, uint32 pointId, float x, float y, float z);
+    /// Walk to a point, by path. `facing` turns the head as it goes: it has to be part of the same spline,
+    /// because a spline sets the unit's orientation as it runs and a facing applied by any other means is
+    /// overwritten the moment the unit moves. Null leaves the head to the spline, which points it along the path.
+    void MoveTo(Player* bot, uint32 pointId, float x, float y, float z, float const* facing = nullptr);
+
+    /// Move along a straight spline through the air or the water, with no path and no ground under it. Steering in
+    /// three dimensions needs this: a ground move is snapped to the ground by definition, which is exactly what a
+    /// dive or a climb is trying not to be. `facing` as above.
+    /// Straight to a point with no pathfinding and no fly flag: how a seat enters and crosses water,
+    /// where the walkable mesh stops at the surface.
+    void SwimTo(Player* bot, float x, float y, float z, float const* facing = nullptr);
+
+    void FlyTo(Player* bot, float x, float y, float z, float const* facing = nullptr);
 
     /// Send the bot's pets and guardians at `target`, as the pet bar's Attack does. True if any was ordered.
     bool PetAttack(Player* bot, Unit* target);

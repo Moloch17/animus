@@ -93,7 +93,7 @@ void Animus::Curriculum::PvpBlock::Observe(SeatView const& view, float* obs, uin
     WriteDiminishing(opponent, obs + OBS_OPPONENT_DR_FIRST);
 
     WriteOneHot(PLAYABLE_CLASSES, view.OpponentClass, obs + OBS_OPPONENT_CLASS_FIRST);
-    obs[OBS_OPPONENT_ROLE_FIRST + uint32(view.OpponentRole)] = 1.0f;
+    view.OpponentApt.WriteBrief(obs + OBS_OPPONENT_APTITUDE_FIRST);
     obs[OBS_OPPONENT_LEVEL_DIFF] = (float(opponent->GetLevel()) - float(bot->GetLevel())) / 5.0f;
 
     for (uint8 slot : { EQUIPMENT_SLOT_TRINKET1, EQUIPMENT_SLOT_TRINKET2 })

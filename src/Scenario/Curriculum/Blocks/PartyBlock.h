@@ -19,6 +19,7 @@
 #ifndef ANIMUS_LIB_CURRICULUM_PARTY_BLOCK_H
 #define ANIMUS_LIB_CURRICULUM_PARTY_BLOCK_H
 
+#include "Aptitude.h"
 #include "Block.h"
 
 namespace Animus::Curriculum
@@ -34,8 +35,11 @@ namespace Animus::Curriculum
         {
             OBS_ALIVE                   = 0,    // living players in the slots (bot and owner included) / 5
             OBS_LOWEST_HEALTH           = 1,    // the most hurt living ally's health (owner and teammates)
-            OBS_HAS_TANK                = 2,    // a living tank other than the bot
-            OBS_HAS_HEALER              = 3,    // a living healer other than the bot
+            /// The best mitigation and the best healing among the living teammates other than the bot. Two flags
+            /// once ("there is a tank", "there is a healer"); a group that has somebody most of the way to holding
+            /// a pull is in a different position from one that has nobody, and a flag could not say so.
+            OBS_BEST_MITIGATION         = 2,
+            OBS_BEST_HEALING            = 3,
             // The raid the seat's group is part of, which it cannot act on one by one (SeatView::RaidView). All
             // zero in a party, where the group is the whole of it.
             OBS_RAID_GROUP              = 4,    // the seat's group index / RAID_GROUPS
@@ -61,14 +65,17 @@ namespace Animus::Curriculum
             MEMBER_BEARING_SIN          = 5,
             MEMBER_BEARING_COS          = 6,
             MEMBER_IN_COMBAT            = 7,
-            MEMBER_ROLE_FIRST           = 8,    // one-hot: damage, tank, healer
-            MEMBER_CLASS_FIRST          = 11,   // one-hot over PLAYABLE_CLASSES
-            MEMBER_ATTACKERS            = 21,   // enemies attacking it / PACK_SLOTS
-            MEMBER_TARGET_FIRST         = 22,   // one-hot: which enemy slot it attacks
-            MEMBER_NO_TARGET            = 26,
-            MEMBER_SLOT_ON_FIRST        = 27,   // per enemy slot: attacking it
-            MEMBER_GOAL_FIRST           = 31,   // one-hot over GOAL_COUNT: the goal it is pursuing (none: all 0)
-            MEMBER_FEATURES             = 31 + GOAL_COUNT
+            /// What it can do, as the six-number brief of its Aptitude (mitigation, healing, melee, spell,
+            /// control, pet). It was a three-wide role one-hot; "that one is a healer" is less than "that one has
+            /// these heals", and the second is true of a build nobody planned.
+            MEMBER_APTITUDE_FIRST       = 8,
+            MEMBER_CLASS_FIRST          = 14,   // one-hot over PLAYABLE_CLASSES
+            MEMBER_ATTACKERS            = 24,   // enemies attacking it / PACK_SLOTS
+            MEMBER_TARGET_FIRST         = 25,   // one-hot: which enemy slot it attacks
+            MEMBER_NO_TARGET            = 29,
+            MEMBER_SLOT_ON_FIRST        = 30,   // per enemy slot: attacking it
+            MEMBER_GOAL_FIRST           = 34,   // one-hot over GOAL_COUNT: the goal it is pursuing (none: all 0)
+            MEMBER_FEATURES             = 34 + GOAL_COUNT
         };
 
         enum Action : uint32

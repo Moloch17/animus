@@ -27,14 +27,10 @@
 
 namespace Animus::Curriculum
 {
-    enum class Role : uint8
-    {
-        Dps,
-        Tank,
-        Heal,
-    };
-
-    constexpr uint32 ROLE_COUNT = 3;
+    /// Most specs any class has (the druid's four: balance, feral_cat, feral_bear, restoration). Grids keyed on
+    /// (class, spec) -- the difficulty ladder, the training weights -- are this wide per class and leave the unused
+    /// rows of a class with fewer specs empty, which keeps the shape fixed whichever classes a run plays.
+    constexpr uint32 MAX_SPECS = 4;
 
     /// The playable races and classes, in the order of every one-hot over them (observations, critic state).
     constexpr std::array<uint8, 10> PLAYABLE_RACES =
@@ -92,10 +88,9 @@ namespace Animus::Curriculum
     {
         std::string Name;               // "arms"
         uint8 TabPage = 0;              // talent tab: 0, 1 or 2 in TalentTab.dbc order
-        /// The role this spec plays. It belongs to the spec and not to the class: protection tanks and retribution
-        /// deals damage out of the same paladin, and feral_bear and feral_cat are a tank and a damage dealer sharing
-        /// one talent tab. A seat's role is the role of the spec it drew.
-        Role PlayRole = Role::Dps;
+        // No role. What a spec is for is not a fact about it that anybody should be writing down -- it is a
+        // consequence of the build, and Aptitude reads it off the build. StatProfile stays, because which item
+        // stats to gear for really is a property of the template and is only ever read while generating gear.
         StatProfile Stats = StatProfile::StrengthMelee;
         RangeBand Range = RangeBand::Melee;
         std::vector<WeaponLayout> Weapons;
@@ -116,24 +111,10 @@ namespace Animus::Curriculum
         uint8 Class = 0;
         std::vector<SpecProfile> Specs;
 
-        /// The indices of Specs that play `role`, empty if the class has none.
-        [[nodiscard]] std::vector<uint8> SpecsOf(Role role) const;
-        [[nodiscard]] bool Plays(Role role) const;
     };
 
     /// Every class model, in a stable order.
     std::vector<ClassProfile> const& ClassProfiles();
-
-    /// A random spec of `profile` that plays `role`, as an index into Specs. A class asked for a role it has no
-    /// spec for falls back to any of them, which is what a caller wants when the stage's composition cannot be
-    /// filled exactly (a party needing a tank from a run with no tanking class).
-    [[nodiscard]] uint8 DrawSpec(ClassProfile const& profile, Role role);
-
-    [[nodiscard]] char const* RoleName(Role role);
-
-    /// A random role: tank with `tankChance` percent, healer with `healerChance`, a damage dealer otherwise (one roll
-    /// from the world thread's random numbers, so seeded episodes draw the same role).
-    [[nodiscard]] Role RollRole(int32 tankChance, int32 healerChance);
 
     /// Per-decision damage scale of a level: roughly how a well-geared character's damage grows with level, so damage
     /// features and rewards have a similar size at every level (about 16 at level 1, 230 at 40, 3500 at 80).

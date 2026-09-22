@@ -37,11 +37,12 @@ namespace Animus::Curriculum::ScriptedPlayer
 {
     using Tuning = CurriculumTuning::ScriptedPlayerTuning;
 
-    /// A scripted player's role, timers and repertoire.
+    /// A scripted player's build, timers and repertoire.
     struct State
     {
-        Role PlayRole = Role::Dps;
-        bool Ranged = false;            // its spec fights at range
+        Aptitude Apt;                   // what its build can do, which is what decides what it does
+        uint8 Spec = 0;                 // which of its class's builds it drew
+        bool Ranged = false;            // its build fights at range
         uint32 EngageMs = 0;            // don't engage a pull before this episode time
         uint32 NextMoveMs = 0;
         uint32 NextSpellMs = 0;
@@ -72,14 +73,14 @@ namespace Animus::Curriculum::ScriptedPlayer
         uint32 SneakUntilMs = 0;        // ... giving up at this episode time, so a failed shift cannot stall it
     };
 
-    /// Dress a placed bot of the assets' class and role: proficiencies, a random build of one of the role's specs,
-    /// trainer spells for its level, gear (PvP gear too when `pvp`). Fills state's repertoire and role.
-    void Configure(Player* player, ClassAssets const& assets, Role role, State& state, bool pvp);
+    /// Dress a placed bot of the assets' class: proficiencies, a build of one of the specs that meets `demand`,
+    /// trainer spells for its level, gear (PvP gear too when `pvp`). Fills state's repertoire and aptitude.
+    void Configure(Player* player, ClassAssets const& assets, AptitudeDemand demand, State& state, bool pvp);
 
-    /// One decision of a scripted party member (see State::PlayRole):
-    /// - tank: engages first, goes for enemies attacking someone else and taunts them off;
-    /// - healer: heals the most hurt party member, keeps near the tank, and only casts damage spells when nobody needs
-    ///   healing;
+    /// One decision of a scripted party member, which follows from what its build can do (State::Apt):
+    /// - it can hold the pull: engages first, goes for enemies attacking someone else and taunts them off;
+    /// - it can heal: heals the most hurt party member, keeps near the tank, and only casts damage spells when
+    ///   nobody needs healing;
     /// - damage dealer: between pulls it wanders near `home`, recovering health and mana; once a pull is up (and
     ///   state.EngageMs has passed) it fights the tank's target, else the enemy attacking it, else the nearest.
     /// `party` is every party player, the member itself included; `tank` the party's tank (may be null).

@@ -199,14 +199,26 @@ void Animus::Curriculum::OpponentEncounter::AddEpisodeInfo(EpisodeInfoTable& tab
         return other.L ? float(other.L->Profile->Class) : 0.0f;
     });
 
-    table.Add("opponent_role", [this](Env const& env, uint32 seat)
+    // What it could do, rather than what somebody would have called it. Two numbers instead of a code, because
+    // "it can hold a pull" and "it can heal" are the two that change how a fight against it goes.
+    auto const opponentApt = [this](Env const& env, uint32 seat) -> Aptitude
     {
         if (!Mirror(env))
-            return float(uint32(_envs[env.Index].PlayRole));
+            return _envs[env.Index].Apt;
         if (seat > 1)
-            return 0.0f;
+            return Aptitude();
         SeatState const& other = _scenario.Data(env).Seats[1 - seat];
-        return other.L ? float(uint32(other.PlayRole())) : 0.0f;
+        return other.L ? other.Apt : Aptitude();
+    };
+
+    table.Add("opponent_mitigation", [opponentApt](Env const& env, uint32 seat)
+    {
+        return opponentApt(env, seat)[Aptitude::MITIGATION];
+    });
+    table.Add("opponent_healing", [opponentApt](Env const& env, uint32 seat)
+    {
+        Aptitude const apt = opponentApt(env, seat);
+        return std::max(apt[Aptitude::DIRECT_HEAL], apt[Aptitude::HOT_HEAL]);
     });
 }
 
@@ -318,7 +330,7 @@ bool Animus::Curriculum::OpponentEncounter::RebuildScripted(Env& env, Player* bo
     opponent.Script.EngageMs = env.EpisodeElapsedMs + urand(0, tuning.EngageMaxMs);
     MakeEnemies(bot, spawned.Bot);
     opponent.Class = spawned.Class;
-    opponent.PlayRole = spawned.PlayRole;
+    opponent.Apt = spawned.Apt;
     return true;
 }
 
@@ -380,12 +392,12 @@ void Animus::Curriculum::OpponentEncounter::View(Env const& env, uint32 seat, Se
         uint32 const chosen = view.TargetSlot < count ? enemies[view.TargetSlot] : NO_SEAT;
         SeatState const* other = chosen != NO_SEAT ? &data.Seats[chosen] : nullptr;
         view.OpponentClass = other && other->L ? other->L->Profile->Class : 0;
-        view.OpponentRole = other && other->L ? other->PlayRole() : Role::Dps;
+        view.OpponentApt = other && other->L ? other->Apt : Aptitude();
         return;
     }
 
     view.OpponentClass = _envs[env.Index].Class;
-    view.OpponentRole = _envs[env.Index].PlayRole;
+    view.OpponentApt = _envs[env.Index].Apt;
 }
 
 /// Getting out of sight, and being paid for the moment it happens.
@@ -547,7 +559,7 @@ void Animus::Curriculum::OpponentEncounter::Deactivate(Env& env)
 {
     Teardown(env);
     _envs[env.Index].Class = 0;
-    _envs[env.Index].PlayRole = Role::Dps;
+    _envs[env.Index].Apt = Aptitude();
 }
 
 void Animus::Curriculum::OpponentEncounter::Teardown(Env& env)

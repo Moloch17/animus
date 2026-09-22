@@ -36,7 +36,6 @@ namespace
 {
     using namespace Animus::Curriculum;
 
-    constexpr uint32 TRAVEL_MOVE_POINT_ID = 6;
     constexpr float MAX_GROUND_SEARCH = 200.0f;
     constexpr float AIRBORNE_ABOVE = 2.0f;      // higher than this without flight is falling
 
@@ -92,23 +91,12 @@ namespace
         return Animus::SpellChecks::CheckCast(bot, mount, targets, nullptr);
     }
 
-    /// Fly along a straight spline (flight needs no path and no ground).
-    void FlyTo(Player* bot, float x, float y, float z)
-    {
-        bot->GetMotionMaster()->Clear();
-        Movement::MoveSplineInit init(bot);
-        init.MoveTo(x, y, z, false, true);
-        init.SetFly();
-        init.Launch();
-    }
-
     bool IsAllowed(SeatView const& view, uint32 action)
     {
         Player* bot = view.Bot;
         if (!bot->IsAlive())
             return false;
 
-        bool const busy = Encoding::CastInProgress(bot) || bot->HasUnitState(Encoding::IMMOBILE_STATES);
         switch (action)
         {
             case TravelBlock::ACTION_MOUNT_GROUND:
@@ -117,12 +105,6 @@ namespace
                 return view.MountsAllowed && CanSummon(bot, TravelBlock::FlyingMount(bot));
             case TravelBlock::ACTION_DISMOUNT:
                 return bot->IsMounted();
-            case TravelBlock::ACTION_MOVE_TO_OBJECTIVE:
-                return view.HasObjective && !busy && !TravelBlock::AtObjective(bot, view.Objective);
-            case TravelBlock::ACTION_ASCEND:
-                return bot->CanFly() && !busy && TravelBlock::HeightAboveGround(bot) < TravelBlock::MAX_ALTITUDE;
-            case TravelBlock::ACTION_DESCEND:
-                return bot->CanFly() && !busy && TravelBlock::HeightAboveGround(bot) > 0.5f;
             default:
                 return false;
         }
@@ -282,9 +264,6 @@ void Animus::Curriculum::TravelBlock::Apply(SeatView& view, uint32 local, SeatAc
         return;
 
     Player* bot = view.Bot;
-    float const x = bot->GetPositionX();
-    float const y = bot->GetPositionY();
-    float const z = bot->GetPositionZ();
 
     switch (local)
     {
@@ -307,35 +286,6 @@ void Animus::Curriculum::TravelBlock::Apply(SeatView& view, uint32 local, SeatAc
             bot->RemoveAurasByType(SPELL_AURA_MOUNTED);
             FallIfAirborne(bot);
             return;
-        case ACTION_MOVE_TO_OBJECTIVE:
-        {
-            Position const& objective = view.Objective;
-            if (bot->CanFly())
-            {
-                // Straight at it, down to landing height. Holding the seat's altitude instead was a one-way
-                // ratchet: a seat that drifted up stayed up through every move after it and could only come down
-                // by choosing DESCEND often enough to satisfy AtObjective, and altitude costs the whole trip --
-                // 1 yd up flew at 16 yd/s and saved 0.39, 69 yd up saved nothing. The clamp was there to clear
-                // what is in the way, and a spline does not collide, so nothing ever was.
-                float const ground = bot->GetMapHeight(objective.GetPositionX(), objective.GetPositionY(),
-                    objective.GetPositionZ(), true, MAX_GROUND_SEARCH);
-                float const landing = (ground > INVALID_HEIGHT ? ground : objective.GetPositionZ()) + 1.0f;
-                FlyTo(bot, objective.GetPositionX(), objective.GetPositionY(), landing);
-            }
-            else
-                Encoding::MoveTo(bot, TRAVEL_MOVE_POINT_ID, objective.GetPositionX(), objective.GetPositionY(),
-                    objective.GetPositionZ());
-            return;
-        }
-        case ACTION_ASCEND:
-            FlyTo(bot, x, y, z + CLIMB_STEP);
-            return;
-        case ACTION_DESCEND:
-        {
-            float const ground = z - HeightAboveGround(bot);
-            FlyTo(bot, x, y, std::max(ground + 0.5f, z - CLIMB_STEP));
-            return;
-        }
         default:
             return;
     }

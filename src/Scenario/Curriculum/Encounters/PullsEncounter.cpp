@@ -388,12 +388,12 @@ bool Animus::Curriculum::PullsEncounter::SpawnPull(Env& env, Map* map)
     {
         bool const raid = arena.Seats == SeatPlan::Raid;
         uint16 const layout = data.Seats[0].L ? data.Seats[0].L->Index : 0;
-        Role const role = data.Seats[0].PlayRole();
-        DifficultyLadder::Pick const pick = _ladder.Draw(env, layout, role, MaxRung(env));
+        uint8 const spec = data.Seats[0].Spec;
+        DifficultyLadder::Pick const pick = _ladder.Draw(env, layout, spec, MaxRung(env));
         PackRung const& rung = raid ? RAID_RUNGS[pick.Tier] : PACK_RUNGS[pick.Tier];
         pulls.Rung = pick.Tier;
         pulls.RungLayout = layout;
-        pulls.RungRole = role;
+        pulls.RungSpec = spec;
         pulls.RungCounts = pick.Counts;
 
         level = uint8(std::min<uint32>(HIGHEST_OPPONENT_LEVEL, botLevel + rung.Levels));
@@ -1060,7 +1060,7 @@ void Animus::Curriculum::PullsEncounter::Reward(Env& env, uint32 seatIndex, Play
     if (seatIndex == 0 && pulls.RungCounts && !pulls.RungRecorded && (tally.Killed || tally.Died || tally.TimedOut))
     {
         pulls.RungRecorded = true;
-        _ladder.Record(pulls.RungLayout, pulls.RungRole, pulls.Rung, tally.Killed && !tally.Died, MaxRung(env));
+        _ladder.Record(pulls.RungLayout, pulls.RungSpec, pulls.Rung, tally.Killed && !tally.Died, MaxRung(env));
     }
 }
 

@@ -19,6 +19,7 @@
 #ifndef ANIMUS_LIB_CURRICULUM_STAGE_STATE_H
 #define ANIMUS_LIB_CURRICULUM_STAGE_STATE_H
 
+#include "Aptitude.h"
 #include "Block.h"
 #include "BotSlot.h"
 #include "ObjectGuid.h"
@@ -129,18 +130,16 @@ namespace Animus::Curriculum
         Layout const* L = nullptr;              // null for a party seat left empty this episode
         BotSlot Bot;
 
-        /// The role this seat is playing, which is the role of the spec it drew. It used to be a property of the
-        /// layout, back when a layout was a class and a role; one model per class means the layout no longer knows,
-        /// and the seat does.
-        [[nodiscard]] Role PlayRole() const;
-
         uint8 Race = 0;
         uint8 Level = 1;
         uint8 Spec = 0;
-        /// What the arena's composition asked this seat to be, recorded when the layout was drawn so the spec draw
-        /// can honour it. A layout is a class now, and a class plays several roles, so the two happen apart: the
-        /// class is chosen when the seats are laid out and the spec when the character is built.
-        Role WantRole = Role::Dps;
+        /// What this character can actually do, read off the talents and gear it was built with (Aptitude). This is
+        /// what the seat observes about itself and what everything else observes about it; there is no role.
+        Aptitude Apt;
+        /// What the arena's composition asked of this seat, recorded when the layout was drawn so the spec draw can
+        /// honour it. A layout is a class, and a class has several builds, so the two happen apart: the class is
+        /// chosen when the seats are laid out and the spec when the character is built.
+        AptitudeDemand Want;
         SeatCharacter::TalentPlan TalentPlan = SeatCharacter::TalentPlan::Standard;
         TalentBuilder::Build Build;
         uint32 UnspentTalentPoints = 0;
@@ -166,6 +165,22 @@ namespace Animus::Curriculum
         SeatOptionSet Option;
         uint32 OptionPresses = 0;
         uint32 OptionMs = 0;
+        /// How the seat is steering, carried from decision to decision (MoveBlock). The compass point its feet are
+        /// walking, how it is holding its head, which way it is turning, and how far up or down it is looking.
+        ///
+        /// These used to live only on SeatView, which is rebuilt every decision -- so they reset before every
+        /// observation and every apply. A held bearing was therefore never re-issued (an eight-yard step, not a held
+        /// key), OBS_BEARING_HELD never fired, ACTION_HALT was masked off in every decision of every episode because
+        /// nothing was ever recorded as being walked, and FACE_TARGET and FACE_HEADING did nothing at all, because
+        /// FaceWhile only ever saw the "leave it where it is" default. Steering has to be remembered to work.
+        uint8 HeldBearing = 0xFF;
+        uint8 FacingMode = 0xFF;
+        int8 Turning = 0;                       // -1 left, +1 right, 0 not turning
+        int8 PitchTurning = 0;                  // the pitch key held: -1 down, +1 up, 0 none
+        float Pitch = 0.0f;                     // radians above (+) or below (-) level; only used off the ground
+        /// The clock its head went under water, or 0 while it is up. Kept as an instant rather than a total so it
+        /// needs no per-decision accumulation, and resets the moment the seat surfaces -- which is what a breath is.
+        uint32 SubmergedSinceMs = 0;
         uint32 ItemUses = 0;
         bool InCombat = false;
         uint32 CombatStartMs = 0;               // episode time the bot entered its current combat
@@ -337,6 +352,9 @@ namespace Animus::Curriculum
     struct EnvState
     {
         uint32 Arena = NO_ARENA;                // index into the stage's arenas: what this episode is
+        /// Which spawn point this episode drew, into whichever list it drew from. Drawn once at the reset and
+        /// held, because the seat is placed from it and the state's origin is read off it every decision.
+        uint32 Spawn = 0;
         std::array<SeatState, MAX_SEATS> Seats;
         uint32 ActiveSeats = 1;                 // seats with a character this episode (the first ones)
         bool Fresh = false;                     // built by Setup, not yet reset

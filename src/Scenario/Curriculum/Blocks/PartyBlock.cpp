@@ -140,7 +140,7 @@ void Animus::Curriculum::PartyBlock::Observe(SeatView const& view, float* obs, u
         features[MEMBER_BEARING_SIN] = std::sin(bearing);
         features[MEMBER_BEARING_COS] = std::cos(bearing);
         features[MEMBER_IN_COMBAT] = teammate->IsInCombat() ? 1.0f : 0.0f;
-        features[MEMBER_ROLE_FIRST + uint32(other.PlayRole)] = 1.0f;
+        other.Apt.WriteBrief(features + MEMBER_APTITUDE_FIRST);
         WriteOneHot(PLAYABLE_CLASSES, other.Class, features + MEMBER_CLASS_FIRST);
 
         if (other.Goal >= 0 && other.Goal < int32(GOAL_COUNT))
@@ -168,10 +168,10 @@ void Animus::Curriculum::PartyBlock::Observe(SeatView const& view, float* obs, u
         {
             ++alive;
             lowest = std::min(lowest, teammate->GetHealthPct() / 100.0f);
-            if (other.PlayRole == Role::Tank)
-                obs[OBS_HAS_TANK] = 1.0f;
-            if (other.PlayRole == Role::Heal)
-                obs[OBS_HAS_HEALER] = 1.0f;
+            float brief[Aptitude::BRIEF_COUNT] = {};
+            other.Apt.WriteBrief(brief);
+            obs[OBS_BEST_MITIGATION] = std::max(obs[OBS_BEST_MITIGATION], brief[Aptitude::BRIEF_MITIGATION]);
+            obs[OBS_BEST_HEALING] = std::max(obs[OBS_BEST_HEALING], brief[Aptitude::BRIEF_HEALING]);
         }
     }
 

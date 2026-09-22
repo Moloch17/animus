@@ -17,24 +17,34 @@
  */
 
 /*
- * The curriculum, a tree: every stage extends one earlier stage (and seeds from it), keeping the base's
- * blocks it needs and adding its own.
+ * The curriculum. Every stage extends one earlier stage and seeds from it, keeping the base's blocks it needs and
+ * adding its own.
  *
- *   duel ─┬─ pack ─ gauntlet ─ companion ─ party ─┬─ crossroads     (PvE ...
- *         ├─ pvp ─ evade ─ hide ─┬─ arena ────────┘                  ... and PvP, merged)
- *         │                       └─ stealth (a leaf)              (closing unseen)
- *         └─ travel ─┬─ flight                                       (getting somewhere)
- *                    └─ (with arena) flag                            (Warsong Gulch's rules)
+ * **A class learns to walk before it learns to fight.** The first four stages have nothing to kill in them, and
+ * they are first on purpose: a seat now steers itself -- eight bearings under a held yaw and pitch, with the
+ * ground read along each of them -- and where a seat puts its feet is not something only some stages are about.
+ * Everything after them inherits legs that already work, and a stage that used to be about fighting while moving
+ * badly is now only about fighting.
  *
- * Scenario names carry the stage's number (stage1_duel ... stage22_warsong), model names only its suffix
- * (_duel). The
- * duel is the first stage: nothing seeds it.
+ *   move ─ dodge ─ travel ─ flight        the feet: ground, fire underfoot, the mount, the air
+ *        ─ duel ─ pack ─ gauntlet ─ endurance        alone, against things that fight back
+ *        ─ pvp ─ evade ─ hide ─ stealth ─ arena      against people
+ *        ─ companion ─ party ─ tanking ─ triage      beside others, still nobody commanding
+ *        ─ flag ─ warsong ─ duo_led                  an objective, and then a director
  *
- * A stage's episodes are its arenas (see ArenaDefinition): each episode draws one by weight, so a stage can mix PvE
- * and PvP situations over the union of their blocks. Stages 1-7 have one arena each.
+ * It is one line, deliberately. A branch is cheaper to train but it ends in several checkpoints, and everything
+ * a leaf teaches is thrown away unless the stage exported from is downstream of it -- which is how the drills,
+ * the raids and the team stages came to be a dead end. A linear chain ends in one leaf that carries everything.
+ *
+ * Scenario names carry the stage's number (stage1_move ... stage23_crossroads), model names only its suffix
+ * (_move). The move stage is the first: nothing seeds it.
+ *
+ * A stage's episodes are its arenas (see ArenaDefinition): each episode draws one by weight, so a stage can mix
+ * PvE and PvP situations, or three kinds of ground, over the union of their blocks.
  *
  * Adding a stage is one entry here (plus new blocks or encounters only if it needs new features) and a learner
- * config, configs/<name>.yaml.
+ * config, configs/<name>.yaml -- or configs/<class>/<name>.yaml for a run of a single class, which is how a
+ * per-class curriculum sets its own floors.
  */
 
 #include "StageDefinition.h"
@@ -46,6 +56,88 @@ namespace
 {
     using namespace Animus::Curriculum;
 
+    /// Kalimdor's training ground, shared by every stage that walks it.
+    ///
+    /// Five regions rather than one, because a spawn point is drawn per episode and what a policy never stands on
+    /// it cannot learn to read. Until 2026-09-21 this was eight points in the Barrens, picked by env index, so an
+    /// env stood on the same patch of scrub for its whole life and 128 of them saw eight places between them --
+    /// which a network can fit instead of learning to read what is in front of it. The Barrens is flat scrub,
+    /// Durotar canyon and rock, Mulgore open rolling grass, Dustwallow marsh and broken shore.
+    std::vector<Position> KalimdorGround()
+    {
+        return {
+            // The Barrens
+            { -872.0f, -2642.0f, 92.0f, 0.0f },   { -2298.0f, -1948.0f, 96.0f, 0.0f },
+            { -1967.0f, -2544.0f, 94.0f, 0.0f },  { -2605.0f, -2286.0f, 92.0f, 0.0f },
+            { -609.0f, -1614.0f, 94.0f, 0.0f },   { -881.0f, -3221.0f, 92.0f, 0.0f },
+            { -3077.0f, -1786.0f, 92.0f, 0.0f },  { -3115.0f, -2352.0f, 94.0f, 0.0f },
+            // Northern Barrens
+            { -652.0f, -2060.0f, 87.0f, 0.0f },   { -767.0f, -2062.0f, 81.0f, 0.0f },
+            { -672.0f, -2005.0f, 63.0f, 0.0f },   { -2068.0f, -2106.0f, 93.0f, 0.0f },
+            { -1942.0f, -1985.0f, 92.0f, 0.0f },  { -1991.0f, -2090.0f, 92.0f, 0.0f },
+            // Durotar
+            { -120.0f, -4284.0f, 63.0f, 0.0f },   { -5.0f, -4286.0f, 68.0f, 0.0f },
+            { -99.0f, -4212.0f, 53.0f, 0.0f },    { 642.0f, -4185.0f, 15.0f, 0.0f },
+            { 633.0f, -4298.0f, 18.0f, 0.0f },
+            // Mulgore
+            { -1207.0f, 105.0f, 135.0f, 0.0f },   { -1285.0f, 118.0f, 120.0f, 0.0f },
+            { -1210.0f, -93.0f, 163.0f, 0.0f },
+            // Dustwallow Marsh
+            { -2631.0f, -3607.0f, 42.0f, 0.0f },  { -2751.0f, -3660.0f, 39.0f, 0.0f },
+            { -2851.0f, -3650.0f, 33.0f, 0.0f },  { -2987.0f, -3940.0f, 39.0f, 0.0f },
+        };
+    }
+
+    /// Map 560's training ground, shared by the drills that fight people on it (evade, hide, stealth).
+    ///
+    /// One instance is a small world, so the split is by district rather than by region: the southern approaches
+    /// train, the northern farmland is kept back. Weaker separation than Kalimdor's -- a seat could carry
+    /// something across a thousand yards that it could not carry across a continent -- and it is what the map
+    /// allows. What it still tests is ground the weights were never updated against.
+    std::vector<Position> HillsbradGround()
+    {
+        return {
+            { 2161.0f, 232.0f, 57.0f, 0.0f },   { 2168.0f, 129.0f, 78.0f, 0.0f },
+            { 2067.0f, 109.0f, 55.0f, 0.0f },   { 2161.0f, 36.0f, 62.0f, 0.0f },
+            { 2637.0f, 717.0f, 57.0f, 0.0f },   { 2528.0f, 708.0f, 56.0f, 0.0f },
+        };
+    }
+
+    /// THE CONTROL GROUND on map 560: the northern farmland, which no training episode of these stages stands on.
+    std::vector<Position> HillsbradControl()
+    {
+        return {
+            { 1803.0f, 1071.0f, 12.0f, 0.0f },  { 1907.0f, 1093.0f, 23.0f, 0.0f },
+            { 1822.0f, 983.0f, 14.0f, 0.0f },   { 1884.0f, 968.0f, 14.0f, 0.0f },
+        };
+    }
+
+    /// THE CONTROL GROUND on Kalimdor: where scored episodes stand, and where training never does.
+    ///
+    /// Three regions in no training list, chosen for being as far from water as the map allows -- 1,500 to 5,000
+    /// yards from the nearest water-dwelling creature, which is the best proxy for "dry" the world data offers.
+    /// The first attempt used Teldrassil and the Azshara coast and the seats swam: 21 seconds an episode in the
+    /// open arena and 33 in the broken one, against 0.03 on the ground they train on. A control that is wet where
+    /// training is dry measures the coastline, not the policy.
+    ///
+    /// No weight is ever updated against this ground, so `arrived` and `saved` at a gate are claims about the seat
+    /// rather than about how many times it has seen the Barrens. If these track the training numbers the seat is
+    /// reading terrain; if they fall away, it had learned the places.
+    std::vector<Position> KalimdorControl()
+    {
+        return {
+            // Northern highlands, the far side of the map from every training region
+            { -1626.0f, 3062.0f, 43.0f, 0.0f },   { -1348.0f, 2962.0f, 104.0f, 0.0f },
+            { -1261.0f, 2951.0f, 78.0f, 0.0f },   { -441.0f, 1814.0f, 128.0f, 0.0f },
+            { -561.0f, 2069.0f, 90.0f, 0.0f },
+            // Eastern high ground
+            { 4012.0f, -788.0f, 286.0f, 0.0f },   { 3871.0f, -1025.0f, 242.0f, 0.0f },
+            // Mid-east plains
+            { 2059.0f, -2405.0f, 90.0f, 0.0f },   { 1813.0f, -2424.0f, 93.0f, 0.0f },
+            { 1965.0f, -2559.0f, 86.0f, 0.0f },
+        };
+    }
+
     std::vector<StageDefinition> Definitions()
     {
         using enum BlockId;
@@ -53,20 +145,165 @@ namespace
         std::vector<StageDefinition> stages;
 
         stages.push_back({
-            .Name = "stage1_duel",
-            .Suffix = "_duel",
+            .Name = "stage1_move",
+            .Suffix = "_move",
             .Extends = "",
-            .Summary = "a same-level creature out of aggro range: close in and kill it fast, taking little damage",
-            .Blocks = { Core, Move, Duel, Pet },
-            // 90 s: running out of time is a lost fight (Duel.Timeout), and a healer or tank against a creature with
-            // twice the usual health needs half a minute to kill it after a few seconds of closing in.
-            .Arenas = { { .Name = "duel", .Against = Opposition::Creature, .EpisodeSeconds = 90 } },
+            .Summary = "a place 40-160 yd away on foot: hold a bearing, read the ground, and cross it",
+            .Blocks = { Core, Move, Travel, Duel },
+            // Mounting is masked here, not merely unpaid. What is left is everything a player does before it can
+            // ride -- Sprint, Dash, Travel Form, Aspect of the Cheetah, and simply not stopping -- and those are
+            // worth learning on their own, because a mount is barred in combat, indoors and at low level, which is
+            // most of when a bot actually has to get somewhere.
+            //
+            // Three kinds of ground, because "cross it" is a different problem on each and a policy taught only on
+            // the flats learns to hold forward. Open ground is the lesson at its simplest; broken ground is where
+            // the terrain probe earns its place, since a seat that cannot see the cliff it is walking into is only
+            // being steered by the pathfinder; and water is where the seat has to decide whether to get in at all,
+            // and then swim in three dimensions once it has.
+            .Arenas = {
+                { .Name = "open", .Weight = 2, .Against = Opposition::Travel, .EpisodeSeconds = 120,
+                    .OnFoot = true },
+                { .Name = "broken", .Weight = 2, .Against = Opposition::Travel, .EpisodeSeconds = 150,
+                    .OnFoot = true },
+                // The banks of the Barrens oases -- Lushwater to the north, Stagnant to the south -- because the
+                // stage's own spawn points have no water within reach, and a water arena that finds no crossing
+                // quietly becomes a second open arena (the first run of this stage reported crossing 0.0 over all
+                // 415 of its water episodes). These are on the shore, not in the pool: the oasis floor is around
+                // z 65 and the seats have to stand on the bank at 82-94 and decide to get in. Taken from the land
+                // creatures the oases are ringed with (Kolkar centaurs), so the ground under each one is real.
+                { .Name = "water", .Weight = 1, .Against = Opposition::Travel, .EpisodeSeconds = 150,
+                    .OnFoot = true, .Water = true,
+                    .SpawnPoints = {
+                        { -3923.0f, -2981.0f, 31.0f, 0.0f }, { -3952.0f, -2947.0f, 40.0f, 0.0f },
+                        { -3964.0f, -3068.0f, 39.0f, 0.0f }, { -3879.0f, -3004.0f, 37.0f, 0.0f },
+                        { -4048.0f, -3051.0f, 43.0f, 0.0f }, { -3985.0f, -2911.0f, 37.0f, 0.0f },
+                    },
+                    // The far side of the same pond, kept back for scoring. Weaker control than the stage's own:
+                    // Azshara and Teldrassil are ground this policy has never seen, while these are banks of the
+                    // water it trains on, approached from the other side. It is what the ground allows -- of four
+                    // bodies of water measured, only this one was wide enough for the way round to be worth
+                    // avoiding, so a second pond to hold out does not exist yet. What it does test is whether the
+                    // seat crosses water it has not launched from before; what it cannot test is a different lake.
+                    .HeldOutSpawnPoints = {
+                        { -4017.0f, -3086.0f, 37.0f, 0.0f }, { -3926.0f, -2911.0f, 39.0f, 0.0f },
+                    } },
+            },
+            .MapId = MAP_KALIMDOR,
+            .SpawnPoints = KalimdorGround(),
+            .HeldOutSpawnPoints = KalimdorControl(),
+        });
+
+        // Something on the ground, in every pull. Hazards exist already -- the pack ladder draws a hazard caster
+        // from rung 3 and self-play produces them by the spell (stage19_arena measured 3.1 s of hazard an episode,
+        // stage4_gauntlet 1.1 s) -- but a class/role that stalls below rung 3 never meets one, and a second an
+        // episode is thin to learn from. Here every pull has one, at stage 2's difficulty, so walking out of it is
+        // the thing being learned rather than a detail of a harder fight.
+        stages.push_back({
+            .Name = "stage2_dodge",
+            .Suffix = "_dodge",
+            .Extends = "stage1_move",
+            .Summary = "nothing to fight, only ground to get off: fire lands underfoot and stays",
+            // No pack, no pet and no support: there is nothing here to fight, heal or send anything at, and a block
+            // whose actions are masked for a whole stage is exploration the stage cannot afford. Travel stays,
+            // though, because dropping it would throw away the objective-bearing columns stage 1 just trained --
+            // block-wise seeding starts a re-added block from scratch.
+            .Blocks = { Core, Move, Travel, Duel },
+            // Nothing is spawned to fight. Fire lands under each seat every few seconds and lingers, so standing
+            // still is the only thing that hurts and moving is the only way to spend less. With a pack in the
+            // arena the hazard was one charge among many and its numbers could not be read on their own; with the
+            // pack gone, hazard_seconds and hazard_damage are the whole stage.
+            .Arenas = { { .Name = "hazards", .Against = Opposition::Hazards, .Schedule = PullSchedule::None,
+                .EpisodeSeconds = 120 } },
+        });
+
+        // Travel: getting somewhere, off the duel. Characters of 20 and up ride; the policy learns when a trip is worth
+        // a mount's cast time, and to arrive on foot, ready to fight.
+        //
+        // The Barrens, not the arena the fighting stages spawn in: a trip needs open, pathable ground in every
+        // direction for a few hundred yards, and that arena is a corner pocket with none -- the nearest walkable
+        // ground outside it is 350 yd off and 50 yd up a hillside, past the objective search's reach, so no episode
+        // could ever be built there. The envs share the continent, each in its own phase, spread over the flats.
+        stages.push_back({
+            .Name = "stage3_travel",
+            .Suffix = "_travel",
+            .Extends = "stage2_dodge",
+            .Summary = "a place 60-320 yd away by path: mount when it pays, get there, arrive on foot",
+            .Blocks = { Core, Move, Travel, Duel },
+            .Arenas = { { .Name = "travel", .Against = Opposition::Travel, .EpisodeSeconds = 150 } },
+            .MapId = MAP_KALIMDOR,
+            .SpawnPoints = KalimdorGround(),
+            .HeldOutSpawnPoints = KalimdorControl(),
+            .MinLevel = 20,
+        });
+
+        // Flight: Outland's Nagrand, where flying mounts fly (a battleground never allows them). The envs share the
+        // continent, each in its own phase, spread over open ground.
+        stages.push_back({
+            .Name = "stage4_flight",
+            .Suffix = "_flight",
+            .Extends = "stage3_travel",
+            .Summary = "a place 350-700 yd away in Nagrand: take off, fly over what is in the way, land, dismount",
+            .Blocks = { Core, Move, Travel, Duel },
+            .Arenas = { { .Name = "flight", .Against = Opposition::Travel, .EpisodeSeconds = 180, .Flying = true } },
+            .MapId = MAP_OUTLAND,
+            // Four Outland regions to take off from, rather than one: Hellfire's broken flats, Zangarmarsh's
+            // mushroom basins, Shadowmoon's ridges at nearly 300 yards of altitude, and Terokkar's low forest.
+            // A flight starts and ends on the ground, so where it does is part of the lesson.
+            .SpawnPoints = {
+                // Hellfire Peninsula
+                { 170.0f, 2589.0f, 93.0f, 0.0f },     { 169.0f, 2708.0f, 101.0f, 0.0f },
+                // Zangarmarsh
+                { -3260.0f, 2690.0f, 85.0f, 0.0f },   { -3293.0f, 2832.0f, 125.0f, 0.0f },
+                // Shadowmoon Valley
+                { -3631.0f, 3741.0f, 298.0f, 0.0f },  { -3721.0f, 3746.0f, 284.0f, 0.0f },
+                // Terokkar Forest
+                { -1750.0f, 5154.0f, -37.0f, 0.0f },  { -1730.0f, 5282.0f, -32.0f, 0.0f },
+            },
+            // THE CONTROL GROUND for flight. Map 530 carries Eversong and the Draenei isles as well as Outland,
+            // so the control here is a different continent rather than a different corner -- ground no training
+            // episode of this stage can reach, tens of thousands of yards away.
+            .HeldOutSpawnPoints = {
+                // Eversong Woods
+                { 9806.0f, -7284.0f, 23.0f, 0.0f },   { 9547.0f, -7159.0f, 16.0f, 0.0f },
+                // Azuremyst Isle
+                { -3613.0f, -11888.0f, 9.0f, 0.0f },  { -3737.0f, -11905.0f, 8.0f, 0.0f },
+                // Bloodmyst Isle
+                { -3577.0f, -12420.0f, 7.0f, 0.0f },  { -3757.0f, -12447.0f, 3.0f, 0.0f },
+            },
+            .MinLevel = 60,
         });
 
         stages.push_back({
-            .Name = "stage2_pack",
+            .Name = "stage5_duel",
+            .Suffix = "_duel",
+            .Extends = "stage4_flight",
+            .Summary = "a same-level creature out of aggro range: close in and kill it fast, taking little damage",
+            // The main line runs through the whole movement block rather than beside it, so the combat root starts
+            // with legs that already work. Travel stays for the same reason it did in Part I; the pet block is new
+            // here, because this is the first stage with anything to send a pet at.
+            .Blocks = { Core, Move, Travel, Duel, Pet },
+            // 90 s: running out of time is a lost fight (Duel.Timeout), and a healer or tank against a creature with
+            // twice the usual health needs half a minute to kill it after a few seconds of closing in.
+            .Arenas = { { .Name = "duel", .Against = Opposition::Creature, .EpisodeSeconds = 90 } },
+            // Ground, because until now every fight in the curriculum happened on the same square yard: the
+            // combat stages take the host's single spawn point inside a per-env instance, so a duel's terrain was
+            // one place, every episode, for the whole run. The same five regions the feet were taught on, and the
+            // same control ground, so `clean_kill` at the gate is a claim about the fight rather than about a spot
+            // the seat has stood on a million times.
+            //
+            // This is the combat root and the first of its kind: it moves a fight off an instance and onto a
+            // shared continent, where envs are separated by phase rather than by instance. Proven at 128 envs by
+            // the travel stages, but not yet by anything that spawns an opponent -- so it wants a standalone run
+            // before stages 6 to 17 follow it.
+            .MapId = MAP_KALIMDOR,
+            .SpawnPoints = KalimdorGround(),
+            .HeldOutSpawnPoints = KalimdorControl(),
+        });
+
+        stages.push_back({
+            .Name = "stage6_pack",
             .Suffix = "_pack",
-            .Extends = "stage1_duel",
+            .Extends = "stage5_duel",
             .Summary = "a pack of 2-4, casters included, usually linked: targets, interrupts, crowd control",
             .Blocks = { Core, Move, Duel, Pet, Pack },
             // 150 s: running out of time is a lost fight (Pulls.Timeout), and a pack is up to four of the duel's
@@ -76,29 +313,10 @@ namespace
                 .EpisodeSeconds = 150 } },
         });
 
-        // Something on the ground, in every pull. Hazards exist already -- the pack ladder draws a hazard caster
-        // from rung 3 and self-play produces them by the spell (stage19_arena measured 3.1 s of hazard an episode,
-        // stage4_gauntlet 1.1 s) -- but a class/role that stalls below rung 3 never meets one, and a second an
-        // episode is thin to learn from. Here every pull has one, at stage 2's difficulty, so walking out of it is
-        // the thing being learned rather than a detail of a harder fight.
         stages.push_back({
-            .Name = "stage3_hazards",
-            .Suffix = "_hazards",
-            .Extends = "stage2_pack",
-            .Summary = "nothing to fight, only ground to get off: fire lands underfoot and stays",
-            .Blocks = { Core, Move, Duel, Pet, Pack, Support },
-            // Nothing is spawned to fight. Fire lands under each seat every few seconds and lingers, so standing
-            // still is the only thing that hurts and moving is the only way to spend less. With a pack in the
-            // arena the hazard was one charge among many and its numbers could not be read on their own; with the
-            // pack gone, hazard_seconds and hazard_damage are the whole stage.
-            .Arenas = { { .Name = "hazards", .Against = Opposition::Hazards, .Schedule = PullSchedule::None,
-                .EpisodeSeconds = 120 } },
-        });
-
-        stages.push_back({
-            .Name = "stage4_gauntlet",
+            .Name = "stage7_gauntlet",
             .Suffix = "_gauntlet",
-            .Extends = "stage3_hazards",
+            .Extends = "stage6_pack",
             .Summary = "pull after pull with short breaks: heals, food and drink",
             .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Support },
             // 450 s: pull after pull is the point. At the host's 60 s a break of 8-20 s before each pull left two or
@@ -115,174 +333,20 @@ namespace
         // chance to get ahead. Won by clearing the last pull alive; the clock running out is a loss however far it
         // got. Trained by name, after stage 3.
         stages.push_back({
-            .Name = "stage5_endurance",
+            .Name = "stage8_endurance",
             .Suffix = "_endurance",
-            .Extends = "stage4_gauntlet",
+            .Extends = "stage7_gauntlet",
             .Summary = "a known run of eight pulls, won by finishing it",
             .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Support },
             .Arenas = { { .Name = "endurance", .Against = Opposition::Pulls, .Schedule = PullSchedule::Sequence,
                 .EpisodeSeconds = 900 } },
         });
 
-        stages.push_back({
-            .Name = "stage6_run",
-            .Suffix = "_run",
-            .Extends = "stage1_duel",
-            .Summary = "a place 40-160 yd away on foot: no mount, so cover the ground with what the class has",
-            .Blocks = { Core, Move, Duel, Pet, Travel },
-            // Mounting is masked here, not merely unpaid. What is left is everything a player does before it can
-            // ride -- Sprint, Dash, Travel Form, Aspect of the Cheetah, and simply not stopping -- and those are
-            // worth learning on their own, because a mount is barred in combat, indoors and at low level, which is
-            // most of when a bot actually has to get somewhere.
-            .Arenas = { { .Name = "run", .Against = Opposition::Travel, .EpisodeSeconds = 120, .OnFoot = true } },
-            .MapId = MAP_KALIMDOR,
-            .SpawnPoints = {
-                { -872.0f, -2642.0f, 92.0f, 0.0f }, { -2298.0f, -1948.0f, 96.0f, 0.0f },
-                { -1967.0f, -2544.0f, 94.0f, 0.0f }, { -2605.0f, -2286.0f, 92.0f, 0.0f },
-                { -609.0f, -1614.0f, 94.0f, 0.0f }, { -881.0f, -3221.0f, 92.0f, 0.0f },
-                { -3077.0f, -1786.0f, 92.0f, 0.0f }, { -3115.0f, -2352.0f, 94.0f, 0.0f },
-            },
-        });
-
-        // Travel: getting somewhere, off the duel. Characters of 20 and up ride; the policy learns when a trip is worth
-        // a mount's cast time, and to arrive on foot, ready to fight.
-        //
-        // The Barrens, not the arena the fighting stages spawn in: a trip needs open, pathable ground in every
-        // direction for a few hundred yards, and that arena is a corner pocket with none -- the nearest walkable
-        // ground outside it is 350 yd off and 50 yd up a hillside, past the objective search's reach, so no episode
-        // could ever be built there. The envs share the continent, each in its own phase, spread over the flats.
-        stages.push_back({
-            .Name = "stage7_travel",
-            .Suffix = "_travel",
-            .Extends = "stage6_run",
-            .Summary = "a place 60-320 yd away by path: mount when it pays, get there, arrive on foot",
-            .Blocks = { Core, Move, Duel, Pet, Travel },
-            .Arenas = { { .Name = "travel", .Against = Opposition::Travel, .EpisodeSeconds = 150 } },
-            .MapId = MAP_KALIMDOR,
-            .SpawnPoints = {
-                { -872.0f, -2642.0f, 92.0f, 0.0f }, { -2298.0f, -1948.0f, 96.0f, 0.0f },
-                { -1967.0f, -2544.0f, 94.0f, 0.0f }, { -2605.0f, -2286.0f, 92.0f, 0.0f },
-                { -609.0f, -1614.0f, 94.0f, 0.0f }, { -881.0f, -3221.0f, 92.0f, 0.0f },
-                { -3077.0f, -1786.0f, 92.0f, 0.0f }, { -3115.0f, -2352.0f, 94.0f, 0.0f },
-            },
-            .MinLevel = 20,
-        });
-
-        // Flight: Outland's Nagrand, where flying mounts fly (a battleground never allows them). The envs share the
-        // continent, each in its own phase, spread over open ground.
-        stages.push_back({
-            .Name = "stage8_flight",
-            .Suffix = "_flight",
-            .Extends = "stage7_travel",
-            .Summary = "a place 350-700 yd away in Nagrand: take off, fly over what is in the way, land, dismount",
-            .Blocks = { Core, Move, Duel, Pet, Travel },
-            .Arenas = { { .Name = "flight", .Against = Opposition::Travel, .EpisodeSeconds = 180, .Flying = true } },
-            .MapId = MAP_OUTLAND,
-            .SpawnPoints = {
-                { -1684.0f, 7167.0f, 2.0f, 0.0f }, { -1060.0f, 7618.0f, 28.0f, 0.0f },
-                { -1820.0f, 8828.0f, 28.0f, 0.0f }, { -1226.0f, 8834.0f, 46.0f, 0.0f },
-                { -2581.0f, 6582.0f, 11.0f, 0.0f }, { -1308.0f, 6816.0f, 36.0f, 0.0f },
-                { -1092.0f, 7304.0f, 33.0f, 0.0f }, { -2533.0f, 7693.0f, -23.0f, 0.0f },
-            },
-            .MinLevel = 60,
-        });
-
-        stages.push_back({
-            .Name = "stage9_companion",
-            .Suffix = "_companion",
-            .Extends = "stage5_endurance",
-            .Summary = "the gauntlet beside a scripted owner: follow, assist, guard and heal it",
-            .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Companion, Support },
-            // 450 s, as the solo gauntlet: without its own length the arena took the host's 60 s, two or three pulls
-            // with nothing to recover for and no win to reach (Pulls.OwnerWinPulls).
-            .Arenas = { { .Name = "companion", .Against = Opposition::Pulls, .Schedule = PullSchedule::Gauntlet,
-                .Owner = true, .EpisodeSeconds = 450 } },
-        });
-
-        stages.push_back({
-            .Name = "stage10_party",
-            .Suffix = "_party",
-            .Extends = "stage9_companion",
-            .Summary = "four learned seats and the scripted owner against elite-heavy pulls",
-            .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Companion, Party, Support },
-            .Arenas = { { .Name = "party", .Seats = SeatPlan::Party, .Against = Opposition::Pulls,
-                .Schedule = PullSchedule::Gauntlet, .Owner = true, .PartyGroup = true, .EpisodeSeconds = 450 } },
-        });
-
-        // Holding what the group pulls. Tanks exist in stages 5, 8, 13 and 14, but the stage is won by the clear,
-        // so a tank that loses an add to the healer and takes it back is scored the same as one that never lost it.
-        // Here seat 0 is always the tank (ArenaDefinition::SeatRoles) and the pulls are a party's, so what the
-        // episode is about is the threat table -- which the seat can now read (Encoding::ThreatShare).
-        //
-        // Read its scores knowing that the hazard charge lands about four times harder on a tank than on a ranged
-        // seat (stage19_arena: paladin_tank -0.834 an episode against priest_dps -0.198), because a tank cannot walk
-        // out of what it is holding an enemy in. That is Hazards.Standing being tuned for a seat with a choice.
-        stages.push_back({
-            .Name = "stage11_tanking",
-            .Suffix = "_tanking",
-            .Extends = "stage10_party",
-            .Summary = "a fixed tank seat beside its group: hold what the pull brings, and keep it off the others",
-            .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Companion, Party, Support },
-            .Arenas = { { .Name = "tanking", .Weight = 1, .Seats = SeatPlan::Party, .Against = Opposition::Pulls,
-                .Schedule = PullSchedule::Gauntlet, .Owner = true, .PartyGroup = true, .EpisodeSeconds = 300,
-                .SeatRoles = { Role::Tank } } },
-        });
-
-        // Keeping a group up when the damage outruns one heal. Stage 5 has healers, but its win is the clear and
-        // stage 4 measured the seat putting 13% of its healing into the owner: triage is never the episode.
-        //
-        // Before reading its numbers, know that stage 5 carries a resurrection exploit this drill inherits: nothing
-        // clears m_resurrectGUID, so one landed Rebirth makes every later death of that ally an instant free
-        // resurrect that pays RewardTerm::Revive again (stage9_companion measured druid_dps at 38.4 revives an
-        // episode, 88% of its return). A forced healer seat will find it faster than anything else in the
-        // curriculum. Fix that before trusting a triage score.
-        stages.push_back({
-            .Name = "stage12_triage",
-            .Suffix = "_triage",
-            .Extends = "stage11_tanking",
-            .Summary = "a fixed healer seat beside its group: keep the hurt one up, and spend mana to do it",
-            .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Companion, Party, Support },
-            .Arenas = { { .Name = "triage", .Weight = 1, .Seats = SeatPlan::Party, .Against = Opposition::Pulls,
-                .Schedule = PullSchedule::Gauntlet, .Owner = true, .PartyGroup = true, .EpisodeSeconds = 300,
-                .SeatRoles = { Role::Heal } } },
-        });
-
-        // The raid branch: MAX_SEATS learned seats as RAID_GROUPS groups of GROUP_SEATS, each group with its own
-        // tank and healer (SeatPlan::Raid). A raid is not a bigger party -- it is many seats around one large enemy,
-        // which is why the opponents are an elite and its adds rather than a pack per seat, and why the mechanics a
-        // seat can now read (a cast worth interrupting, something on the ground, where it stands on the threat
-        // table) matter far more here than they do alone.
-        //
-        // NOT in the default queue, and not runnable at the usual env count: 40 seats an env is 40 bots an env, so
-        // AnimusForge.Envs has to come down roughly in proportion (a few dozen envs, not 128) before either of these
-        // is started. Train by name: `forge start stage13_raid_single`.
-        stages.push_back({
-            .Name = "stage13_raid_single",
-            .Suffix = "_raid",
-            .Extends = "stage12_triage",
-            .Summary = "a raid of eight groups against one elite and its adds, won or lost as the single pack is",
-            .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Companion, Party, Support },
-            .Arenas = { { .Name = "raid_single", .Seats = SeatPlan::Raid, .Against = Opposition::Pulls,
-                .Schedule = PullSchedule::SinglePack, .EpisodeSeconds = 300 } },
-        });
-
-        // The raid's endurance: pull after pull with recovery between, which is what a wing of a raid instance is
-        // before the boss of it. Seeded from the single fight, as the gauntlet is from the pack.
-        stages.push_back({
-            .Name = "stage14_raid_gauntlet",
-            .Suffix = "_raidrun",
-            .Extends = "stage13_raid_single",
-            .Summary = "a raid clearing pull after pull, recovering between them",
-            .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Companion, Party, Support },
-            .Arenas = { { .Name = "raid_gauntlet", .Seats = SeatPlan::Raid, .Against = Opposition::Pulls,
-                .Schedule = PullSchedule::Gauntlet, .EpisodeSeconds = 600 } },
-        });
-
         // The PvP branch: off the duel, without the PvE blocks it would never fill.
         stages.push_back({
-            .Name = "stage15_pvp",
+            .Name = "stage9_pvp",
             .Suffix = "_pvp",
-            .Extends = "stage1_duel",
+            .Extends = "stage8_endurance",
             .Summary = "one-on-one against a scripted enemy player",
             .Blocks = { Core, Move, Duel, Pet, Pvp },
             .Arenas = { { .Name = "pvp_scripted", .Against = Opposition::ScriptedPlayer, .Pvp = true } },
@@ -293,9 +357,9 @@ namespace
         // paid to handle: it dies with its cooldowns up. Both sit on the trunk order but only the first is on the
         // trunk, and both are played by all eighteen class/roles.
         stages.push_back({
-            .Name = "stage16_evade",
+            .Name = "stage10_evade",
             .Suffix = "_evade",
-            .Extends = "stage15_pvp",
+            .Extends = "stage9_pvp",
             .Summary = "a fight it cannot win: break away, break line of sight, and live to the end of it",
             .Blocks = { Core, Move, Duel, Pet, Pvp },
             // Ten levels up. Six was chosen against the open-field arena and stopped being a losing fight once
@@ -315,12 +379,8 @@ namespace
             // (walls, towers, two levels) and among the Southshore farms (buildings, fences, trees), on the
             // same instance map the PvP line already fights on.
             .MapId = 560,
-            .SpawnPoints = {
-                { 2141.5f, 174.7f, 66.2f, 0.0f }, { 2124.1f, 183.3f, 52.8f, 0.0f },
-                { 2256.8f, 264.1f, 64.9f, 0.0f }, { 2186.1f, 272.1f, 52.8f, 0.0f },
-                { 1816.0f, 1128.5f, 14.7f, 0.0f }, { 1777.7f, 1058.6f, 7.1f, 0.0f },
-                { 1808.7f, 1108.3f, 13.4f, 0.0f }, { 1803.0f, 1041.4f, 11.7f, 0.0f },
-            },
+            .SpawnPoints = HillsbradGround(),
+            .HeldOutSpawnPoints = HillsbradControl(),
         });
 
         // Hiding, for every class and every race. Stealth is one way to do it and the rarest -- four of the
@@ -330,9 +390,9 @@ namespace
         // Shadowmeld for any night elf. So this stage is played by all eighteen, graded on the outcome rather
         // than on which button produced it.
         stages.push_back({
-            .Name = "stage17_hide",
+            .Name = "stage11_hide",
             .Suffix = "_hide",
-            .Extends = "stage16_evade",
+            .Extends = "stage10_evade",
             .Summary = "get out of sight and stay there, and hide again after being found",
             .Blocks = { Core, Move, Duel, Pet, Pvp },
             // Six levels up rather than the evade drill's ten. The fight is winnable often enough that hiding
@@ -347,12 +407,8 @@ namespace
             // (walls, towers, two levels) and among the Southshore farms (buildings, fences, trees), on the
             // same instance map the PvP line already fights on.
             .MapId = 560,
-            .SpawnPoints = {
-                { 2141.5f, 174.7f, 66.2f, 0.0f }, { 2124.1f, 183.3f, 52.8f, 0.0f },
-                { 2256.8f, 264.1f, 64.9f, 0.0f }, { 2186.1f, 272.1f, 52.8f, 0.0f },
-                { 1816.0f, 1128.5f, 14.7f, 0.0f }, { 1777.7f, 1058.6f, 7.1f, 0.0f },
-                { 1808.7f, 1108.3f, 13.4f, 0.0f }, { 1803.0f, 1041.4f, 11.7f, 0.0f },
-            },
+            .SpawnPoints = HillsbradGround(),
+            .HeldOutSpawnPoints = HillsbradControl(),
         });
 
         // Stealth, which is not the same lesson as hiding and is why it is a stage of its own. Hiding is not
@@ -361,14 +417,16 @@ namespace
         // who is looking for you and arriving inside strike range with the opener still in hand. Shadowmeld
         // cannot do that, because it breaks the moment you move; only a real stealth aura can.
         //
-        // So this stage is restricted (NeedsStealth), and being restricted it must be a leaf: its checkpoint
-        // holds four of the eighteen layouts, and init_from: auto takes the first checkpoint in the chain that
-        // exists, so anything seeding from it would start the other fourteen from random weights in silence.
-        // stage19_arena therefore extends stage17_hide, reaching past this stage rather than through it.
+        // So this stage is restricted (NeedsStealth): only the classes whose kit can really stealth play it. It
+        // used to be forced to be a leaf for that reason, and the arena stage reached past it -- but that made the
+        // rule wrong in the case it matters most. In a druid-only or rogue-only run every layout stealths, the
+        // checkpoint is not partial at all, and there is nothing to protect against; the check that matters now
+        // lives in animus.bootstrap, where the run's actual layouts are known. So the chain runs through it, and
+        // a feral druid's Prowl reaches the arena and the flag instead of dying here.
         stages.push_back({
-            .Name = "stage18_stealth",
+            .Name = "stage12_stealth",
             .Suffix = "_stealth",
-            .Extends = "stage17_hide",
+            .Extends = "stage11_hide",
             .Summary = "close on a stronger enemy unseen, hold there in strike range, and open from it",
             .NeedsStealth = true,
             .Blocks = { Core, Move, Duel, Pet, Pvp },
@@ -379,43 +437,78 @@ namespace
                 .EpisodeSeconds = 120, .OpponentLevelBonus = 6 } },
             // The same cover the other two drills use: an approach needs something to come round.
             .MapId = 560,
-            .SpawnPoints = {
-                { 2141.5f, 174.7f, 66.2f, 0.0f }, { 2124.1f, 183.3f, 52.8f, 0.0f },
-                { 2256.8f, 264.1f, 64.9f, 0.0f }, { 2186.1f, 272.1f, 52.8f, 0.0f },
-                { 1816.0f, 1128.5f, 14.7f, 0.0f }, { 1777.7f, 1058.6f, 7.1f, 0.0f },
-                { 1808.7f, 1108.3f, 13.4f, 0.0f }, { 1803.0f, 1041.4f, 11.7f, 0.0f },
-            },
+            .SpawnPoints = HillsbradGround(),
+            .HeldOutSpawnPoints = HillsbradControl(),
         });
 
         stages.push_back({
-            .Name = "stage19_arena",
+            .Name = "stage13_arena",
             .Suffix = "_arena",
-            .Extends = "stage17_hide",
+            .Extends = "stage12_stealth",
             .Summary = "self-play one-on-one: two learned seats of any classes",
             .Blocks = { Core, Move, Duel, Pet, Pvp },
             .Arenas = { { .Name = "arena_1v1", .Seats = SeatPlan::Mirror, .Against = Opposition::MirrorSeat,
                 .Pvp = true } },
         });
 
-        // Warsong Gulch at its proper size: ten a side, both sides learned. The flag rules are stage 11's; what
-        // is new is that a side is ten seats and a group, so the objective has to be shared -- a carrier to escort
-        // home, a base somebody has to hold, and an enemy carrier ten of them can chase. Trained by name, after
-        // stage 11, which it seeds from.
-        // Two a side, and a director. The seats already fight one on one from the arena; what is new is being
-        // told what the pair is doing -- concentrate on that one, you take the next interrupt -- and learning
-        // that following it pays. The director is scripted here and deliberately legible: the lowest enemy is the
-        // focus, the duty goes round the side in turn. A learned director comes next, and meets seats that
-        // already know how to be commanded rather than seats that have never heard an order.
         stages.push_back({
-            .Name = "stage20_duo_led",
-            .Suffix = "_duo",
-            .Extends = "stage19_arena",
-            .Summary = "two against two, told who to kill and whose turn it is: follow the call",
-            .Blocks = { Core, Move, Duel, Pack, Pet, Pvp, Context, Hostiles, Support, Order },
-            .Arenas = { { .Name = "duo", .Seats = SeatPlan::Teams, .Against = Opposition::MirrorSeat,
-                .Pvp = true, .EpisodeSeconds = 180, .Directed = true, .DirectorLearned = true,
-                .Places = true, .TeamSeats = 2 } },
-            .MinLevel = 20,
+            .Name = "stage14_companion",
+            .Suffix = "_companion",
+            .Extends = "stage13_arena",
+            .Summary = "the gauntlet beside a scripted owner: follow, assist, guard and heal it",
+            .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Companion, Support },
+            // 450 s, as the solo gauntlet: without its own length the arena took the host's 60 s, two or three pulls
+            // with nothing to recover for and no win to reach (Pulls.OwnerWinPulls).
+            .Arenas = { { .Name = "companion", .Against = Opposition::Pulls, .Schedule = PullSchedule::Gauntlet,
+                .Owner = true, .EpisodeSeconds = 450 } },
+        });
+
+        stages.push_back({
+            .Name = "stage15_party",
+            .Suffix = "_party",
+            .Extends = "stage14_companion",
+            .Summary = "four learned seats and the scripted owner against elite-heavy pulls",
+            .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Companion, Party, Support },
+            .Arenas = { { .Name = "party", .Seats = SeatPlan::Party, .Against = Opposition::Pulls,
+                .Schedule = PullSchedule::Gauntlet, .Owner = true, .PartyGroup = true, .EpisodeSeconds = 450 } },
+        });
+
+        // Holding what the group pulls. Tanks exist in stages 5, 8, 13 and 14, but the stage is won by the clear,
+        // so a tank that loses an add to the healer and takes it back is scored the same as one that never lost it.
+        // Here seat 0 always holds the pull (ArenaDefinition::SeatAptitudes) and the pulls are a party's, so what the
+        // episode is about is the threat table -- which the seat can now read (Encoding::ThreatShare).
+        //
+        // Read its scores knowing that the hazard charge lands about four times harder on a tank than on a ranged
+        // seat (stage19_arena: paladin_tank -0.834 an episode against priest_dps -0.198), because a tank cannot walk
+        // out of what it is holding an enemy in. That is Hazards.Standing being tuned for a seat with a choice.
+        stages.push_back({
+            .Name = "stage16_tanking",
+            .Suffix = "_tanking",
+            .Extends = "stage15_party",
+            .Summary = "a fixed tank seat beside its group: hold what the pull brings, and keep it off the others",
+            .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Companion, Party, Support },
+            .Arenas = { { .Name = "tanking", .Weight = 1, .Seats = SeatPlan::Party, .Against = Opposition::Pulls,
+                .Schedule = PullSchedule::Gauntlet, .Owner = true, .PartyGroup = true, .EpisodeSeconds = 300,
+                .SeatAptitudes = { AptitudeDemand::HoldsThePull() } } },
+        });
+
+        // Keeping a group up when the damage outruns one heal. Stage 5 has healers, but its win is the clear and
+        // stage 4 measured the seat putting 13% of its healing into the owner: triage is never the episode.
+        //
+        // Before reading its numbers, know that stage 5 carries a resurrection exploit this drill inherits: nothing
+        // clears m_resurrectGUID, so one landed Rebirth makes every later death of that ally an instant free
+        // resurrect that pays RewardTerm::Revive again (stage9_companion measured druid_dps at 38.4 revives an
+        // episode, 88% of its return). A forced healer seat will find it faster than anything else in the
+        // curriculum. Fix that before trusting a triage score.
+        stages.push_back({
+            .Name = "stage17_triage",
+            .Suffix = "_triage",
+            .Extends = "stage16_tanking",
+            .Summary = "a fixed healer seat beside its group: keep the hurt one up, and spend mana to do it",
+            .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Companion, Party, Support },
+            .Arenas = { { .Name = "triage", .Weight = 1, .Seats = SeatPlan::Party, .Against = Opposition::Pulls,
+                .Schedule = PullSchedule::Gauntlet, .Owner = true, .PartyGroup = true, .EpisodeSeconds = 300,
+                .SeatAptitudes = { AptitudeDemand::KeepsThemUp() } } },
         });
 
         // Warsong Gulch's rules between two learned seats (self-play): take the other side's flag home, return one's
@@ -425,28 +518,24 @@ namespace
         // The Barrens, for stage 9's reason: the second base is placed by the same objective search, 100-180 yd from
         // the first, and only open ground has room for it.
         stages.push_back({
-            .Name = "stage21_flag",
+            .Name = "stage18_flag",
             .Suffix = "_flag",
-            .Extends = "stage19_arena",
-            .Merges = { "stage7_travel" },
+            .Extends = "stage17_triage",
+            .Merges = { "stage3_travel" },
             .Summary = "capture the flag one-on-one: bases 100-180 yd apart, first to three captures",
             .Blocks = { Core, Move, Duel, Pet, Pvp, Travel, Flag },
             .Arenas = { { .Name = "flag", .Seats = SeatPlan::Mirror, .Against = Opposition::Flag, .Pvp = true,
                 .EpisodeSeconds = 300 } },
             .MapId = MAP_KALIMDOR,
-            .SpawnPoints = {
-                { -872.0f, -2642.0f, 92.0f, 0.0f }, { -2298.0f, -1948.0f, 96.0f, 0.0f },
-                { -1967.0f, -2544.0f, 94.0f, 0.0f }, { -2605.0f, -2286.0f, 92.0f, 0.0f },
-                { -609.0f, -1614.0f, 94.0f, 0.0f }, { -881.0f, -3221.0f, 92.0f, 0.0f },
-                { -3077.0f, -1786.0f, 92.0f, 0.0f }, { -3115.0f, -2352.0f, 94.0f, 0.0f },
-            },
+            .SpawnPoints = KalimdorGround(),
+            .HeldOutSpawnPoints = KalimdorControl(),
             .MinLevel = 20,
         });
 
         stages.push_back({
-            .Name = "stage22_warsong",
+            .Name = "stage19_warsong",
             .Suffix = "_warsong",
-            .Extends = "stage21_flag",
+            .Extends = "stage18_flag",
             .Summary = "ten against ten for the flag: escort the carrier, hold the base, stop theirs",
             .Blocks = { Core, Move, Duel, Pet, Pvp, Travel, Flag, Party },
             .Arenas = { { .Name = "warsong", .Seats = SeatPlan::Teams, .Against = Opposition::Flag, .Pvp = true,
@@ -462,6 +551,58 @@ namespace
             .MinLevel = 20,
         });
 
+        // The raid branch: MAX_SEATS learned seats as RAID_GROUPS groups of GROUP_SEATS, each group with its own
+        // tank and healer (SeatPlan::Raid). A raid is not a bigger party -- it is many seats around one large enemy,
+        // which is why the opponents are an elite and its adds rather than a pack per seat, and why the mechanics a
+        // seat can now read (a cast worth interrupting, something on the ground, where it stands on the threat
+        // table) matter far more here than they do alone.
+        //
+        // NOT in the default queue, and not runnable at the usual env count: 40 seats an env is 40 bots an env, so
+        // AnimusForge.Envs has to come down roughly in proportion (a few dozen envs, not 128) before either of these
+        // is started. Train by name: `forge start stage13_raid_single`.
+        stages.push_back({
+            .Name = "stage20_raid_single",
+            .Suffix = "_raid",
+            .Extends = "stage17_triage",
+            .Summary = "a raid of eight groups against one elite and its adds, won or lost as the single pack is",
+            .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Companion, Party, Support },
+            .Arenas = { { .Name = "raid_single", .Seats = SeatPlan::Raid, .Against = Opposition::Pulls,
+                .Schedule = PullSchedule::SinglePack, .EpisodeSeconds = 300 } },
+        });
+
+        // The raid's endurance: pull after pull with recovery between, which is what a wing of a raid instance is
+        // before the boss of it. Seeded from the single fight, as the gauntlet is from the pack.
+        stages.push_back({
+            .Name = "stage21_raid_gauntlet",
+            .Suffix = "_raidrun",
+            .Extends = "stage20_raid_single",
+            .Summary = "a raid clearing pull after pull, recovering between them",
+            .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Companion, Party, Support },
+            .Arenas = { { .Name = "raid_gauntlet", .Seats = SeatPlan::Raid, .Against = Opposition::Pulls,
+                .Schedule = PullSchedule::Gauntlet, .EpisodeSeconds = 600 } },
+        });
+
+        // Warsong Gulch at its proper size: ten a side, both sides learned. The flag rules are stage 11's; what
+        // is new is that a side is ten seats and a group, so the objective has to be shared -- a carrier to escort
+        // home, a base somebody has to hold, and an enemy carrier ten of them can chase. Trained by name, after
+        // stage 11, which it seeds from.
+        // Two a side, and a director. The seats already fight one on one from the arena; what is new is being
+        // told what the pair is doing -- concentrate on that one, you take the next interrupt -- and learning
+        // that following it pays. The director is scripted here and deliberately legible: the lowest enemy is the
+        // focus, the duty goes round the side in turn. A learned director comes next, and meets seats that
+        // already know how to be commanded rather than seats that have never heard an order.
+        stages.push_back({
+            .Name = "stage22_duo_led",
+            .Suffix = "_duo",
+            .Extends = "stage19_warsong",
+            .Summary = "two against two, told who to kill and whose turn it is: follow the call",
+            .Blocks = { Core, Move, Duel, Pack, Pet, Pvp, Context, Hostiles, Support, Order },
+            .Arenas = { { .Name = "duo", .Seats = SeatPlan::Teams, .Against = Opposition::MirrorSeat,
+                .Pvp = true, .EpisodeSeconds = 180, .Directed = true, .DirectorLearned = true,
+                .Places = true, .TeamSeats = 2 } },
+            .MinLevel = 20,
+        });
+
         // The crossroads: both branches join. It extends the party (the trunk and every PvE block), takes the pvp
         // block from the arena, and each parent teaches the arenas it trained on. Two new situations need PvE
         // and PvP in one
@@ -470,12 +611,12 @@ namespace
         stages.push_back({
             .Name = "stage23_crossroads",
             .Suffix = "_crossroads",
-            .Extends = "stage14_raid_gauntlet",
+            .Extends = "stage17_triage",
             // The leaf of every other branch, so nothing trained in the queue is left behind: the PvP line
             // through warsong, the movement line through flight. The PvE line arrives by extension.
             .Merges = {
-                "stage22_warsong", "stage19_arena", "stage15_pvp", "stage8_flight",
-                "stage9_companion", "stage4_gauntlet", "stage1_duel",
+                "stage19_warsong", "stage13_arena", "stage9_pvp", "stage4_flight",
+                "stage14_companion", "stage7_gauntlet", "stage5_duel",
             },
             .Summary = "PvE and PvP in one policy: every earlier situation, an ambush mid-gauntlet and a ganked owner",
             .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Companion, Party, Pvp, Context, Hostiles, Support },
@@ -504,8 +645,8 @@ namespace
         stages.push_back({
             .Name = "mix_duel_pvp",
             .Suffix = "_mix",
-            .Extends = "stage15_pvp",
-            .Merges = { "stage1_duel" },
+            .Extends = "stage9_pvp",
+            .Merges = { "stage5_duel" },
             .Summary = "pilot arena mix: half the episodes a creature duel, half a scripted enemy player",
             .Blocks = { Core, Move, Duel, Pet, Pvp },
             .Arenas = {
@@ -610,25 +751,6 @@ namespace
 
         if (!stage.Extends.empty() && !earlier(stage.Extends))
             return "it extends " + stage.Extends + ", which is not an earlier valid stage";
-
-        // A restricted stage's checkpoint holds only the layouts it played, and init_from: auto takes the
-        // first checkpoint in the chain that exists -- so a stage seeding from one would find it, stop
-        // looking, and start every other class/role from random weights without saying so. Such a stage is a
-        // leaf, and this is what keeps it one.
-        auto const restricted = [&valid](std::string const& name)
-        {
-            return std::any_of(valid.begin(), valid.end(), [&name](StageDefinition const& other)
-            {
-                return other.Name == name && other.NeedsStealth;
-            });
-        };
-
-        if (restricted(stage.Extends))
-            return "it extends " + stage.Extends + ", which only some class/roles play: nothing may seed from it";
-
-        for (std::string const& merge : stage.Merges)
-            if (restricted(merge))
-                return "it merges " + merge + ", which only some class/roles play: nothing may seed from it";
 
         for (std::string const& merge : stage.Merges)
         {

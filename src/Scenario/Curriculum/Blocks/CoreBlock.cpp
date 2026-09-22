@@ -177,6 +177,9 @@ void Animus::Curriculum::CoreBlock::DescribeManifest(Layout const& layout, boost
 
 static_assert(uint32(Animus::Curriculum::CoreBlock::OBS_OPTION_FIRST) + OPTION_KINDS
     == uint32(Animus::Curriculum::CoreBlock::OBS_GLOBAL_COUNT), "every durative action needs its own clock");
+static_assert(uint32(Animus::Curriculum::CoreBlock::OBS_APTITUDE_FIRST)
+    + uint32(Animus::Curriculum::Aptitude::COUNT)
+    == uint32(Animus::Curriculum::CoreBlock::OBS_HEALTH), "the aptitude vector has to fit where it is written");
 
 bool Animus::Curriculum::CoreBlock::KnowsInterrupt(SeatView const& view)
 {
@@ -198,7 +201,8 @@ void Animus::Curriculum::CoreBlock::ObserveCharacter(SeatView const& view, float
 
     core[OBS_LEVEL] = float(view.Level) / float(DEFAULT_MAX_LEVEL);
     WriteOneHot(PLAYABLE_RACES, view.Race, core + OBS_RACE_FIRST);
-    core[OBS_ROLE_FIRST + std::min<uint32>(uint32(view.PlayRole), ROLE_COUNT - 1)] = 1.0f;
+    for (uint32 feature = 0; feature < Aptitude::COUNT; ++feature)
+        core[OBS_APTITUDE_FIRST + feature] = view.Apt[feature];
 
     if (!view.Build)
         return;

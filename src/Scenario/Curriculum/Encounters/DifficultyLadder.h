@@ -57,19 +57,19 @@ namespace Animus::Curriculum
         struct Pick
         {
             uint32 Tier = 0;
-            bool Counts = false;        // a training fight at this class and role's own rung: its outcome moves it
+            bool Counts = false;        // a training fight at this class and build's own rung: its outcome moves it
         };
 
-        /// The rung of an episode of class `layout` playing `role`, on a ladder whose top rung is `maxTier`. World
-        /// thread (it rolls the review chance).
-        [[nodiscard]] Pick Draw(Env const& env, uint16 layout, Role role, uint32 maxTier) const;
+        /// The rung of an episode of class `layout` built as spec `spec`, on a ladder whose top rung is `maxTier`.
+        /// World thread (it rolls the review chance).
+        [[nodiscard]] Pick Draw(Env const& env, uint16 layout, uint8 spec, uint32 maxTier) const;
 
-        /// A fight drawn with Counts ended: count it, and move that class and role once its window is full. Any
+        /// A fight drawn with Counts ended: count it, and move that class and build once its window is full. Any
         /// thread.
-        void Record(uint16 layout, Role role, uint32 tier, bool won, uint32 maxTier);
+        void Record(uint16 layout, uint8 spec, uint32 tier, bool won, uint32 maxTier);
 
-        /// Class `layout` playing `role`'s current rung.
-        [[nodiscard]] uint32 Tier(uint16 layout, Role role) const;
+        /// Class `layout` built as `spec`'s current rung.
+        [[nodiscard]] uint32 Tier(uint16 layout, uint8 spec) const;
 
     private:
         struct LayoutTier
@@ -79,10 +79,15 @@ namespace Animus::Curriculum
             uint32 Wins = 0;
         };
 
-        /// Row of (layout, role) in _tiers, which is layout-major: ROLE_COUNT rungs per class.
-        [[nodiscard]] std::size_t Row(uint16 layout, Role role) const
+        /// Row of (layout, spec) in _tiers, which is layout-major: MAX_SPECS rungs per class.
+        ///
+        /// Keyed on the build, not on a role, and it has to be: a paladin healer and a paladin tank shared a rung
+        /// under one model per class, and the tank dragged it up while the healer drowned. Two builds in one role
+        /// have the same problem -- a feral cat and a balance druid are both "damage" and are not equally hard to
+        /// win with -- which a role could never separate and a spec does.
+        [[nodiscard]] std::size_t Row(uint16 layout, uint8 spec) const
         {
-            return std::size_t(layout) * ROLE_COUNT + std::size_t(role);
+            return std::size_t(layout) * MAX_SPECS + std::size_t(std::min<uint32>(spec, MAX_SPECS - 1));
         }
 
         StageScenario const& _scenario;

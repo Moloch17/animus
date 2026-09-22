@@ -19,6 +19,7 @@
 #ifndef ANIMUS_LIB_CURRICULUM_DIRECTOR_LAYOUT_H
 #define ANIMUS_LIB_CURRICULUM_DIRECTOR_LAYOUT_H
 
+#include "Aptitude.h"
 #include "Block.h"
 #include "ClassProfile.h"
 #include <array>
@@ -45,21 +46,25 @@ namespace Animus::Curriculum::DirectorLayout
         SEAT_ALIVE          = 1,
         SEAT_HEALTH         = 2,
         SEAT_POWER          = 3,
-        SEAT_ROLE_FIRST     = 4,    // one-hot: damage, tank, healer
-        SEAT_IN_COMBAT      = 7,
-        SEAT_CASTING        = 8,
-        SEAT_SPREAD         = 9,    // its distance from the side's centre / DISTANCE_SCALE
+        /// What this seat's build can do, as the six-number brief of its Aptitude. This is how the director
+        /// chooses who to give an order to: not "the tank" but "the one whose build can hold this", which is a
+        /// question a label could not answer for a character nobody planned. It was a three-way role one-hot,
+        /// under which every damage seat of every class looked identical.
+        SEAT_APTITUDE_FIRST = 4,
+        SEAT_IN_COMBAT      = 10,
+        SEAT_CASTING        = 11,
+        SEAT_SPREAD         = 12,    // its distance from the side's centre / DISTANCE_SCALE
         /// And which way, as a sine and cosine about the side's own axis (the centre towards the enemy, or
         /// towards the objective when it knows of no enemy). Distances alone told the director how far apart
         /// its side was and nothing about its shape, so it could not have learned to call a place: "left of
         /// the flag room" is unusable by something that cannot tell left from right.
-        SEAT_BEARING_SIN    = 10,
-        SEAT_BEARING_COS    = 11,
-        SEAT_TO_FOCUS       = 12,   // its distance to the called target / DISTANCE_SCALE
-        SEAT_ON_FOCUS       = 13,   // it is already fighting the called target
-        SEAT_IS_DUTY        = 14,
-        SEAT_AT_PLACE       = 15,   // it is standing where the side was told to be
-        SEAT_FEATURES       = 16
+        SEAT_BEARING_SIN    = 13,
+        SEAT_BEARING_COS    = 14,
+        SEAT_TO_FOCUS       = 15,   // its distance to the called target / DISTANCE_SCALE
+        SEAT_ON_FOCUS       = 16,   // it is already fighting the called target
+        SEAT_IS_DUTY        = 17,
+        SEAT_AT_PLACE       = 18,   // it is standing where the side was told to be
+        SEAT_FEATURES       = 19
     };
 
     /// Features an enemy slot contributes. The same slots the side's seats select between, so a called focus and a
@@ -71,19 +76,19 @@ namespace Animus::Curriculum::DirectorLayout
         ENEMY_PRESENT       = 0,
         ENEMY_ALIVE         = 1,
         ENEMY_HEALTH        = 2,
-        ENEMY_ROLE_FIRST    = 3,    // one-hot: damage, tank, healer
-        ENEMY_IN_COMBAT     = 6,
-        ENEMY_CASTING       = 7,
-        ENEMY_SPREAD        = 8,    // its distance from the commanded side's centre / DISTANCE_SCALE
-        ENEMY_IS_FOCUS      = 9,
+        ENEMY_APTITUDE_FIRST = 3,   // what it can do, the same six-number brief a seat is described by
+        ENEMY_IN_COMBAT     = 9,
+        ENEMY_CASTING       = 10,
+        ENEMY_SPREAD        = 11,    // its distance from the commanded side's centre / DISTANCE_SCALE
+        ENEMY_IS_FOCUS      = 12,
         /// A seat of the side can see it right now. When it cannot, health, role and position are what the
         /// side last saw and ENEMY_UNSEEN_TIME says how old that is; combat and casting read zero rather than
         /// their remembered values, because those are instantaneous facts and a stale one is a lie.
-        ENEMY_SEEN          = 10,
-        ENEMY_UNSEEN_TIME   = 11,   // time since the side last saw it / MAX_UNSEEN_TIME_MS, clamped
-        ENEMY_BEARING_SIN   = 12,   // which way it lies, about the same axis as SEAT_BEARING_*
-        ENEMY_BEARING_COS   = 13,
-        ENEMY_FEATURES      = 14
+        ENEMY_SEEN          = 13,
+        ENEMY_UNSEEN_TIME   = 14,   // time since the side last saw it / MAX_UNSEEN_TIME_MS, clamped
+        ENEMY_BEARING_SIN   = 15,   // which way it lies, about the same axis as SEAT_BEARING_*
+        ENEMY_BEARING_COS   = 16,
+        ENEMY_FEATURES      = 17
     };
 
     enum Observation : uint32
@@ -150,7 +155,7 @@ namespace Animus::Curriculum::DirectorLayout
             bool Alive = false;
             float Health = 0.0f;
             float Power = 0.0f;
-            Role PlayRole = Role::Dps;
+            Aptitude Apt;
             bool InCombat = false;
             bool Casting = false;
             float Spread = 0.0f;
@@ -167,7 +172,7 @@ namespace Animus::Curriculum::DirectorLayout
             bool Present = false;       // ever seen by this side
             bool Alive = false;
             float Health = 0.0f;
-            Role PlayRole = Role::Dps;
+            Aptitude Apt;
             bool InCombat = false;
             bool Casting = false;
             float Spread = 0.0f;

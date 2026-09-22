@@ -41,11 +41,12 @@ namespace Animus::Curriculum
     /// One curriculum stage (see StageDefinition) for every class of StageSettings::Classes, as layouts of one
     /// policy.
     ///
-    /// Each learned agent of an env is a seat: every episode it becomes a new character of a class/role -- a race the
-    /// class allows, random gender, level (1-80, 55-80 for death knights), one of the role's specs with its standard
-    /// talent build and glyphs, the trainer spells of the level, random level-appropriate gear including trinkets,
-    /// enchants and gems, and potions, bandages and stones it must learn to use. A seat's layout is its class/role's (see Layout), padded to the
-    /// largest layout's on the wire; the learner shares one trunk between all layouts.
+    /// Each learned agent of an env is a seat: every episode it becomes a new character of a class -- a race the
+    /// class allows, random gender, level (1-80, 55-80 for death knights), one of its builds with that build's
+    /// standard talents and glyphs, the trainer spells of the level, random level-appropriate gear including
+    /// trinkets, enchants and gems, and potions, bandages and stones it must learn to use. A seat's layout is its
+    /// class's (see Layout), padded to the largest layout's on the wire; the learner shares one trunk between all
+    /// layouts.
     ///
     /// Every episode is one of the stage's arenas (see ArenaDefinition), drawn by weight after the evaluation reseed.
     /// The scenario builds the seats and drives the encounters the arena uses (see Encounter); the critic state is
@@ -81,13 +82,13 @@ namespace Animus::Curriculum
             STATE_SEAT_MANA             = 3,
             STATE_SEAT_OTHER_POWER      = 4,    // rage, energy or runic power as a fraction
             STATE_SEAT_LEVEL            = 5,    // / 80
-            STATE_SEAT_ROLE_FIRST       = 6,    // one-hot: damage, tank, healer
-            STATE_SEAT_CLASS_FIRST      = 9,    // one-hot over PLAYABLE_CLASSES
-            STATE_SEAT_IN_COMBAT        = 19,
-            STATE_SEAT_CASTING          = 20,
-            STATE_SEAT_X                = 21,   // relative to the spawn point, / 40
-            STATE_SEAT_Y                = 22,
-            STATE_SEAT_FEATURES         = 23
+            STATE_SEAT_APTITUDE_FIRST   = 6,    // the six-number brief of what its build can do
+            STATE_SEAT_CLASS_FIRST      = 12,    // one-hot over PLAYABLE_CLASSES
+            STATE_SEAT_IN_COMBAT        = 22,
+            STATE_SEAT_CASTING          = 23,
+            STATE_SEAT_X                = 24,   // relative to the spawn point, / 40
+            STATE_SEAT_Y                = 25,
+            STATE_SEAT_FEATURES         = 26
         };
 
         enum StateEnemy : uint32
@@ -108,13 +109,13 @@ namespace Animus::Curriculum
             STATE_ENEMY_ON_SEAT         = 10,   // its victim is a learned seat at all
             STATE_ENEMY_SEAT_INDEX      = 11,   // ... that seat / MAX_SEATS
             STATE_ENEMY_SEAT_GROUP_FIRST = 12,  // ... one-hot over RAID_GROUPS
-            STATE_ENEMY_SEAT_ROLE_FIRST = 12 + RAID_GROUPS, // ... one-hot: damage, tank, healer
-            STATE_ENEMY_MAX_HEALTH      = 15 + RAID_GROUPS, // its max health / seat 0's / 4, clamped
-            STATE_ENEMY_DAMAGE_MODIFIER = 16 + RAID_GROUPS, // / 2
-            STATE_ENEMY_ARMOR           = 17 + RAID_GROUPS, // share of seat 0's physical hits its armor takes off
-            STATE_ENEMY_RUN_SPEED       = 18 + RAID_GROUPS, // / 2
-            STATE_ENEMY_TYPE_FIRST      = 19 + RAID_GROUPS, // one-hot over Encoding::OPPONENT_TYPES (7)
-            STATE_ENEMY_FEATURES        = 26 + RAID_GROUPS
+            STATE_ENEMY_SEAT_APTITUDE_FIRST = 12 + RAID_GROUPS, // ... the brief of what its build can do
+            STATE_ENEMY_MAX_HEALTH      = 18 + RAID_GROUPS, // its max health / seat 0's / 4, clamped
+            STATE_ENEMY_DAMAGE_MODIFIER = 19 + RAID_GROUPS, // / 2
+            STATE_ENEMY_ARMOR           = 20 + RAID_GROUPS, // share of seat 0's physical hits its armor takes off
+            STATE_ENEMY_RUN_SPEED       = 21 + RAID_GROUPS, // / 2
+            STATE_ENEMY_TYPE_FIRST      = 22 + RAID_GROUPS, // one-hot over Encoding::OPPONENT_TYPES (7)
+            STATE_ENEMY_FEATURES        = 29 + RAID_GROUPS
         };
 
         StageScenario(StageSettings const& settings, StageDefinition const& stage);
@@ -159,6 +160,9 @@ namespace Animus::Curriculum
         [[nodiscard]] Position const& SpawnPoint() const { return _spawnPoint; }
         /// Where the env's seats start: the stage's spawn point for the env (StageDefinition::SpawnPoints), else
         /// SpawnPoint().
+        /// The ground this episode may stand on: the arena's if it has its own, else the stage's -- and the
+        /// control ground instead when the episode is being scored (StageDefinition::HeldOutSpawnPoints).
+        [[nodiscard]] std::vector<Position> const& SpawnGroundFor(Env const& env) const;
         [[nodiscard]] Position const& SpawnPointFor(Env const& env) const;
         /// Whether the envs share a continent (each in its own phase) rather than each having an instance.
         [[nodiscard]] bool OnContinent() const { return _continent; }
@@ -195,7 +199,7 @@ namespace Animus::Curriculum
 
         /// How many (class, role) pairs the run can field, which is what an evaluation spreads its seeds over.
         /// The difficulty ladder divides by the same number, so every pair meets every rung.
-        [[nodiscard]] uint32 CastingCount() const { return uint32(Castings(std::nullopt).size()); }
+        [[nodiscard]] uint32 CastingCount() const { return uint32(Castings(AptitudeDemand::Anything()).size()); }
 
         /// Play only arena `arena` (an index into the stage's arenas) from the next reset on; NO_ARENA draws by weight
         /// again. The stage viewer uses it to show one situation of a mixed stage.
@@ -240,26 +244,33 @@ namespace Animus::Curriculum
         /// Whether seat `seat`'s bot is alive and knows a resurrection spell it could cast on an ally.
         [[nodiscard]] bool SeatCanResurrect(Env const& env, uint32 seat) const;
 
+        /// The name of spec `spec` of class `layout` ("feral_bear"), for logs and reports; "?" if there is no such
+        /// spec. A spec is the name of a talent template, which is a real thing about a build -- unlike a role,
+        /// which was a name for what somebody expected the build to be for.
+        [[nodiscard]] std::string SpecName(uint16 layout, uint8 spec) const;
+
     private:
-        /// One thing a seat can be: a class, and a role that class has a spec for.
+        /// One thing a seat can be: a class, and one of its specs.
         struct Casting
         {
             Layout const* L = nullptr;
-            Role PlayRole = Role::Dps;
+            uint8 Spec = 0;
         };
 
-        /// What a seat may be: every (class, role) the run can field, narrowed to `role` when the arena's
-        /// composition asked for one. A run whose classes cannot fill that role falls back to all of them
-        /// (StageSettings::Classes may leave classes out, and a run of rogues and mages has no tank to offer).
-        [[nodiscard]] std::vector<Casting> Castings(std::optional<Role> role) const;
+        /// What a seat may be: every (class, spec) the run can field, narrowed to those meeting `demand` when the
+        /// arena's composition asked for something. A run whose classes have no build that meets it falls back to
+        /// all of them (StageSettings::Classes may leave classes out, and a run of rogues and mages has nobody who
+        /// can hold a pull).
+        [[nodiscard]] std::vector<Casting> Castings(AptitudeDemand demand) const;
 
-        /// The class and role `seat` plays this episode. An evaluation episode takes both from its seed index, so
-        /// the seeds spread evenly over the (class, role) pairs -- one model per class, but a paladin's healing is
-        /// still scored on its own share of the seeds. A training episode draws one, weighted by SetLayoutWeights.
-        [[nodiscard]] Casting DrawCasting(Env const& env, uint32 seat, std::optional<Role> role) const;
+        /// The class and build `seat` plays this episode. An evaluation episode takes both from its seed index, so
+        /// the seeds spread evenly over the (class, spec) pairs -- one model per class, but a paladin's healing
+        /// build is still scored on its own share of the seeds. A training episode draws one, weighted by
+        /// SetLayoutWeights.
+        [[nodiscard]] Casting DrawCasting(Env const& env, uint32 seat, AptitudeDemand demand) const;
 
-        /// How often a training episode draws this class in this role, relative to the others; 1 without weights.
-        [[nodiscard]] float Weight(Layout const& layout, Role role) const;
+        /// How often a training episode draws this class with this build, relative to the others; 1 without weights.
+        [[nodiscard]] float Weight(Layout const& layout, uint8 spec) const;
         void AddCoreEpisodeInfo();
         void WriteStageFiles(StageSettings const& settings) const;
 

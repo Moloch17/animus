@@ -157,6 +157,10 @@ namespace Animus
         /// spread the seeds evenly over what it would otherwise draw at random (its class/roles). EnvPool sets it
         /// before Scenario::Reset; NO_EPISODE_SEED (EnvPool.h) for a training episode.
         uint32 EpisodeSeedIndex = 0xFFFFFFFF;
+        /// This episode is being scored, not trained on. A seed alone does not say so -- a replayed evaluation is
+        /// a training episode with a seed -- and what stands on the control ground has to be the scored episodes
+        /// only, or the ground is not held out at all.
+        bool Evaluating = false;
 
         uint32 EpisodeElapsedMs = 0;
         uint32 EpisodeLengthMs = 0;

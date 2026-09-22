@@ -46,6 +46,9 @@ namespace Animus::Curriculum
     {
     public:
         static constexpr uint32 SPEC_TREE_POINTS = 51;  // the points the last row of a tree needs to unlock
+        /// Every point a character can spend, which is what a level 80 has. Used where a build has to be described
+        /// without a character to describe it against -- a spec's standard build, for composition.
+        static constexpr uint32 MAX_POINTS = 71;
         static constexpr uint32 TREE_COUNT = 3;
 
         struct Talent

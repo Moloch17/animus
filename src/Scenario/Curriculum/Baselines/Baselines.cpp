@@ -17,9 +17,11 @@
  */
 
 #include "Baselines.h"
+#include "ClassAssets.h"
 #include "CoreBlock.h"
 #include "DuelBlock.h"
 #include "GauntletBlock.h"
+#include "MoveBlock.h"
 #include "PetBlock.h"
 #include "SupportBlock.h"
 #include "SharedDefines.h"
@@ -43,6 +45,11 @@ namespace
     constexpr float HOLD_RANGE_BEYOND_YARDS = 28.0f;    // ranged specs close to DuelBlock::MOVE_TO_RANGE_DISTANCE
     constexpr float MOUNT_BEYOND_YARDS = 80.0f;
     constexpr float CRUISE_HEIGHT_YARDS = 20.0f;
+    /// How much walkable ground is worth against pointing the right way, when choosing a bearing. At 1.0 a
+    /// bearing onto ground the seat can cross beats one aimed straight at the objective and into a cliff, and a
+    /// 45-degree detour onto good ground beats a blocked straight line -- which is the whole difference between
+    /// steering and holding forward.
+    constexpr float GROUND_OVER_AIM = 1.0f;
 
     /// A seat's row, read by block: features and actions by their block-relative index.
     class Row
@@ -142,24 +149,32 @@ namespace
         return std::nullopt;
     }
 
-    /// The role the seat is playing, read from the core block's role one-hot. A baseline sees only what the model
-    /// sees, so it reads the row rather than asking the layout -- which no longer knows, one model now covering
-    /// every role its class can play.
-    Role RoleOf(Row const& row)
+    /// One of the seat's aptitude features, read from the core block. A baseline sees only what the model sees,
+    /// so it reads the row rather than asking the layout -- which no longer knows, one model now covering every
+    /// build its class can have.
+    float AptitudeOf(Row const& row, uint32 feature)
     {
-        for (uint32 role = 0; role < ROLE_COUNT; ++role)
-            if (row.Obs(BlockId::Core, CoreBlock::OBS_ROLE_FIRST + role) > 0.0f)
-                return Role(role);
+        return row.Obs(BlockId::Core, CoreBlock::OBS_APTITUDE_FIRST + feature);
+    }
 
-        return Role::Dps;
+    /// Whether this seat can keep somebody up, and whether it can hold a pull. The same thresholds composition
+    /// uses, asked of the row instead of of a character.
+    bool CanHeal(Row const& row)
+    {
+        return AptitudeOf(row, Aptitude::DIRECT_HEAL) >= AptitudeDemand::KeepsThemUp().AtLeast;
+    }
+
+    bool CanHoldThePull(Row const& row)
+    {
+        return AptitudeOf(row, Aptitude::MITIGATION) >= AptitudeDemand::HoldsThePull().AtLeast;
     }
 
     /// The seat's spec, worked out from what it actually spent its talents on: the tree it put the most points
     /// into (a spec's TabPage is its tree), and where two specs share a tree -- a druid's feral cat and bear --
-    /// the role it is playing tells them apart. Null if it has spent nothing yet.
+    /// how much mitigation it reads with tells them apart. Null if it has spent nothing yet.
     ///
-    /// There is no spec in the observation to read instead, deliberately (CoreBlock::OBS_ROLE_FIRST says why), and
-    /// a baseline sees only what the model sees. So it does here what the model has to do: read the build.
+    /// There is no spec in the observation to read instead, deliberately (CoreBlock::OBS_APTITUDE_FIRST says why),
+    /// and a baseline sees only what the model sees. So it does here what the model has to do: read the build.
     SpecProfile const* SpecOf(Row const& row, Layout const& layout)
     {
         if (!row.Has(BlockId::Core))
@@ -177,17 +192,21 @@ namespace
             }
         }
 
-        // Below level 10 nothing has been spent and every tree reads 0. The role is always set, so fall back to a
-        // spec that plays it: a level 5 mage still fights from range, and the spec one-hot this replaced did not
-        // wait for talents either.
-        Role const role = RoleOf(row);
+        // Below level 10 nothing has been spent and every tree reads 0, so the tree alone cannot answer. Two specs
+        // sharing a tree are told apart by how much mitigation the seat reads with -- which is the real difference
+        // between a bear and a cat, and is true of a build that took half of each.
+        ClassAssets const& assets = ClassAssets::For(*layout.Profile);
+        bool const holds = CanHoldThePull(row);
         SpecProfile const* fallback = nullptr;
-        for (SpecProfile const& spec : layout.Profile->Specs)
+        for (uint8 index = 0; index < uint8(layout.Profile->Specs.size()); ++index)
         {
+            SpecProfile const& spec = layout.Profile->Specs[index];
             bool const tree = best != TalentBuilder::TREE_COUNT && spec.TabPage == best;
-            if (tree && spec.PlayRole == role)
+            bool const specHolds = index < assets.SpecAptitudes.size()
+                && AptitudeDemand::HoldsThePull().MetBy(assets.SpecAptitudes[index]);
+            if (tree && specHolds == holds)
                 return &spec;
-            if (!fallback && spec.PlayRole == role)
+            if (!fallback && tree)
                 fallback = &spec;
         }
 
@@ -435,17 +454,18 @@ namespace
                 return cast;
 
             // Heals cannot be cast in most forms.
-            if (RoleOf(row) == Role::Heal)
+            if (CanHeal(row))
                 if (std::optional<int32> cancel = row.Allowed(BlockId::Duel, DuelBlock::ACTION_CANCEL_FORM))
                     return cancel;
         }
 
-        if (RoleOf(row) != Role::Heal)
+        if (!CanHeal(row))
             return std::nullopt;
 
         for (uint32 slot = FRIEND_OWNER; slot < FRIEND_SLOTS; ++slot)
         {
-            bool const tank = friendObs(slot, SupportBlock::FRIEND_ROLE_FIRST + uint32(Role::Tank)) > 0.0f;
+            bool const tank = friendObs(slot, SupportBlock::FRIEND_APTITUDE_FIRST + Aptitude::BRIEF_MITIGATION)
+                >= AptitudeDemand::HoldsThePull().AtLeast;
             if (friendObs(slot, SupportBlock::FRIEND_ALIVE) == 0.0f
                 || friendObs(slot, SupportBlock::FRIEND_ATTACKERS) == 0.0f || (slot != FRIEND_OWNER && !tank)
                 || friendObs(slot, SupportBlock::FRIEND_OWN_HEAL_OVER_TIME) > 0.0f
@@ -463,20 +483,63 @@ namespace
         return std::nullopt;
     }
 
+    /// The bearing that takes the seat towards its objective over ground it can actually cross, or nothing to
+    /// carry on with the one it is already walking.
+    ///
+    /// Holding BEARING_FORWARD was what this did before, and it is why the scripted baseline arrived in 8% of its
+    /// episodes against a trained policy's 99%: forward is the right way only until something is in front of it,
+    /// and a baseline that cannot steer makes `min_over_baseline` a floor anything clears. Bearing b points at
+    /// -b*45 degrees in the seat's own frame (MoveBlock::HeadingOf), so its alignment with an objective lying at
+    /// `heading` is cos(heading + b*45). Weighed against OBS_GROUND_FIRST, that is a seat that walks round a
+    /// cliff instead of into it -- and, now that the probe reports water as ground it can cross, one that swims a
+    /// crossing rather than stopping at the shore.
+    std::optional<int32> Steer(Row const& row, float headingSin, float headingCos)
+    {
+        if (!row.Has(BlockId::Move))
+            return std::nullopt;
+
+        float const heading = std::atan2(headingSin, headingCos);
+
+        uint32 best = MoveBlock::BEARING_COUNT;
+        float bestScore = 0.0f;
+        for (uint32 bearing = 0; bearing < MoveBlock::BEARING_COUNT; ++bearing)
+        {
+            float const aim = std::cos(heading + float(bearing) * float(M_PI) / 4.0f);
+            float const reach = row.Obs(BlockId::Move, MoveBlock::OBS_GROUND_FIRST + bearing);
+            float const score = aim + GROUND_OVER_AIM * reach;
+            if (best == MoveBlock::BEARING_COUNT || score > bestScore)
+            {
+                bestScore = score;
+                best = bearing;
+            }
+        }
+
+        if (best == MoveBlock::BEARING_COUNT)
+            return std::nullopt;
+
+        // Already walking the best one: it is masked for that reason, and pressing the second best instead would
+        // set the seat zig-zagging between two bearings for as long as the objective sat between them.
+        if (row.Obs(BlockId::Move, MoveBlock::OBS_BEARING_HELD + best) > 0.0f)
+            return std::nullopt;
+
+        return row.Allowed(BlockId::Move, MoveBlock::ACTION_BEARING_FIRST + best);
+    }
+
     std::optional<int32> Fight(Row const& row, Layout const& layout)
     {
         // A living target's health; not the distance, which is 0 in melee range (it is measured between reaches).
         bool const hasTarget = row.Obs(BlockId::Core, CoreBlock::OBS_TARGET_HEALTH) > 0.0f;
 
-        // Travel: a flying mount for a long trip where it flies, else a ground mount; fly at a safe height, land at
-        // the objective and dismount there.
+        // Travel: a flying mount for a long trip where it flies, else a ground mount; then steer. The point order
+        // this used to issue is gone -- the scripted policy crosses ground the same way a learned one has to, by
+        // looking where it is going and holding forward, so that "beat the baseline" still means something on a
+        // stage about movement.
         if (row.Has(BlockId::Travel) && row.Obs(BlockId::Travel, TravelBlock::OBS_OBJECTIVE) > 0.0f)
         {
             float const yards = row.Obs(BlockId::Travel, TravelBlock::OBS_OBJECTIVE_DISTANCE) * 500.0f;
             float const height = row.Obs(BlockId::Travel, TravelBlock::OBS_HEIGHT) * 50.0f;
             bool const mounted = row.Obs(BlockId::Travel, TravelBlock::OBS_MOUNTED) > 0.0f;
             bool const flying = row.Obs(BlockId::Travel, TravelBlock::OBS_FLYING_MOUNT) > 0.0f;
-            bool const moving = row.Obs(BlockId::Travel, TravelBlock::OBS_MOVING) > 0.0f;
 
             if (row.Obs(BlockId::Travel, TravelBlock::OBS_AT_OBJECTIVE) > 0.0f)
                 return row.Allowed(BlockId::Travel, TravelBlock::ACTION_DISMOUNT);
@@ -489,17 +552,34 @@ namespace
                     return ride;
             }
 
-            if (flying && yards > MOUNT_BEYOND_YARDS * 0.5f && height < CRUISE_HEIGHT_YARDS && !moving)
-                if (std::optional<int32> climb = row.Allowed(BlockId::Travel, TravelBlock::ACTION_ASCEND))
-                    return climb;
+            // Look at it first. Once the head is held that way the action masks itself, so this falls through on
+            // every later decision without needing to be asked whether it already did.
+            if (std::optional<int32> face = row.Allowed(BlockId::Move, MoveBlock::ACTION_FACE_OBJECTIVE))
+                return face;
 
-            if (flying && yards < TravelBlock::ARRIVE_DISTANCE && height > 1.0f && !moving)
-                if (std::optional<int32> land = row.Allowed(BlockId::Travel, TravelBlock::ACTION_DESCEND))
-                    return land;
+            // In the air, climb to cruising height for the crossing and nose down for the arrival. Pitch is held,
+            // so these mask themselves once the angle is reached, the same way the facing does.
+            if (flying)
+            {
+                if (yards > MOUNT_BEYOND_YARDS * 0.5f && height < CRUISE_HEIGHT_YARDS)
+                {
+                    if (std::optional<int32> up = row.Allowed(BlockId::Move, MoveBlock::ACTION_PITCH_UP))
+                        return up;
+                }
+                else if (yards < MOUNT_BEYOND_YARDS * 0.5f && height > 1.0f)
+                {
+                    if (std::optional<int32> down = row.Allowed(BlockId::Move, MoveBlock::ACTION_PITCH_DOWN))
+                        return down;
+                }
+                else if (std::optional<int32> level = row.Allowed(BlockId::Move, MoveBlock::ACTION_PITCH_LEVEL))
+                    return level;
+            }
 
-            if (!moving)
-                if (std::optional<int32> go = row.Allowed(BlockId::Travel, TravelBlock::ACTION_MOVE_TO_OBJECTIVE))
-                    return go;
+            // And steer. The objective's direction in the seat's own frame comes from the move block's own pair,
+            // because this is the block that owns getting there.
+            if (std::optional<int32> go = Steer(row, row.Obs(BlockId::Move, MoveBlock::OBS_OBJECTIVE_BEARING_SIN),
+                row.Obs(BlockId::Move, MoveBlock::OBS_OBJECTIVE_BEARING_COS)))
+                return go;
 
             // On the way: wait (the no-op), rather than cast something that would take the mount away.
             return 0;

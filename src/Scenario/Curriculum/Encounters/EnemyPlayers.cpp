@@ -45,12 +45,16 @@ Animus::Curriculum::EnemyPlayers::Spawned Animus::Curriculum::EnemyPlayers::Crea
     Naming const& naming, uint8 level, CurriculumTuning::OpponentTuning const& tuning, Player* near, Map* map,
     uint32 mapId, ScriptedPlayer::State& state)
 {
-    Role role = RollRole(tuning.TankChance, tuning.HealerChance);
-    std::vector<uint8> classes = ClassAssets::ClassesForRole(level, role);
+    // What this enemy is there for, drawn the same way a party's makeup is.
+    int32 const roll = irand(0, 99);
+    AptitudeDemand demand = roll < tuning.TankChance ? AptitudeDemand::HoldsThePull()
+        : roll < tuning.TankChance + tuning.HealerChance ? AptitudeDemand::KeepsThemUp()
+        : AptitudeDemand::Anything();
+    std::vector<uint8> classes = ClassAssets::ClassesFor(level, demand);
     if (classes.empty())
     {
-        role = Role::Dps;
-        classes = ClassAssets::ClassesForRole(level, role);
+        demand = AptitudeDemand::Anything();
+        classes = ClassAssets::ClassesFor(level, demand);
     }
     if (classes.empty())
         return {};
@@ -77,7 +81,7 @@ Animus::Curriculum::EnemyPlayers::Spawned Animus::Curriculum::EnemyPlayers::Crea
         return {};
 
     enemy->InitTalentForLevel();
-    ScriptedPlayer::Configure(enemy, assets, role, state, true);
+    ScriptedPlayer::Configure(enemy, assets, demand, state, true);
     slot.Promote();
-    return { enemy, playerClass, role };
+    return { enemy, playerClass, state.Apt };
 }

@@ -22,6 +22,7 @@
 #include "ActionCatalog.h"
 #include "ClassKit.h"
 #include "ClassProfile.h"
+#include "Aptitude.h"
 #include "GearBuilder.h"
 #include "TalentBuilder.h"
 #include <map>
@@ -44,6 +45,14 @@ namespace Animus::Curriculum
         TalentBuilder const* Talents = nullptr;
         ActionCatalog const* Catalog = nullptr;
         std::unique_ptr<GearBuilder> Gear;
+        /// What each of the class's specs can do, read off its standard build at the level cap -- one entry per
+        /// Profile->Specs, in the same order.
+        ///
+        /// Composition has to choose a character before there is a character to measure, so it measures the
+        /// template instead: this is "what a build down this tree is normally capable of", which is exactly the
+        /// question "who can hold this pull" is really asking. What a *seat* observes is its own Aptitude, read
+        /// off the talents and gear it actually got, which may be nothing like the template.
+        std::vector<Aptitude> SpecAptitudes;
 
         /// The assets of a profile of ClassProfiles(), built on first use (world thread only).
         static ClassAssets const& For(ClassProfile const& profile);
@@ -51,9 +60,18 @@ namespace Animus::Curriculum
         /// The profile of `playerClass`, if it is a class that is played.
         static ClassProfile const* FindProfile(uint8 playerClass);
 
-        /// Classes a player of `level` can be that have a spec playing `role`.
-        static std::vector<uint8> ClassesForRole(uint8 level, Role role);
+        /// The indices of Profile->Specs whose standard build meets `demand`, in order; empty if none do.
+        [[nodiscard]] std::vector<uint8> SpecsMeeting(AptitudeDemand demand) const;
+        /// Whether any of them does.
+        [[nodiscard]] bool CanMeet(AptitudeDemand demand) const;
+
+        /// Classes a player of `level` can be with a spec that meets `demand`.
+        static std::vector<uint8> ClassesFor(uint8 level, AptitudeDemand demand);
     };
+
+    /// A random spec of `assets` whose standard build meets `demand`, as an index into Profile->Specs. A class that
+    /// has none falls back to any of its specs.
+    [[nodiscard]] uint8 DrawSpec(ClassAssets const& assets, AptitudeDemand demand);
 }
 
 #endif
