@@ -48,10 +48,42 @@ std::vector<Animus::Curriculum::RewardTerm> Animus::Curriculum::OwnerEncounter::
         RewardTerm::SoloFight, RewardTerm::Follow, RewardTerm::OwnerDeath, RewardTerm::Revive };
 }
 
+namespace
+{
+    using namespace Animus::Curriculum;
+
+    bool Protects(Aptitude const& aptitude)
+    {
+        return AptitudeDemand::HoldsThePull().MetBy(aptitude) || AptitudeDemand::KeepsThemUp().MetBy(aptitude);
+    }
+
+    bool HoldsThePull(Aptitude const& aptitude) { return AptitudeDemand::HoldsThePull().MetBy(aptitude); }
+
+    /// What the owner is there for this episode: somebody who holds the pull with `tankChance` percent, somebody
+    /// who keeps the hurt one up with `healerChance`, and anybody otherwise.
+    AptitudeDemand RollOwnerDemand(int32 tankChance, int32 healerChance)
+    {
+        int32 const roll = irand(0, 99);
+        if (roll < tankChance)
+            return AptitudeDemand::HoldsThePull();
+        if (roll < tankChance + healerChance)
+            return AptitudeDemand::KeepsThemUp();
+
+        return AptitudeDemand::Anything();
+    }
+}
+
 void Animus::Curriculum::OwnerEncounter::AddEpisodeInfo(EpisodeInfoTable& table)
 {
     table.Add("owner_class", [this](Env const& env, uint32) { return float(_envs[env.Index].Class); });
-    table.Add("owner_role", [this](Env const& env, uint32) { return float(uint32(_envs[env.Index].PlayRole)); });
+    table.Add("owner_mitigation", [this](Env const& env, uint32)
+    {
+        return _envs[env.Index].Apt[Aptitude::MITIGATION];
+    });
+    table.Add("owner_healing_aptitude", [this](Env const& env, uint32)
+    {
+        return std::max(_envs[env.Index].Apt[Aptitude::DIRECT_HEAL], _envs[env.Index].Apt[Aptitude::HOT_HEAL]);
+    });
     table.Add("owner_died", [this](Env const& env, uint32) { return _envs[env.Index].Died ? 1.0f : 0.0f; });
     table.Add("owner_deaths", [this](Env const& env, uint32) { return float(_envs[env.Index].Deaths); });
     table.Add("owner_damage_taken", [this](Env const& env, uint32) { return float(_envs[env.Index].DamageTaken); });
@@ -65,7 +97,7 @@ void Animus::Curriculum::OwnerEncounter::AddEpisodeInfo(EpisodeInfoTable& table)
     });
     table.Add("threat_on_owner", [this](Env const& env, uint32) { return float(_envs[env.Index].ThreatOnOwner); });
 
-    // Role checks, as shares so they read alike at every level: how much of the damage the owner took the seat healed
+    // Care checks, as shares so they read alike at every level: how much of the damage the owner took the seat healed
     // (a healer's job), and how much of the enemies' attention was on the seat rather than the owner (a tank wants it
     // high, a damage dealer or healer low).
     table.Add("owner_heal_share", [this](Env const& env, uint32 seat)
@@ -104,13 +136,13 @@ bool Animus::Curriculum::OwnerEncounter::Build(Env& env, Map* map, uint8 level)
     uint8 const ownerLevel = uint8(std::clamp<int32>(int32(level) + irand(-tuning.LevelSpread, tuning.LevelSpread), 1,
         DEFAULT_MAX_LEVEL));
 
-    // The owner stands in for a player of any role.
-    Role role = RollRole(tuning.TankChance, tuning.HealerChance);
-    std::vector<uint8> classes = ClassAssets::ClassesForRole(ownerLevel, role);
+    // The owner stands in for a player who could be there for anything.
+    AptitudeDemand demand = RollOwnerDemand(tuning.TankChance, tuning.HealerChance);
+    std::vector<uint8> classes = ClassAssets::ClassesFor(ownerLevel, demand);
     if (classes.empty())
     {
-        role = Role::Dps;
-        classes = ClassAssets::ClassesForRole(ownerLevel, role);
+        demand = AptitudeDemand::Anything();
+        classes = ClassAssets::ClassesFor(ownerLevel, demand);
     }
     if (classes.empty())
         return false;
@@ -136,7 +168,7 @@ bool Animus::Curriculum::OwnerEncounter::Build(Env& env, Map* map, uint8 level)
         return false;
 
     bot->InitTalentForLevel();
-    ScriptedPlayer::Configure(bot, assets, role, owner.Script, false);
+    ScriptedPlayer::Configure(bot, assets, demand, owner.Script, false);
 
     // Either faction's races can be paired: give the owner the seats' faction so they are friends (heals and buffs
     // land, neither can attack the other).
@@ -144,7 +176,7 @@ bool Animus::Curriculum::OwnerEncounter::Build(Env& env, Map* map, uint8 level)
 
     owner.Bot.Promote();
     owner.Class = playerClass;
-    owner.PlayRole = role;
+    owner.Apt = owner.Script.Apt;
     env.Allies = { bot->GetGUID() };
     return true;
 }
@@ -168,7 +200,7 @@ void Animus::Curriculum::OwnerEncounter::Update(Env& env)
             party.push_back(bot);
 
     EnvOwner& state = _envs[env.Index];
-    Player* tank = state.PlayRole == Role::Tank ? owner : _scenario.PartyTank(env);
+    Player* tank = AptitudeDemand::HoldsThePull().MetBy(state.Apt) ? owner : _scenario.PartyTank(env);
     ScriptedPlayer::UpdateMember(owner, party, tank, enemies, env.EpisodeElapsedMs, _scenario.SpawnPoint(),
         state.Script, _scenario.Tuning().ScriptedPlayers);
 }
@@ -176,7 +208,7 @@ void Animus::Curriculum::OwnerEncounter::Update(Env& env)
 void Animus::Curriculum::OwnerEncounter::View(Env const& env, uint32 /*seat*/, SeatView& view) const
 {
     view.Owner = Find(env);
-    view.OwnerRole = _envs[env.Index].PlayRole;
+    view.OwnerApt = _envs[env.Index].Apt;
 }
 
 void Animus::Curriculum::OwnerEncounter::BeforeRewards(Env& env)
@@ -229,24 +261,24 @@ void Animus::Curriculum::OwnerEncounter::Reward(Env& env, uint32 seatIndex, Play
     SeatState const& seat = _scenario.Data(env).Seats[seatIndex];
     SeatOwner& seatOwner = state.Seats[seatIndex];
     AgentStats const& step = env.StepStats[seatIndex];
-    Role const role = seat.PlayRole();
+    Aptitude const& apt = seat.Apt;
     float const ownerHealth = float(std::max<uint32>(1, owner->GetMaxHealth()));
 
     seatOwner.Healing += step.AllyHealingBy[0];
 
-    bool const ownerTanks = state.PlayRole == Role::Tank;
-    ledger.Add(RewardTerm::OwnerDamageTaken, -(role == Role::Dps ? tuning.DamageTakenDps : tuning.DamageTakenProtector)
+    bool const ownerTanks = HoldsThePull(state.Apt);
+    ledger.Add(RewardTerm::OwnerDamageTaken, -(Protects(apt) ? tuning.DamageTakenProtector : tuning.DamageTakenDps)
         * (ownerTanks ? tuning.TankOwnerDamageShare : 1.0f) * float(step.AllyDamageTakenBy[0]) / ownerHealth);
 
     // Healing, and what the seat's absorbs soaked and its reductions prevented on the owner, count alike. Every
-    // role is paid for it: a paladin or a shaman that tops its owner up between swings is doing the stage's job,
+    // build is paid for it: a paladin or a shaman that tops its owner up between swings is doing the stage's job,
     // and paying only healers left the owner's share of a seat's healing at 0.000-0.005 for every class without a
     // healing spec (stage8_companion at start, 2026-09-18).
     ledger.Add(RewardTerm::OwnerHealing,
         tuning.Healing * float(step.AllyHealingBy[0] + step.AllyProtectionBy[0]) / ownerHealth);
 
-    // Tanks take hits by design: soften the pulls' damage taken.
-    if (role == Role::Tank)
+    // A build that holds the pull takes hits by design: soften the pulls' damage taken.
+    if (HoldsThePull(apt))
         ledger.Add(RewardTerm::TankDamageRefund, tuning.TankDamageRefund * seat.LastStepDamageTaken);
 
     // Who the enemies are fighting (those on the owner were counted in BeforeRewards).
@@ -259,7 +291,7 @@ void Animus::Curriculum::OwnerEncounter::Reward(Env& env, uint32 seatIndex, Play
     uint32 const onOwner = state.StepEnemiesOnOwner;
     seatOwner.ThreatOnBot += onBot;
 
-    if (role == Role::Tank)
+    if (HoldsThePull(apt))
         ledger.Add(RewardTerm::Threat,
             (tuning.TankHold * float(onBot) - (ownerTanks ? 0.0f : tuning.TankLose * float(onOwner))) * scale);
     else if (ownerTanks)
@@ -275,9 +307,10 @@ void Animus::Curriculum::OwnerEncounter::Reward(Env& env, uint32 seatIndex, Play
         // Standing again (resurrected, or recovered after a pull): its next death is paid for again.
         seatOwner.DeathSeen = false;
 
-        // Fighting on its own: the companion pulled something, or kept fighting after the owner stopped. A tank
-        // pulls first by design, in a party and beside a single owner alike, so it is never charged for it.
-        if (bot->IsInCombat() && !owner->IsInCombat() && role != Role::Tank)
+        // Fighting on its own: the companion pulled something, or kept fighting after the owner stopped. Whoever
+        // is holding the pull pulls first by design, in a party and beside a single owner alike, so it is never
+        // charged for it.
+        if (bot->IsInCombat() && !owner->IsInCombat() && !HoldsThePull(apt))
             ledger.Add(RewardTerm::SoloFight, -tuning.SoloFight * scale);
 
         // Out of combat, stay with the owner.
@@ -336,7 +369,7 @@ void Animus::Curriculum::OwnerEncounter::OnPullStarting(Env& env)
     // owner always starts the pull, and any other owner sometimes does, as a player who pulls without waiting.
     EnvOwner& state = _envs[env.Index];
     CurriculumTuning::PullTuning const& tuning = _scenario.Tuning().Pulls;
-    bool const ownerPulls = state.PlayRole == Role::Tank || roll_chance_i(tuning.OwnerPullsChance);
+    bool const ownerPulls = HoldsThePull(state.Apt) || roll_chance_i(tuning.OwnerPullsChance);
     state.Script.EngageMs = env.EpisodeElapsedMs
         + (ownerPulls ? urand(tuning.OwnerPullsMinMs, tuning.OwnerPullsMaxMs)
         : _scenario.Arena(env).PartyGroup ? urand(tuning.PartyOwnerEngageMinMs, tuning.PartyOwnerEngageMaxMs)
@@ -347,7 +380,7 @@ void Animus::Curriculum::OwnerEncounter::Deactivate(Env& env)
 {
     Teardown(env);
     _envs[env.Index].Class = 0;
-    _envs[env.Index].PlayRole = Role::Dps;
+    _envs[env.Index].Apt = Aptitude();
 }
 
 void Animus::Curriculum::OwnerEncounter::Teardown(Env& env)

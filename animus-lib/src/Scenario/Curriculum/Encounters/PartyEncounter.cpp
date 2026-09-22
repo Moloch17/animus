@@ -64,15 +64,44 @@ void Animus::Curriculum::PartyEncounter::ResetEpisode(Env& env)
     _envs[env.Index].Seats.fill(SeatParty());
 }
 
+namespace
+{
+    using namespace Animus::Curriculum;
+
+    /// Whether this build is one the group leans on to keep people standing -- it can hold the pull, or it can
+    /// heal. The reward for a teammate's damage taken is smaller for one of these, because taking hits and
+    /// spending health is part of what they are there to do.
+    bool Protects(Aptitude const& aptitude)
+    {
+        return AptitudeDemand::HoldsThePull().MetBy(aptitude) || AptitudeDemand::KeepsThemUp().MetBy(aptitude);
+    }
+
+    bool Heals(Aptitude const& aptitude) { return AptitudeDemand::KeepsThemUp().MetBy(aptitude); }
+    bool HoldsThePull(Aptitude const& aptitude) { return AptitudeDemand::HoldsThePull().MetBy(aptitude); }
+}
+
 Player* Animus::Curriculum::PartyEncounter::Tank(Env const& env) const
 {
+    // Whoever is best placed to hold it, rather than whoever was labelled: the living seat with the most
+    // mitigation, provided its build can really do the job at all.
     EnvState const& data = _scenario.Data(env);
+    Player* best = nullptr;
+    float most = 0.0f;
     for (uint32 seat = 0; seat < _scenario.SeatCount(); ++seat)
-        if (data.Seats[seat].L && data.Seats[seat].PlayRole() == Role::Tank)
-            if (Player* tank = _scenario.SeatBot(env, seat); tank && tank->IsAlive())
-                return tank;
+    {
+        SeatState const& state = data.Seats[seat];
+        if (!state.L || !HoldsThePull(state.Apt))
+            continue;
 
-    return nullptr;
+        Player* tank = _scenario.SeatBot(env, seat);
+        if (!tank || !tank->IsAlive() || state.Apt[Aptitude::MITIGATION] <= most)
+            continue;
+
+        most = state.Apt[Aptitude::MITIGATION];
+        best = tank;
+    }
+
+    return best;
 }
 
 void Animus::Curriculum::PartyEncounter::BeforeRebuild(Env& env)
@@ -151,7 +180,7 @@ void Animus::Curriculum::PartyEncounter::View(Env const& env, uint32 seatIndex, 
     {
         SeatState const& other = data.Seats[seat];
         shown[seat] = true;
-        view.Teammates[slot] = { env.FindBot(seat), other.Goal, other.PlayRole(), other.L->Profile->Class };
+        view.Teammates[slot] = { env.FindBot(seat), other.Goal, other.Apt, other.L->Profile->Class };
     };
 
     // The seat's own group fills the first slots: in a party that is everyone, and in a raid it is who the seat
@@ -179,7 +208,7 @@ void Animus::Curriculum::PartyEncounter::View(Env const& env, uint32 seatIndex, 
         if (!other->IsAlive())
             continue;
 
-        if (tank == MAX_SEATS && data.Seats[seat].PlayRole() == Role::Tank)
+        if (tank == MAX_SEATS && HoldsThePull(data.Seats[seat].Apt))
             tank = seat;
 
         float const health = other->GetHealthPct();
@@ -233,8 +262,8 @@ void Animus::Curriculum::PartyEncounter::View(Env const& env, uint32 seatIndex, 
         groupAlive += ownGroup ? 1 : 0;
         inCombat += other->IsInCombat() ? 1 : 0;
         lowestHealth = std::min(lowestHealth, other->GetHealthPct() / 100.0f);
-        tanks += data.Seats[seat].PlayRole() == Role::Tank ? 1 : 0;
-        healers += data.Seats[seat].PlayRole() == Role::Heal ? 1 : 0;
+        tanks += HoldsThePull(data.Seats[seat].Apt) ? 1 : 0;
+        healers += Heals(data.Seats[seat].Apt) ? 1 : 0;
     }
 
     view.Raid.Group = groupFirst / GROUP_SEATS;
@@ -257,7 +286,7 @@ void Animus::Curriculum::PartyEncounter::Reward(Env& env, uint32 seatIndex, Play
     EnvState const& data = _scenario.Data(env);
     SeatParty& seat = _envs[env.Index].Seats[seatIndex];
     AgentStats const& step = env.StepStats[seatIndex];
-    Role const role = data.Seats[seatIndex].PlayRole();
+    Aptitude const& apt = data.Seats[seatIndex].Apt;
 
     // Every other seat, not only the ones the observation has slots for: a heal lands on whoever needed it, and a
     // raider outside the seat's group is still the party's to keep alive.
@@ -267,7 +296,7 @@ void Animus::Curriculum::PartyEncounter::Reward(Env& env, uint32 seatIndex, Play
         if (!teammate || !data.Seats[teammateSeat].L)
             continue;
 
-        Role const teammateRole = data.Seats[teammateSeat].PlayRole();
+        Aptitude const& teammateApt = data.Seats[teammateSeat].Apt;
         float const health = float(std::max<uint32>(1, teammate->GetMaxHealth()));
         uint64 const taken = env.StepStats[teammateSeat].DamageTaken;
         // Healing, and what the seat's absorbs soaked and its reductions prevented on the teammate, count alike.
@@ -276,16 +305,17 @@ void Animus::Curriculum::PartyEncounter::Reward(Env& env, uint32 seatIndex, Play
         seat.TeammateDamageTaken += taken;
         seat.TeammateHealing += healed;
 
-        // A tank is there to be hit; everyone else being hit is what the party wants to avoid.
-        if (teammateRole != Role::Tank)
+        // Somebody who can hold the pull is there to be hit; everyone else being hit is what the party wants to
+        // avoid. And the charge is lighter on a build that protects, because keeping people up is its job.
+        if (!HoldsThePull(teammateApt))
             ledger.Add(RewardTerm::TeammateDamageTaken,
-                -(role == Role::Dps ? tuning.TeammateDamageTakenDps : tuning.TeammateDamageTakenProtector)
+                -(Protects(apt) ? tuning.TeammateDamageTakenProtector : tuning.TeammateDamageTakenDps)
                 * float(taken) / health);
 
-        if (role == Role::Heal)
+        if (Heals(apt))
             ledger.Add(RewardTerm::TeammateHealing, tuning.TeammateHealing * float(healed) / health);
 
-        if (teammateRole != Role::Tank && teammate->IsAlive())
+        if (!HoldsThePull(teammateApt) && teammate->IsAlive())
         {
             uint32 onTeammate = 0;
             for (uint32 enemySlot = 0; enemySlot < env.Targets.size(); ++enemySlot)
@@ -294,7 +324,7 @@ void Animus::Curriculum::PartyEncounter::Reward(Env& env, uint32 seatIndex, Play
                     ++onTeammate;
 
             seat.ThreatOnTeammates += onTeammate;
-            if (role == Role::Tank)
+            if (HoldsThePull(apt))
                 ledger.Add(RewardTerm::TeammateThreat,
                     -tuning.TankLoseTeammate * float(onTeammate) * _scenario.DecisionScale());
         }

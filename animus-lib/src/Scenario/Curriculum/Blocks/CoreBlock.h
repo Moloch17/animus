@@ -19,6 +19,7 @@
 #ifndef ANIMUS_LIB_CURRICULUM_CORE_BLOCK_H
 #define ANIMUS_LIB_CURRICULUM_CORE_BLOCK_H
 
+#include "Aptitude.h"
 #include "Block.h"
 
 namespace Animus::Curriculum
@@ -32,64 +33,67 @@ namespace Animus::Curriculum
         {
             OBS_LEVEL                   = 0,    // level / 80
             OBS_RACE_FIRST              = 1,    // one-hot over PLAYABLE_RACES
-            /// Which role the seat is playing this episode, one-hot over Role. One model per class has to be told,
-            /// because the role is not a fact about the character but the contract it is graded under: a paladin
-            /// that cannot see whether it is holding the line or healing it has no way to choose between them.
+            /// What this character can do, measured off its build (Aptitude::COUNT features: what it can taunt,
+            /// mitigate, heal, control, buff, cleanse, protect, revive, summon and swim with, and where its points
+            /// went).
             ///
-            /// There is deliberately no spec here. The spec is a name for a talent build, and the build itself is
-            /// already observed further down -- every talent's rank and every tree's points -- so a label would be
-            /// a redundant shortcut that invites the policy to play the name instead of the talents. It would also
-            /// sometimes be false: TalentPlan::Noisy and ::Random hand the seat a build its nominal spec did not
-            /// choose, and the label would keep insisting on the spec. What the seat can do is what it has.
-            OBS_ROLE_FIRST              = 11,
-            OBS_HEALTH                  = 14,
-            OBS_MANA                    = 15,   // fraction of max; 0 without mana
-            OBS_RAGE                    = 16,   // / 100
-            OBS_ENERGY                  = 17,   // fraction of max
-            OBS_RUNIC_POWER             = 18,   // / 100
-            OBS_RUNE_FIRST              = 19,   // 6 runes: 1 ready, else 1 - cooldown / 10 s
-            OBS_COMBO_POINTS            = 25,   // on the target, / 5
-            OBS_FORM_FIRST              = 26,   // one-hot over the tracked forms (13)
-            OBS_GCD                     = 39,   // remaining / 1.5 s
-            OBS_CASTING                 = 40,   // casting or channeling
-            OBS_QUEUED_NEXT_SWING       = 41,
-            OBS_MAIN_HAND_SWING         = 42,   // swing timer remaining / weapon speed
-            OBS_OFF_HAND_SWING          = 43,
-            OBS_RANGED_SWING            = 44,
-            OBS_MAIN_HAND_SPEED         = 45,   // seconds / 4
-            OBS_TARGET_HEALTH           = 46,
-            OBS_TARGET_DISTANCE         = 47,   // yards / 40
-            OBS_IN_MELEE_FRONT          = 48,
-            OBS_ATTACK_POWER            = 49,   // / (100 + 50 * level)
-            OBS_SPELL_POWER             = 50,   // / (50 + 30 * level)
-            OBS_MELEE_CRIT              = 51,   // percent / 100
-            OBS_SPELL_CRIT              = 52,
-            OBS_MELEE_HASTE             = 53,   // rating bonus percent / 100
-            OBS_SPELL_HASTE             = 54,
-            OBS_MELEE_HIT               = 55,
-            OBS_SPELL_HIT               = 56,
-            OBS_EXPERTISE               = 57,   // / 30
-            OBS_ARMOR_PENETRATION       = 58,   // rating bonus percent / 100
-            OBS_LAST_STEP_DAMAGE        = 59,   // damage since the last decision / damage scale
-            OBS_LAST_STEP_POWER_DELTA   = 60,   // primary power change since the last decision, as a fraction
+            /// This used to be a three-wide one-hot over Role, on the argument that a paladin had to be told
+            /// whether it was holding the line or healing it. But a role is a name for what somebody expects, and
+            /// the seat can be handed a build that name is simply false about -- TalentPlan::Noisy and ::Random do
+            /// it deliberately, and a player making their own character does it by accident. The talents were
+            /// already observed further down; what was missing was not a label but the reading of them, which is
+            /// what this is. There is still deliberately no spec name here, for the same reason there is no role.
+            OBS_APTITUDE_FIRST          = 11,
+            OBS_HEALTH                  = 37,
+            OBS_MANA                    = 38,   // fraction of max; 0 without mana
+            OBS_RAGE                    = 39,   // / 100
+            OBS_ENERGY                  = 40,   // fraction of max
+            OBS_RUNIC_POWER             = 41,   // / 100
+            OBS_RUNE_FIRST              = 42,   // 6 runes: 1 ready, else 1 - cooldown / 10 s
+            OBS_COMBO_POINTS            = 48,   // on the target, / 5
+            OBS_FORM_FIRST              = 49,   // one-hot over the tracked forms (13)
+            OBS_GCD                     = 62,   // remaining / 1.5 s
+            OBS_CASTING                 = 63,   // casting or channeling
+            OBS_QUEUED_NEXT_SWING       = 64,
+            OBS_MAIN_HAND_SWING         = 65,   // swing timer remaining / weapon speed
+            OBS_OFF_HAND_SWING          = 66,
+            OBS_RANGED_SWING            = 67,
+            OBS_MAIN_HAND_SPEED         = 68,   // seconds / 4
+            OBS_TARGET_HEALTH           = 69,
+            OBS_TARGET_DISTANCE         = 70,   // yards / 40
+            OBS_IN_MELEE_FRONT          = 71,
+            OBS_ATTACK_POWER            = 72,   // / (100 + 50 * level)
+            OBS_SPELL_POWER             = 73,   // / (50 + 30 * level)
+            OBS_MELEE_CRIT              = 74,   // percent / 100
+            OBS_SPELL_CRIT              = 75,
+            OBS_MELEE_HASTE             = 76,   // rating bonus percent / 100
+            OBS_SPELL_HASTE             = 77,
+            OBS_MELEE_HIT               = 78,
+            OBS_SPELL_HIT               = 79,
+            OBS_EXPERTISE               = 80,   // / 30
+            OBS_ARMOR_PENETRATION       = 81,   // rating bonus percent / 100
+            OBS_LAST_STEP_DAMAGE        = 82,   // damage since the last decision / damage scale
+            OBS_LAST_STEP_POWER_DELTA   = 83,   // primary power change since the last decision, as a fraction
             /// Time into the episode / 5 min, clamped. Without it a bot that stands still out of combat sees the
             /// same rows over and over, and a deterministic policy cycles through the same decisions for good:
             /// stage1_duel evaluation had warlocks start and stop one cast 299 times, 0 damage, on six seeds.
-            OBS_EPISODE_TIME            = 61,
+            OBS_EPISODE_TIME            = 84,
             /// What the seat has been doing (SeatMemory): one observation says nothing of it, so a policy re-decided
             /// from scratch every decision, running in and backing off by turns and dancing between stances.
-            OBS_SINCE_MOVE              = 62,   // time since its last movement order / 5 s; 1 = none yet
-            OBS_LAST_MOVE_DIRECTION     = 63,   // +1 in toward the target, -1 away, 0 neither
-            OBS_SINCE_MODE_CHANGE       = 64,   // time since its last stance, form, aspect, aura, seal, armor or pet
+            OBS_SINCE_MOVE              = 85,   // time since its last movement order / 5 s; 1 = none yet
+            OBS_LAST_MOVE_DIRECTION     = 86,   // +1 in toward the target, -1 away, 0 neither
+            OBS_SINCE_MODE_CHANGE       = 87,   // time since its last stance, form, aspect, aura, seal, armor or pet
                                                 // stance change / 10 s; 1 = none yet
-            OBS_HEALTH_TREND            = 65,   // its health now - its average over the last few seconds
-            OBS_TARGET_HEALTH_TREND     = 66,   // the same for its target
+            OBS_HEALTH_TREND            = 88,   // its health now - its average over the last few seconds
+            OBS_TARGET_HEALTH_TREND     = 89,   // the same for its target
             /// Per durative action (SeatOptionKind without None): how much of its clock is left / 30 s, 0 when it is
             /// not running. Without them a running option is hidden state: the policy could not tell that it is
             /// already resting, holding an interrupt or keeping range -- and the seat runs two at once (a
-            /// positioning option and a standby), so one slot with one clock could not say which.
-            OBS_OPTION_FIRST            = 67,
-            OBS_GLOBAL_COUNT            = 72
+            /// positioning option and a standby), so one slot with one clock could not say which. Seven now: the
+            /// held turn and the held pitch are durative too, and they run alongside the feet rather than instead
+            /// of them, so they have slots and clocks of their own.
+            OBS_OPTION_FIRST            = 90,
+            OBS_GLOBAL_COUNT            = 97
 
             // Then, per catalog action: ACTION_FEATURES features (known, cooldown, aura on target, aura on self,
             // stacks, time since the seat pressed it / 10 s). Then per talent of the class: rank / max rank. Then

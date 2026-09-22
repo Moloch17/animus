@@ -141,7 +141,7 @@ bool Animus::Curriculum::SeatCharacter::GivePet(Player* bot, std::vector<uint32>
 }
 
 std::vector<uint32> Animus::Curriculum::SeatCharacter::PrepareFighter(Player* bot, Layout const& layout,
-    Role role)
+    Aptitude const& aptitude)
 {
     using namespace SpellChecks;
 
@@ -150,8 +150,11 @@ std::vector<uint32> Animus::Curriculum::SeatCharacter::PrepareFighter(Player* bo
     std::vector<uint32> stable = layout.Profile->Class == CLASS_HUNTER
         ? StablePool::Instance().Random(STABLE_SLOTS) : std::vector<uint32>();
 
+    // A warrior needs a stance and only a first login casts one. Which stance follows from the build rather than
+    // from a label: one carrying a taunt and real mitigation is going to be standing in front of things.
     if (layout.Profile->Class == CLASS_WARRIOR)
-        bot->CastSpell(bot, role == Role::Tank && bot->HasSpell(SPELL_DEFENSIVE_STANCE)
+        bot->CastSpell(bot, AptitudeDemand::HoldsThePull().MetBy(aptitude) && aptitude[Aptitude::TAUNT] > 0.0f
+            && bot->HasSpell(SPELL_DEFENSIVE_STANCE)
             ? SPELL_DEFENSIVE_STANCE : SPELL_BATTLE_STANCE, true);
 
     return stable;

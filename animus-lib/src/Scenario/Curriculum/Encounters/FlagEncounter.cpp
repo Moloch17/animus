@@ -625,10 +625,10 @@ void Animus::Curriculum::FlagEncounter::View(Env const& env, uint32 seat, SeatVi
         if (mate->IsInCombat())
             ++fighting;
 
-        Role const role = _scenario.Data(env).Seats[other].PlayRole();
-        if (role == Role::Tank)
+        Aptitude const& apt = _scenario.Data(env).Seats[other].Apt;
+        if (AptitudeDemand::HoldsThePull().MetBy(apt))
             ++tanks;
-        else if (role == Role::Heal)
+        else if (AptitudeDemand::KeepsThemUp().MetBy(apt))
             ++healers;
 
         lowest = std::min(lowest, CombatReward::HealthLeft(mate));

@@ -18,6 +18,7 @@
 
 #include "ClassAssets.h"
 #include "ObjectMgr.h"
+#include "Random.h"
 #include <algorithm>
 #include <array>
 
@@ -59,7 +60,31 @@ Animus::Curriculum::ClassAssets const& Animus::Curriculum::ClassAssets::For(
     entry.Talents = shared.Talents.get();
     entry.Catalog = shared.Catalog.get();
     entry.Gear = std::make_unique<GearBuilder>(profile, *shared.Kit);
+
+    // What each spec is normally capable of, from its standard build at the cap and with no character in hand.
+    // Composition reads this; a seat reads its own.
+    entry.SpecAptitudes.reserve(profile.Specs.size());
+    for (SpecProfile const& spec : profile.Specs)
+        entry.SpecAptitudes.push_back(Aptitude::Of(entry,
+            shared.Talents->Standard(spec.Name, spec.TabPage, TalentBuilder::MAX_POINTS), nullptr));
+
     return entry;
+}
+
+std::vector<uint8> Animus::Curriculum::ClassAssets::SpecsMeeting(AptitudeDemand demand) const
+{
+    std::vector<uint8> found;
+    for (uint8 i = 0; i < uint8(SpecAptitudes.size()); ++i)
+        if (demand.MetBy(SpecAptitudes[i]))
+            found.push_back(i);
+
+    return found;
+}
+
+bool Animus::Curriculum::ClassAssets::CanMeet(AptitudeDemand demand) const
+{
+    return std::any_of(SpecAptitudes.begin(), SpecAptitudes.end(),
+        [demand](Aptitude const& aptitude) { return demand.MetBy(aptitude); });
 }
 
 Animus::Curriculum::ClassProfile const* Animus::Curriculum::ClassAssets::FindProfile(uint8 playerClass)
@@ -71,19 +96,42 @@ Animus::Curriculum::ClassProfile const* Animus::Curriculum::ClassAssets::FindPro
     return nullptr;
 }
 
-std::vector<uint8> Animus::Curriculum::ClassAssets::ClassesForRole(uint8 level, Role role)
+std::vector<uint8> Animus::Curriculum::ClassAssets::ClassesFor(uint8 level, AptitudeDemand demand)
 {
-    // Cheap checks only: building a profile's assets takes seconds (see StageScenario, which warms them).
+    // The level and race checks are cheap and come first, because For() builds a profile's assets and that takes
+    // seconds. Both callers -- a scripted owner and a scripted enemy player -- only run in stages that warmed
+    // every class at construction, so by the time this is asked For() is a map lookup.
     std::vector<uint8> classes;
     for (ClassProfile const& profile : ClassProfiles())
     {
-        if (!profile.Plays(role) || ClassKit::MinLevelOf(profile.Class) > level)
+        if (ClassKit::MinLevelOf(profile.Class) > level)
             continue;
 
-        if (std::any_of(PLAYABLE_RACES.begin(), PLAYABLE_RACES.end(),
+        if (!std::any_of(PLAYABLE_RACES.begin(), PLAYABLE_RACES.end(),
             [&profile](uint8 race) { return sObjectMgr->GetPlayerInfo(race, profile.Class) != nullptr; }))
-            classes.push_back(profile.Class);
+            continue;
+
+        if (demand.Any() && !For(profile).CanMeet(demand))
+            continue;
+
+        classes.push_back(profile.Class);
     }
 
     return classes;
+}
+
+uint8 Animus::Curriculum::DrawSpec(ClassAssets const& assets, AptitudeDemand demand)
+{
+    ClassProfile const* profile = assets.Profile;
+    if (!profile || profile->Specs.empty())
+        return 0;
+
+    // A class asked for something none of its builds can do falls back to any of them, which is what a caller
+    // wants when the composition cannot be filled exactly -- a party wanting somebody to hold the pull out of a
+    // run with no class that can.
+    std::vector<uint8> const meeting = assets.SpecsMeeting(demand);
+    if (meeting.empty())
+        return uint8(urand(0, uint32(profile->Specs.size()) - 1));
+
+    return meeting[urand(0, uint32(meeting.size()) - 1)];
 }

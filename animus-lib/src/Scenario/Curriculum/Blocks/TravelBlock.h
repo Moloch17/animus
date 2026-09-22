@@ -27,9 +27,16 @@ class SpellInfo;
 
 namespace Animus::Curriculum
 {
-    /// Getting somewhere as a player does: summon a ground or flying mount (SeatCharacter gives the level's riding
-    /// and mounts), dismount, head for the objective, climb and descend in the air. Dismounting in the air falls, with
-    /// a player's fall damage. The seat decides whether a trip is long enough to be worth the mount's cast time.
+    /// The mount and the air: summon a ground or flying mount (SeatCharacter gives the level's riding and mounts)
+    /// and dismount. Dismounting in the air falls, with a player's fall damage. The seat decides whether a trip is
+    /// long enough to be worth the mount's cast time.
+    ///
+    /// **Where it goes is no longer asked here.** This block used to own MOVE_TO_OBJECTIVE -- a pathfind-to-a-point
+    /// order the policy issued once and then watched -- and ASCEND/DESCEND, two coarse fifteen-yard hops. All three
+    /// are gone: MoveBlock steers, on the ground and in the air alike, with a held bearing under a held yaw and
+    /// pitch, which is how a player actually does it. The hops in particular were the cause of the altitude ratchet
+    /// this file used to document: a seat that drifted up stayed up, because coming down again meant choosing
+    /// DESCEND often enough to satisfy the arrival check, and altitude costs the whole trip.
     class TravelBlock final : public Block
     {
     public:
@@ -59,26 +66,22 @@ namespace Animus::Curriculum
             ACTION_MOUNT_GROUND         = 0,    // the fastest ground mount it has
             ACTION_MOUNT_FLYING         = 1,    // the fastest flying mount it has
             ACTION_DISMOUNT             = 2,
-            ACTION_MOVE_TO_OBJECTIVE    = 3,    // on the ground by path; in the air straight, never lower than now
-            ACTION_ASCEND               = 4,    // flying: CLIMB_STEP yards up
-            ACTION_DESCEND              = 5,    // flying: CLIMB_STEP yards down, to the ground at most
-            ACTION_COUNT                = 6
+            ACTION_COUNT                = 3
         };
 
         static constexpr float ARRIVE_DISTANCE = 6.0f;
         static constexpr float BASE_RUN_SPEED = 7.0f;   // yards a second, unmounted and unhasted
-        static constexpr float CLIMB_STEP = 15.0f;
-        static constexpr float MAX_ALTITUDE = 150.0f;   // above the ground
+        /// How high a seat may climb above the ground. MoveBlock's pitch reads it: the ceiling is a fact about the
+        /// air, which is this block's subject, not about steering.
+        static constexpr float MAX_ALTITUDE = 150.0f;
 
         [[nodiscard]] BlockId Id() const override { return BlockId::Travel; }
         [[nodiscard]] BlockSize Size(Layout const& layout) const override;
         void Observe(SeatView const& view, float* obs, uint8* mask) const override;
         void BeforeApply(SeatView& view, SeatActionResult& result) const override;
         void Apply(SeatView& view, uint32 local, SeatActionResult& result) const override;
-        [[nodiscard]] bool IsMovement(uint32 local) const override
-        {
-            return local == ACTION_MOVE_TO_OBJECTIVE || local == ACTION_ASCEND || local == ACTION_DESCEND;
-        }
+        // No IsMovement override: summoning a mount and stepping off one are casts and presses, not movement. What
+        // is movement now lives entirely in MoveBlock.
 
         /// The fastest ground and flying mount spells `bot` knows (null when none).
         [[nodiscard]] static SpellInfo const* GroundMount(Player const* bot);

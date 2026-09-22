@@ -78,6 +78,12 @@ namespace Animus::Curriculum
             bool KeepsAura = false;     // an aura kept up on one unit: HoT, shield, buff, defensive (KeepsAuraSpell)
             bool Defensive = false;     // a short damage reduction or immunity (IsDefensiveSpell)
             bool LongBuff = false;      // a buff of ten minutes or more (IsLongBuff)
+            /// It removes auras from what it is cast on (SPELL_EFFECT_DISPEL). Both halves of dispelling landed in
+            /// Tactical or Sustain by their sign and were then indistinguishable from every other spell there, so
+            /// nothing could ask whether a seat could dispel at all, let alone what it could remove.
+            bool Dispel = false;
+            bool DispelFriendly = false;    // ... from an ally (a cleanse) rather than from an enemy (a purge)
+            uint32 DispelMask = 0;          // what it can remove: SpellInfo::GetDispelMask bits, DISPEL_ALL expanded
         };
 
         ActionCatalog(uint8 playerClass, ClassKit const& kit, TalentBuilder const& talents);
@@ -131,6 +137,11 @@ namespace Animus::Curriculum
 
         /// Whether casting the spell on a casting target stops the cast (interrupt, stun, silence, ...).
         [[nodiscard]] static bool IsInterruptingSpell(SpellInfo const* info);
+
+        /// What a dispel can take off, as SpellInfo::GetDispelMask bits over every SPELL_EFFECT_DISPEL effect the
+        /// spell has (the type removed is the effect's MiscValue, not the spell's own Dispel field, which says how
+        /// the spell may itself be removed). 0 when it dispels nothing.
+        [[nodiscard]] static uint32 DispelMaskOf(SpellInfo const* info);
 
     private:
         std::vector<Action> _actions;

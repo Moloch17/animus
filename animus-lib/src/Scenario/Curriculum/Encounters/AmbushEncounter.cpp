@@ -127,7 +127,7 @@ bool Animus::Curriculum::AmbushEncounter::Arrive(Env& env, Map* map)
             continue;
 
         ambusher.Class = spawned.Class;
-        ambusher.PlayRole = spawned.PlayRole;
+        ambusher.Apt = spawned.Apt;
         ambusher.KillCounted = false;
         ambusher.Script.EngageMs = env.EpisodeElapsedMs + urand(0, _scenario.Tuning().Ambush.EngageMaxMs);
 
@@ -246,7 +246,7 @@ void Animus::Curriculum::AmbushEncounter::View(Env const& env, uint32 /*seat*/, 
 
     view.Opponent = enemy;
     view.OpponentClass = _envs[env.Index].Ambushers[index].Class;
-    view.OpponentRole = _envs[env.Index].Ambushers[index].PlayRole;
+    view.OpponentApt = _envs[env.Index].Ambushers[index].Apt;
     view.Mirror = false;
 }
 
@@ -338,7 +338,7 @@ void Animus::Curriculum::AmbushEncounter::Deactivate(Env& env)
     for (Ambusher& ambusher : _envs[env.Index].Ambushers)
     {
         ambusher.Class = 0;
-        ambusher.PlayRole = Role::Dps;
+        ambusher.Apt = Aptitude();
     }
 }
 

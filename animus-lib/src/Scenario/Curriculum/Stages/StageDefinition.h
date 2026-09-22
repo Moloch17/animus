@@ -20,6 +20,7 @@
 #define ANIMUS_LIB_CURRICULUM_STAGE_DEFINITION_H
 
 #include "Block.h"
+#include "Aptitude.h"
 #include "ClassProfile.h"
 #include "Position.h"
 #include <string>
@@ -82,10 +83,11 @@ namespace Animus::Curriculum
         /// Most scripted enemy players that ambush the owner (1 to this many, MAX_AMBUSHERS at most): mid-episode
         /// beside pulls, or from the start against Opposition::Ambush. 0 = none.
         uint32 Ambushers = 0;
-        /// Roles the first seats must play (entry i is seat i); the rest are drawn as usual. A drill stage fixes
-        /// the seat it is about -- a tank that has to hold what it pulls, a healer that has to keep a group up --
-        /// where the ordinary party draws every role and the lesson is smeared over whoever happened to play it.
-        std::vector<Role> SeatRoles{};
+        /// What the first seats must be able to do (entry i is seat i); the rest are drawn as usual. A drill stage
+        /// fixes the seat it is about -- one that has to hold what it pulls, one that has to keep a group up --
+        /// where the ordinary party asks for nothing in particular and the lesson is smeared over whoever
+        /// happened to turn up.
+        std::vector<AptitudeDemand> SeatAptitudes{};
         /// A director commands each side: one more agent a side, choosing the team's posture, the enemy it
         /// concentrates on, the shape it takes and whose turn the next duty is. Off by default -- a solo arena
         /// would pay for an agent with nothing to say.
@@ -123,6 +125,23 @@ namespace Animus::Curriculum
         /// the Cheetah), not stopping, and not wandering off the path. Mounting is masked, not merely unpaid,
         /// because a masked action cannot be explored into and the lesson stays clean.
         bool OnFoot = false;
+        /// Travel: the objective may sit across water, and is chosen so that the way round is longer than the way
+        /// through. Every other travel arena refuses an objective anywhere near water, which is why nothing in the
+        /// curriculum had ever had to swim.
+        ///
+        /// Water is the one piece of ground that asks a question before it asks for a skill: swimming is about
+        /// 4.7 yards a second against 7 running, so crossing pays only when the straight line saves more than
+        /// about a third of the distance -- and what a build can do in water (a druid's Aquatic Form, a shaman's
+        /// Water Walking) changes the answer.
+        bool Water = false;
+        /// Where this arena's envs start, when its ground is not the stage's. An arena is drawn per episode but
+        /// the stage's list cannot give an arena that needs particular ground -- water, most of all -- what it
+        /// needs. These are used in place of the stage's when the episode is this arena's; empty means the stage's.
+        std::vector<Position> SpawnPoints{};
+        /// Ground kept back for evaluation: training never stands here. Empty means the arena has no control of
+        /// its own, and evaluation runs on the same ground training does -- which measures nothing about whether
+        /// the policy learned to read terrain or merely learned these particular banks.
+        std::vector<Position> HeldOutSpawnPoints{};
         /// Levels added to the scripted enemy player's own, on top of Opponent.LevelSpread. A drill about
         /// getting away needs a fight the seat cannot win; every other arena wants an even match and leaves
         /// this at 0. Ignored unless the opposition is a scripted player.
@@ -145,20 +164,32 @@ namespace Animus::Curriculum
         std::string Extends;            // the stage it builds on and seeds from (the trunk); empty for the first
         std::vector<std::string> Merges{}; // further stages it seeds the blocks only they have from
         std::string Summary;
-        /// Played only by the class/roles whose own kit can make them stealthed (StageScenario's CanStealth,
-        /// asked of ClassKit so the answer is true of every member of the class rather than of one race of
-        /// it). A stage that sets this is restricted, and a restricted stage must be a leaf: its checkpoint
-        /// holds only the layouts it played, and init_from: auto takes the first checkpoint in the chain that
-        /// exists, so anything seeding from it would start the rest from random weights in silence. Problem()
-        /// refuses any stage that extends or merges one.
+        /// Played only by the classes whose own kit can make them stealthed (StageScenario's CanStealth, asked of
+        /// ClassKit so the answer is true of every member of the class rather than of one race of it).
+        ///
+        /// A restricted stage's checkpoint holds only the layouts it played, so seeding from it can leave the rest
+        /// of a run starting from random weights. That used to be prevented here, by refusing to let anything
+        /// extend or merge a restricted stage at all -- which also made the rule wrong in the case it matters
+        /// most: in a run of one class that can stealth, every layout plays the stage and there is nothing
+        /// partial about the checkpoint. The rule now lives where the actual layouts are known
+        /// (animus.bootstrap), which refuses loudly rather than fresh-initialising in silence, so a stage like
+        /// this can sit in the middle of a chain when the run it is in allows it.
         bool NeedsStealth = false;
         std::vector<BlockId> Blocks;    // in layout order: every block any of its arenas needs
         std::vector<ArenaDefinition> Arenas;
         bool InDefaultQueue = true;     // trained by an empty AnimusForge.Queue (false: only when named)
         /// Where its envs are: 0 = the host's StageSettings::SpawnMapId and SpawnPosition. A continent (not
-        /// instanceable) is shared by every env, so each env gets its own phase and one of SpawnPoints by env index.
+        /// instanceable) is shared by every env, so each env gets its own phase; one of SpawnPoints is drawn for
+        /// each episode, so a seat sees all of this ground rather than the one patch its env index picked out.
         uint32 MapId = 0;
         std::vector<Position> SpawnPoints{};
+        /// The control ground: where evaluation episodes stand, and where training never does.
+        ///
+        /// A seeded evaluation on the ground training uses cannot tell a policy that reads terrain from one that
+        /// has learned these particular places -- it randomises the episode, not the world. Scoring the gates
+        /// here instead, on ground no weight has ever been updated against, is what makes `arrived` and `saved`
+        /// claims about the policy rather than about the map.
+        std::vector<Position> HeldOutSpawnPoints{};
         /// Where a flag arena's bases are, one per side. Empty: the second base is searched for, BaseMin-BaseMax
         /// from the first, which is what a stage with no map of its own has to do. Warsong Gulch has real ones.
         std::vector<Position> FlagBases{};

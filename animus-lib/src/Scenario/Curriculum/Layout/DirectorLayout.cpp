@@ -24,10 +24,6 @@ namespace
 {
     using namespace Animus::Curriculum;
 
-    void WriteRole(Role role, float* out)
-    {
-        out[uint32(role)] = 1.0f;
-    }
 }
 
 void Animus::Curriculum::DirectorLayout::Observe(DirectorView const& view, float* obs, uint8* mask)
@@ -74,7 +70,7 @@ void Animus::Curriculum::DirectorLayout::Observe(DirectorView const& view, float
         out[SEAT_ALIVE] = seat.Alive ? 1.0f : 0.0f;
         out[SEAT_HEALTH] = seat.Health;
         out[SEAT_POWER] = seat.Power;
-        WriteRole(seat.PlayRole, out + SEAT_ROLE_FIRST);
+        seat.Apt.WriteBrief(out + SEAT_APTITUDE_FIRST);
         out[SEAT_IN_COMBAT] = seat.InCombat ? 1.0f : 0.0f;
         out[SEAT_CASTING] = seat.Casting ? 1.0f : 0.0f;
         out[SEAT_SPREAD] = seat.Spread;
@@ -100,7 +96,7 @@ void Animus::Curriculum::DirectorLayout::Observe(DirectorView const& view, float
 
         out[ENEMY_ALIVE] = enemy.Alive ? 1.0f : 0.0f;
         out[ENEMY_HEALTH] = enemy.Health;
-        WriteRole(enemy.PlayRole, out + ENEMY_ROLE_FIRST);
+        enemy.Apt.WriteBrief(out + ENEMY_APTITUDE_FIRST);
         out[ENEMY_IN_COMBAT] = enemy.InCombat ? 1.0f : 0.0f;
         out[ENEMY_CASTING] = enemy.Casting ? 1.0f : 0.0f;
         out[ENEMY_SPREAD] = enemy.Spread;

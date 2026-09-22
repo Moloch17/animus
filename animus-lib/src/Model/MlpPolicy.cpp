@@ -153,7 +153,12 @@ bool Animus::MlpPolicy::Load(std::string const& path, std::string const& scenari
             return false;
         }
 
-        if (layer.In != expectedIn || layer.Out == 0 || layer.Out > MAX_LAYER_WIDTH)
+        // Every layer's inputs are the layer before's outputs, except the action head's: with a memory it
+        // reads the GRU's state rather than the trunk's output, and the memory's size is only known further
+        // down the file. The head is checked there instead, against the memory or the trunk as it applies.
+        bool const head = layerCount > 1 && index + 1 == layerCount;
+        if ((!head && layer.In != expectedIn) || layer.In == 0 || layer.In > MAX_LAYER_WIDTH
+            || layer.Out == 0 || layer.Out > MAX_LAYER_WIDTH)
         {
             error = Acore::StringFormat("{} layer {} is {} -> {}, expected {} inputs", path, index, layer.In,
                 layer.Out, expectedIn);
@@ -207,6 +212,12 @@ bool Animus::MlpPolicy::Load(std::string const& path, std::string const& scenari
             error = Acore::StringFormat("{} is truncated in its memory", path);
             return false;
         }
+    }
+    else if (layers.size() > 1 && layers.back().In != features)
+    {
+        error = Acore::StringFormat("{} has no memory, so its action head should take the trunk's {} outputs, "
+            "not {}", path, features, layers.back().In);
+        return false;
     }
 
     uint32 goalCount = 0;

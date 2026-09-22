@@ -17,6 +17,7 @@
  */
 
 #include "Layout.h"
+#include "ClassAssets.h"
 #include "DirectorLayout.h"
 #include "SpellInfo.h"
 #include "SpellMgr.h"
@@ -32,7 +33,10 @@
 namespace
 {
     /// Manifest format: 3 lists blocks generically (format 2 had one fixed field per stage block).
-    constexpr uint32 MANIFEST_FORMAT = 4;
+    // 5: the move block steers in three dimensions (a held yaw and pitch, the ground read along each bearing, and
+    // water), and the travel block gave up the point order and the two climb hops that went with it. Every layout
+    // changed shape, so a manifest of an earlier format describes a model that no longer fits.
+    constexpr uint32 MANIFEST_FORMAT = 5;
 
     /// The catalog's long buffs, grouped by what a unit can have at once: chains joined when any of their ranks share
     /// a spell group (spell_group, whose stack rules keep one of them per target) or an exclusive kind (a seal, an
@@ -335,15 +339,6 @@ std::string Animus::Curriculum::Layout::Manifest() const
     manifest["stage"] = Stage->Name;
     manifest["class_name"] = Director ? DirectorLayout::Name() : Profile->Name.c_str();
     manifest["class"] = Director ? 0 : Profile->Class;
-    // Every role the class can play, because one model plays all of them. Which one a seat is in is in its
-    // observation (CoreBlock::OBS_ROLE_FIRST) and in its episode info ("role"), not in the layout.
-    boost::json::array& roles = manifest["roles"].emplace_array();
-    if (Director)
-        roles.push_back("director");
-    else
-        for (uint32 role = 0; role < ROLE_COUNT; ++role)
-            if (Profile->Plays(Role(role)))
-                roles.push_back(boost::json::string(RoleName(Role(role))));
     manifest["obs_dim"] = ObsDim;
     manifest["num_actions"] = NumActions;
 
@@ -351,16 +346,27 @@ std::string Animus::Curriculum::Layout::Manifest() const
     for (std::string const& name : ActionNames())
         actionNames.push_back(boost::json::string(name));
 
+    // Every build the class can have, because one model plays all of them, and what each one can do -- there is
+    // no role to name, and the aptitude is the thing a reader of the manifest actually wants.
     boost::json::array& specs = manifest["specs"].emplace_array();
     if (!Director)
-        for (SpecProfile const& spec : Profile->Specs)
+    {
+        ClassAssets const& assets = ClassAssets::For(*Profile);
+        for (uint8 index = 0; index < uint8(Profile->Specs.size()); ++index)
         {
+            SpecProfile const& spec = Profile->Specs[index];
             boost::json::object entry;
             entry["name"] = spec.Name;
             entry["tree"] = spec.TabPage;
-            entry["role"] = RoleName(spec.PlayRole);
+
+            boost::json::object aptitude;
+            if (index < assets.SpecAptitudes.size())
+                for (uint32 feature = 0; feature < Aptitude::COUNT; ++feature)
+                    aptitude[Aptitude::FeatureName(feature)] = double(assets.SpecAptitudes[index][feature]);
+            entry["aptitude"] = std::move(aptitude);
             specs.push_back(std::move(entry));
         }
+    }
 
     boost::json::array& blocks = manifest["blocks"].emplace_array();
     for (BlockId id : Blocks)

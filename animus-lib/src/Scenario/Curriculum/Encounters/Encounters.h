@@ -70,7 +70,7 @@ namespace Animus::Curriculum
         {
             Player* Bot = nullptr;
             uint8 Class = 0;
-            Role PlayRole = Role::Dps;
+            Aptitude Apt;
         };
 
         /// Rebuild `slot` as an enemy player at `level` of a random class and role (tuning's chances), with a
@@ -127,8 +127,8 @@ namespace Animus::Curriculum
         void Reward(Env& env, uint32 seat, Player* bot, RewardLedger& ledger) override;
         [[nodiscard]] bool IsTerminal(Env const& env) const override;
 
-        /// Class/role `layout`'s current training tier.
-        [[nodiscard]] uint32 Tier(uint16 layout, Role role) const { return _ladder.Tier(layout, role); }
+        /// Class `layout` built as `spec`'s current training tier.
+        [[nodiscard]] uint32 Tier(uint16 layout, uint8 spec) const { return _ladder.Tier(layout, spec); }
 
     private:
         struct EnvFight
@@ -136,8 +136,8 @@ namespace Animus::Curriculum
             uint8 Tier = 0;
             bool Elite = false;
             uint16 Layout = 0;
-            Role PlayRole = Role::Dps;      // ... and the role it drew, which has its own rung
-            bool Counts = false;        // a training fight at its class/role's current tier: its outcome moves it
+            uint8 Spec = 0;             // ... and the build it drew, which has its own rung
+            bool Counts = false;        // a training fight at its class/build's current tier: its outcome moves it
             bool Recorded = false;      // the outcome is in
             ObjectGuid PendingInterrupt;// a casting opponent the seat just cast an interrupt at
             uint32 Interrupts = 0;      // landed this episode: the duel paid for these but never reported them
@@ -245,8 +245,8 @@ namespace Animus::Curriculum
             bool EliteOrHigher = false;
             uint32 Rung = 0;                    // single pack: its ladder rung ...
             uint16 RungLayout = 0;              // ... for this class
-            Role RungRole = Role::Dps;          // ... playing this role, which is what the rung is kept against
-            bool RungCounts = false;            // ... a training pack at the class/role's own rung
+            uint8 RungSpec = 0;                 // ... built this way, which is what the rung is kept against
+            bool RungCounts = false;            // ... a training pack at the class/build's own rung
             bool RungRecorded = false;          // ... whose outcome is in
             uint32 Wipes = 0;                   // owner stages: pulls that killed everyone and were cleared away
             bool OwnerDied = false;             // owner stages: the owner died this episode (it stands up again)
@@ -348,7 +348,7 @@ namespace Animus::Curriculum
         {
             BotSlot Bot;
             uint8 Class = 0;
-            Role PlayRole = Role::Dps;
+            Aptitude Apt;
             ScriptedPlayer::State Script;
             bool Died = false;
             uint32 Deaths = 0;
@@ -430,7 +430,7 @@ namespace Animus::Curriculum
         {
             BotSlot Bot;
             uint8 Class = 0;
-            Role PlayRole = Role::Dps;
+            Aptitude Apt;
             ScriptedPlayer::State Script;
             /// Per seat: a casting opponent the seat just cast an interrupt at, how many it has landed, and how long
             /// the opponent has been held out of the fight. A scripted player casts and heals -- 3 interruptible
@@ -496,7 +496,7 @@ namespace Animus::Curriculum
         {
             BotSlot Bot;
             uint8 Class = 0;
-            Role PlayRole = Role::Dps;
+            Aptitude Apt;
             ScriptedPlayer::State Script;
             bool KillCounted = false;
         };
@@ -542,17 +542,42 @@ namespace Animus::Curriculum
         /// A place `nearest`-`furthest` yd from `bot` on ground that is not water; on foot (`flying` false) one it can
         /// walk to by a path not much longer than the straight line. False if none was found. `walk`, when given,
         /// takes the length of that path -- the straight line when there is none (a flying arena).
+        /// A place `nearest` to `furthest` away that the seat can get to and stand on. `across` inverts the detour
+        /// test for a water arena: instead of refusing an objective whose path is much longer than the straight
+        /// line, it insists on one, and checks that what lies between is water rather than a cliff. `across` also
+        /// requires a dry way round to exist at all -- water is only worth getting into when there is a choice --
+        /// and reports its length in `dry`, which is what the way round costs on foot.
         static bool FindPlace(Player* bot, Map* map, float nearest, float furthest, bool flying, Position& place,
-            float* walk = nullptr);
+            float* walk = nullptr, bool across = false, float* dry = nullptr);
+        /// Whether the straight line from `bot` to (x, y) passes through water.
+        static bool CrossesWater(Player const* bot, Map* map, Position const& place, float x, float y);
 
     private:
         struct EnvTravel
         {
+            bool Crossing = false;          // the objective was placed across water (a water arena that found one)
+            float DryDistance = 0.0f;       // yards of the way round on foot, water excluded; 0 = no dry route
+            uint32 SwimMs = 0;              // how long the seat has been in the water this episode
             bool HasObjective = false;
             Position Objective;
             float StartDistance = 0.0f;         // yards on the ground at the start
             float WalkDistance = 0.0f;          // yards of path to the objective: what covering it on foot costs
             float LastDistance = -1.0f;         // shaping: yards at the last reward; < 0 = none yet
+            /// Yards the seat has actually covered, summed decision by decision -- as against WalkDistance, which
+            /// is the length of the path it was *given* and says nothing about whether the legs turned. A seat
+            /// that times out 96 yards short of a 106 yard trip either never moved or moved in circles, and only
+            /// these two numbers together tell those apart.
+            float Travelled = 0.0f;
+            float LastX = 0.0f;                 // where it was at the last reward, for the sum above
+            float LastY = 0.0f;
+            bool HasLastPos = false;            // ... or nothing yet, so the first decision adds no jump
+            /// The last second, for OBS_MOVE_RATE and OBS_CLOSE_RATE: where the marks were set, how far the seat
+            /// had travelled then and how far from the objective it was, and the two rates computed from them.
+            uint32 MarkMs = 0;
+            float MarkTravelled = 0.0f;
+            float MarkDistance = -1.0f;
+            float MoveRate = 0.0f;
+            float CloseRate = 0.0f;
             bool Arrived = false;
             uint32 ArriveMs = 0;
             uint32 MountedMs = 0;               // episode time spent mounted
@@ -674,7 +699,7 @@ namespace Animus::Curriculum
             Position LastSeen;
             uint32 LastSeenMs = 0;
             float Health = 0.0f;
-            Role PlayRole = Role::Dps;
+            Aptitude Apt;
             bool Alive = false;
             bool Known = false;         // the side has seen it at least once
         };

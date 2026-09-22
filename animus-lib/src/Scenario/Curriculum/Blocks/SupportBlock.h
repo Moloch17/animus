@@ -18,6 +18,7 @@
 #ifndef ANIMUS_LIB_CURRICULUM_SUPPORT_BLOCK_H
 #define ANIMUS_LIB_CURRICULUM_SUPPORT_BLOCK_H
 
+#include "Aptitude.h"
 #include "Block.h"
 
 class Unit;
@@ -49,11 +50,14 @@ namespace Animus::Curriculum
             FRIEND_DISTANCE             = 4,    // yards / 40; 0 for the bot itself
             FRIEND_IN_LINE_OF_SIGHT     = 5,
             FRIEND_ATTACKERS            = 6,    // enemies attacking it / PACK_SLOTS
-            FRIEND_ROLE_FIRST           = 7,    // one-hot: damage, tank, healer (none when unknown)
-            FRIEND_OWN_HEAL_OVER_TIME   = 10,   // the bot's heal over time on it, as a fraction of its duration left
-            FRIEND_OWN_ABSORB           = 11,   // the bot's absorb on it
-            FRIEND_BUFFS                = 12,   // share of the layout's buff groups up on it (any caster)
-            FRIEND_FEATURES             = 13
+            /// What it can do, as the six-number brief of its Aptitude; all zero when the seat has no way of
+            /// knowing (an empty slot). A healer choosing who to spend a cast on wants to know what the candidate
+            /// can do for itself, and a three-way label was a coarse answer to that.
+            FRIEND_APTITUDE_FIRST       = 7,
+            FRIEND_OWN_HEAL_OVER_TIME   = 13,   // the bot's heal over time on it, as a fraction of its duration left
+            FRIEND_OWN_ABSORB           = 14,   // the bot's absorb on it
+            FRIEND_BUFFS                = 15,   // share of the layout's buff groups up on it (any caster)
+            FRIEND_FEATURES             = 16
         };
 
         enum Action : uint32

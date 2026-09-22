@@ -387,6 +387,9 @@ Animus::Curriculum::ActionCatalog::ActionCatalog(uint8 playerClass, ClassKit con
         action.Defensive = IsDefensiveSpell(info);
         action.LongBuff = IsLongBuff(info);
         action.KeepsAura = KeepsAuraSpell(info);
+        action.DispelMask = DispelMaskOf(info);
+        action.Dispel = action.DispelMask != 0;
+        action.DispelFriendly = action.Dispel && info->IsPositive();
         return action;
     };
 
@@ -724,6 +727,19 @@ bool Animus::Curriculum::ActionCatalog::IsSustainSpell(SpellInfo const* info)
     }
 
     return sustain;
+}
+
+uint32 Animus::Curriculum::ActionCatalog::DispelMaskOf(SpellInfo const* info)
+{
+    if (!info)
+        return 0;
+
+    uint32 mask = 0;
+    for (SpellEffectInfo const& effect : info->GetEffects())
+        if (effect.Effect == SPELL_EFFECT_DISPEL)
+            mask |= SpellInfo::GetDispelMask(DispelType(effect.MiscValue));
+
+    return mask;
 }
 
 bool Animus::Curriculum::ActionCatalog::IsInterruptingSpell(SpellInfo const* info)

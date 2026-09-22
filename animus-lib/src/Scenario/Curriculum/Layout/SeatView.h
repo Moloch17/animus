@@ -19,6 +19,7 @@
 #ifndef ANIMUS_LIB_CURRICULUM_SEAT_VIEW_H
 #define ANIMUS_LIB_CURRICULUM_SEAT_VIEW_H
 
+#include "Aptitude.h"
 #include "Block.h"
 #include "ClassProfile.h"
 #include "CurriculumTuning.h"
@@ -54,6 +55,8 @@ namespace Animus::Curriculum
         KeepRange,          // a ranged spec: back to its range whenever the target closes in
         StayOnTarget,       // a melee spec: back into melee reach whenever the target leaves it
         MoveBearing,        // walking a compass point of its own choosing (MoveBlock), until it chooses another
+        MoveTurn,           // turning on the spot, as a held key, while the feet do whatever they are doing
+        MovePitch,          // looking further up or down, the same way; only off the ground
         Count
     };
 
@@ -101,15 +104,30 @@ namespace Animus::Curriculum
     /// Which option a kind occupies: a seat runs one positioning option and one standby option at a time. Keeping a
     /// caster at range and waiting for its cast are not alternatives, and with a single slot each press of one threw
     /// the other away -- a melee seat holding an interrupt stopped staying on its target.
+    /// Aiming is not positioning. A player runs one way and looks another, and turning shares no slot with the feet
+    /// -- if it did, choosing a direction to look would cancel the direction being walked, and a strafe could not be
+    /// expressed. Yaw and pitch are separate again for the same reason a mouse moves in two axes at once.
+    [[nodiscard]] constexpr bool IsAiming(SeatOptionKind kind)
+    {
+        return kind == SeatOptionKind::MoveTurn || kind == SeatOptionKind::MovePitch;
+    }
+
     enum class SeatOptionSlot : uint8
     {
         Positioning = 0,
         Standby,
+        Turn,
+        Pitch,
         Count
     };
 
     [[nodiscard]] constexpr SeatOptionSlot SlotOf(SeatOptionKind kind)
     {
+        if (kind == SeatOptionKind::MoveTurn)
+            return SeatOptionSlot::Turn;
+        if (kind == SeatOptionKind::MovePitch)
+            return SeatOptionSlot::Pitch;
+
         return IsPositioning(kind) ? SeatOptionSlot::Positioning : SeatOptionSlot::Standby;
     }
 
@@ -163,12 +181,21 @@ namespace Animus::Curriculum
         uint8 Level = 1;
         uint8 Race = 0;
         uint8 Spec = 0;
-        Role PlayRole = Role::Dps;                  // the drawn spec's role (SeatState::PlayRole)
+        Aptitude Apt;                               // what this character can do (SeatState::Apt)
         /// The compass point the seat is walking (MoveBlock::Bearing), or BEARING_COUNT for none, and how it is
         /// holding its head while it does (MoveBlock::ACTION_FACE_*). Feet and eyes are chosen apart, which is what
         /// lets a seat strafe or back away without turning round.
         uint8 HeldBearing = 0xFF;
         uint8 FacingMode = 0xFF;
+        /// Which way it is turning (-1 left, +1 right, 0 not) and how far up or down it is looking, in radians.
+        /// Yaw and pitch are held like a mouse: the seat keeps turning while the key is down and stays where it got
+        /// to when the key comes up, which is what makes a heading between two compass points reachable at all.
+        int8 Turning = 0;
+        /// The pitch key being held (-1 down, +1 up, 0 none) and the angle it has reached. Two fields because a
+        /// mouse has two: how it is being moved, and where it has got to. Releasing keeps the angle.
+        int8 PitchTurning = 0;
+        float Pitch = 0.0f;
+        float SubmergedTime = 0.0f;                 // seconds its head has been under, 0 while it is up
         TalentBuilder::Build const* Build = nullptr;
         float LastStepDamage = 0.0f;                // damage done / the level's damage scale
         float LastStepPowerDelta = 0.0f;            // primary power change, as a fraction of max
@@ -209,14 +236,16 @@ namespace Animus::Curriculum
 
         // Companion: the player the bot fights for.
         Player* Owner = nullptr;
-        std::optional<Role> OwnerRole;              // what the owner plays, when the scenario knows it
+        /// What the owner can do, the same six numbers a teammate is described by. Unset when the scenario has no
+        /// owner: "there is nobody" and "there is somebody who heals nothing" are different things.
+        std::optional<Aptitude> OwnerApt;
 
         // Party: the other learned players, and the party's living tank (may be the bot).
         struct Teammate
         {
             Player* Bot = nullptr;
             int32 Goal = NO_GOAL;                   // what it is pursuing (SeatGoal), as its policy last sent
-            Role PlayRole = Role::Dps;
+            Aptitude Apt;                           // what it can do; the blocks show the six-number brief of it
             uint8 Class = 0;
         };
 
@@ -241,6 +270,15 @@ namespace Animus::Curriculum
         // Travel: where the seat is going, and whether it may ride there.
         bool HasObjective = false;
         Position Objective;
+        /// How much longer the walking way round to the objective is than the straight line to it, as a ratio;
+        /// 0 without an objective and 1 when the straight line is the route. Measured on foot at the episode's
+        /// build, water and magma excluded, so it is what the ground costs rather than what the pathfinder would
+        /// permit -- a player's filter admits both and would call a lake a straight shot.
+        float Detour = 0.0f;
+        /// Whether the legs are getting anywhere, over about the last second: how far the seat moved against how
+        /// far running would have carried it, and the share of the distance to the objective that closed.
+        float MoveRate = 0.0f;
+        float CloseRate = 0.0f;
         /// False in an on-foot arena (ArenaDefinition::OnFoot): the mount actions are masked out.
         bool MountsAllowed = true;
 
@@ -285,7 +323,7 @@ namespace Animus::Curriculum
         Player* Opponent = nullptr;
         bool OpponentHidden = false;                // the bot can neither see nor detect it
         uint8 OpponentClass = 0;
-        Role OpponentRole = Role::Dps;
+        Aptitude OpponentApt;
         bool Mirror = false;                        // the opponent is a learned agent too
     };
 

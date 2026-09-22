@@ -503,6 +503,11 @@ namespace Animus::Curriculum
             /// the fight does, where a direction chosen against the ground goes stale as soon as the seat has
             /// covered it. The policy re-presses to keep going, which is what a held key is.
             uint32 MoveBearingMs = 3000;
+            /// How long a turn or a pitch keeps being held. Shorter again than a bearing: a seat that keeps turning
+            /// for three seconds has spun round twice, so this is the length of a glance rather than of a journey.
+            /// The policy re-presses to keep turning, and what it has turned to is kept when it stops.
+            uint32 MoveTurnMs = 750;
+            uint32 MovePitchMs = 750;
         } Options;
 
         /// Ground effects: damage from something standing on the ground rather than aimed at the seat (a fire pool,
@@ -790,6 +795,8 @@ namespace Animus::Curriculum
             f("Options.KeepRangeMs", tuning.Options.KeepRangeMs);
             f("Options.StayOnTargetMs", tuning.Options.StayOnTargetMs);
             f("Options.MoveBearingMs", tuning.Options.MoveBearingMs);
+            f("Options.MoveTurnMs", tuning.Options.MoveTurnMs);
+            f("Options.MovePitchMs", tuning.Options.MovePitchMs);
             f("Owner.LevelSpread", tuning.Owner.LevelSpread);
             f("Owner.TankChance", tuning.Owner.TankChance);
             f("Owner.HealerChance", tuning.Owner.HealerChance);
