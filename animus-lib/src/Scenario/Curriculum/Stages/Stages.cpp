@@ -386,21 +386,27 @@ namespace
             // the creature spawns and stood on with `forge rays` facing the edge; the foot below each was routed
             // to with `forge route`. Whether a spawn point offers a ledge trip is what the `ledge` column reports,
             // and a top that never does is a top to replace.
+            //
+            // Each was routed down to its nearest lower spawns first: the way round is 1.9-12x the straight line
+            // for all of these, with drops of 11-44 yd. Four tops picked by relief alone were dropped when the
+            // route came back at 1.0x -- a slope the seat can walk down is not a ledge -- and one had no floor.
             .SpawnPoints = {
-                { -2063.9f, -3645.5f, 66.1f, 0.0f },   // southern Barrens, above (-2032, -3618)
-                { -2094.8f, -3644.6f, 72.4f, 0.0f },
-                { -2522.7f, -3736.9f, 55.7f, 0.0f },   // Barrens/Dustwallow edge, above (-2564, -3799)
-                { -2565.2f, -3715.6f, 47.8f, 0.0f },
-                { 124.5f, -4582.7f, 63.7f, 0.0f },     // Durotar canyon, above (191, -4517)
-                { 107.2f, -4552.6f, 56.8f, 0.0f },
-                { 394.1f, -4599.2f, 76.2f, 0.0f },     // Durotar canyon, above (480, -4659)
-                { 384.7f, -4600.1f, 76.2f, 0.0f },
+                { -2063.9f, -3645.5f, 66.1f, 0.0f },   // southern Barrens, above (-2032, -3618): 44 yd, 2.2-3.5x
+                { -2094.8f, -3644.6f, 72.4f, 0.0f },   // beside it: 11 yd, 1.9-3.4x
+                { 394.1f, -4599.2f, 76.2f, 0.0f },     // Durotar canyon, above (480, -4659): 23 yd, 3.3-4.2x
+                { 85.4f, -4543.8f, 58.4f, 0.0f },      // Durotar canyon: 18 yd, 4.7x
+                { -519.0f, -4076.9f, 69.9f, 0.0f },    // southern Barrens: 27 yd, 6.6x
+                { -2379.6f, 459.2f, 76.8f, 0.0f },     // Mulgore: 16-25 yd, 3.5-4.7x
+                { -4052.7f, -2145.5f, 90.2f, 0.0f },   // Thousand Needles: 40 yd, 6.5x
+                { -4449.9f, -2914.0f, 40.0f, 0.0f },   // Thousand Needles: 16-18 yd, 8.6-12.5x
             },
-            // The southern Barrens escarpment's top, the same ground stage1_move holds out at its foot.
+            // The southern Barrens escarpment's top, the same ground stage1_move holds out at its foot. Two of
+            // stage1_move's own control tops sit above walkable slopes (1.0x) and are no use here; these three
+            // are above real edges, and the deep ones are past the fall that kills without Slow Fall.
             .HeldOutSpawnPoints = {
-                { -405.9f, -3207.1f, 186.5f, 0.0f },
-                { -441.9f, -3162.0f, 210.3f, 0.0f },
-                { -515.9f, -3149.0f, 161.5f, 0.0f },
+                { -545.9f, -3054.0f, 138.1f, 0.0f },   // 46 yd, 1.9-2.7x
+                { -515.9f, -3149.0f, 161.5f, 0.0f },   // 67 yd, 5.3-5.7x
+                { -481.2f, -3249.9f, 164.5f, 0.0f },   // 70 yd, 2.9x
             },
         });
 
@@ -420,15 +426,16 @@ namespace
             },
             .InDefaultQueue = false,
             .MapId = MAP_KALIMDOR,
+            // The jump drill's ground, the same lists.
             .SpawnPoints = {
                 { -2063.9f, -3645.5f, 66.1f, 0.0f },   { -2094.8f, -3644.6f, 72.4f, 0.0f },
-                { -2522.7f, -3736.9f, 55.7f, 0.0f },   { -2565.2f, -3715.6f, 47.8f, 0.0f },
-                { 124.5f, -4582.7f, 63.7f, 0.0f },     { 107.2f, -4552.6f, 56.8f, 0.0f },
-                { 394.1f, -4599.2f, 76.2f, 0.0f },     { 384.7f, -4600.1f, 76.2f, 0.0f },
+                { 394.1f, -4599.2f, 76.2f, 0.0f },     { 85.4f, -4543.8f, 58.4f, 0.0f },
+                { -519.0f, -4076.9f, 69.9f, 0.0f },    { -2379.6f, 459.2f, 76.8f, 0.0f },
+                { -4052.7f, -2145.5f, 90.2f, 0.0f },   { -4449.9f, -2914.0f, 40.0f, 0.0f },
             },
             .HeldOutSpawnPoints = {
-                { -405.9f, -3207.1f, 186.5f, 0.0f },   { -441.9f, -3162.0f, 210.3f, 0.0f },
-                { -515.9f, -3149.0f, 161.5f, 0.0f },
+                { -545.9f, -3054.0f, 138.1f, 0.0f },   { -515.9f, -3149.0f, 161.5f, 0.0f },
+                { -481.2f, -3249.9f, 164.5f, 0.0f },
             },
         });
 
