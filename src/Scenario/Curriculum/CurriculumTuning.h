@@ -563,6 +563,10 @@ namespace Animus::Curriculum
             /// On foot (ArenaDefinition::OnFoot): shorter, because the lesson is how well the seat covers
             /// ground with what it has rather than whether a ride is worth summoning. Long enough that a
             /// speed cooldown pays for itself and short enough that the trip is not simply a wait.
+            /// Inside a building the whole trip is shorter than an outdoor one's first step: an inn is twenty to
+            /// thirty yards across, and FootMin alone would put every objective through an outside wall.
+            float IndoorMin = 8.0f;
+            float IndoorMax = 40.0f;
             float FootMin = 40.0f;
             float FootMax = 160.0f;
             float FlyingMin = 350.0f;           // flying arenas: yards from the start
@@ -573,6 +577,32 @@ namespace Animus::Curriculum
             float DamageTaken = 1.0f;           // fraction of the bot's health (falls, what it rode past)
             float Death = 3.0f;
             float StepCost = 0.0002f;           // per decision
+            /// Room to move. Charged per second, scaled by how far inside ClearanceMargin the seat is, and
+            /// capped per episode at ClearanceMax so it can never approach what arriving is worth (Arrive 3.0).
+            /// The margin is deliberately wider than a doorway: the seat should prefer the middle of a corridor,
+            /// not refuse a door.
+            /// Routing. A route is re-planned when the seat has wandered RouteStray yards from the corner it
+            /// was walking to, or when RouteRefresh seconds have passed -- movement first, for the same reason
+            /// the ground probe refreshes on movement first. RouteCorner is how near counts as having reached
+            /// one, and wants to be wider than a decision's travel (1.75 yd at run speed) so a corner cannot be
+            /// stepped over and walked back to.
+            /// Where the pathfinder hands the trip back. ACTION_FOLLOW_ROUTE is offered while more than this
+            /// many yards of route remain and masked inside it, so the long haul can be delegated and the
+            /// approach cannot.
+            ///
+            /// The split is where the failures are. At four million steps the episodes that timed out had
+            /// routes of 135 yards against arrivals' 105, with detour ratios of 1.24 and 1.21 -- identical.
+            /// It was never the rough ground or the things in the way; it was the length, and the drift that
+            /// a long trip leaves room for. The last forty yards are the part where clearance, arriving on the
+            /// mark and getting out of the way of what is underfoot actually live, and no pathfinder does
+            /// those.
+            float RouteHandoff = 40.0f;
+            float RouteStray = 25.0f;
+            float RouteRefresh = 5.0f;
+            float RouteCorner = 5.0f;
+            float Clearance = 0.08f;            // per second hard against the wall
+            float ClearanceMargin = 1.5f;       // yards; closer than this is charged
+            float ClearanceMax = 0.6f;          // most an episode may lose to it
         } Travel;
 
         /// The flag match (Warsong Gulch's rules between two seats).
@@ -831,6 +861,8 @@ namespace Animus::Curriculum
             f("Travel.ObjectiveMin", tuning.Travel.ObjectiveMin);
             f("Travel.ObjectiveMax", tuning.Travel.ObjectiveMax);
             f("Travel.FootMin", tuning.Travel.FootMin);
+            f("Travel.IndoorMin", tuning.Travel.IndoorMin);
+            f("Travel.IndoorMax", tuning.Travel.IndoorMax);
             f("Travel.FootMax", tuning.Travel.FootMax);
             f("Travel.FlyingMin", tuning.Travel.FlyingMin);
             f("Travel.FlyingMax", tuning.Travel.FlyingMax);
@@ -840,6 +872,13 @@ namespace Animus::Curriculum
             f("Travel.DamageTaken", tuning.Travel.DamageTaken);
             f("Travel.Death", tuning.Travel.Death);
             f("Travel.StepCost", tuning.Travel.StepCost);
+            f("Travel.RouteHandoff", tuning.Travel.RouteHandoff);
+            f("Travel.RouteStray", tuning.Travel.RouteStray);
+            f("Travel.RouteRefresh", tuning.Travel.RouteRefresh);
+            f("Travel.RouteCorner", tuning.Travel.RouteCorner);
+            f("Travel.Clearance", tuning.Travel.Clearance);
+            f("Travel.ClearanceMargin", tuning.Travel.ClearanceMargin);
+            f("Travel.ClearanceMax", tuning.Travel.ClearanceMax);
 
             f("Flag.BaseMin", tuning.Flag.BaseMin);
             f("Flag.BaseMax", tuning.Flag.BaseMax);

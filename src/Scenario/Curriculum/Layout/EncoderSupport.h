@@ -231,6 +231,15 @@ namespace Animus::Curriculum::Encoding
     /// where the walkable mesh stops at the surface.
     void SwimTo(Player* bot, float x, float y, float z, float const* facing = nullptr);
 
+    /// Jump along a heading: a parabola at `speedXY` forward and `speedZ` up, with no pathfinding.
+
+    /// The caller must already know there is somewhere to land.
+
+    void JumpTo(Player* bot, float x, float y, float z, float speedXY, float speedZ,
+
+        float const* facing = nullptr);
+
+
     void FlyTo(Player* bot, float x, float y, float z, float const* facing = nullptr);
 
     /// Send the bot's pets and guardians at `target`, as the pet bar's Attack does. True if any was ordered.

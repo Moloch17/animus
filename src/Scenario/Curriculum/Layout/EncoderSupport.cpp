@@ -706,9 +706,32 @@ namespace Animus::Curriculum::Encoding
         // stops walking, or it walks and never turns. They have to be the same spline. generatePath matches what
         // MovePoint does, so a bearing is still a direction the seat wants to go rather than a licence to walk
         // through a wall.
+        //
+        // SetFacing alone was not enough, and this is the whole of why no seat could hold a heading. It raises
+        // Final_Angle, and MoveSpline::ComputePosition applies that angle only under `splineflags.done`; any
+        // unfinished spline has its orientation overwritten every tick with the direction of travel,
+        // atan2(hermite.y, hermite.x), which Unit::UpdateSplinePosition writes onto the player. A held bearing
+        // re-launches this spline every 250 ms decision towards a point over a second away, so it never finishes
+        // and the facing was thrown away every time. Orientation then *was* the travel direction, and since a
+        // bearing is measured off it, holding anything but straight ahead rotated the frame 45 degrees a
+        // decision: the seat spiralled.
+        //
+        // Two things are needed. OrientationFixed stops the overwrite for the spline's whole life rather than
+        // only at its end. And the spline must be interrupted before Launch, because Launch seeds
+        // args.initialOrientation from ComputePosition while a spline is still live -- MotionMaster::Clear does
+        // not finalise it, since these are raw MoveSplineInits and never set UNIT_STATE_MOVING, so
+        // IdleMovementGenerator::Reset never calls StopMoving. Without the interrupt the new spline inherits the
+        // old one's travel direction and the facing asked for here is discarded a second way.
+        bot->DisableSpline();
+        // UpdatePosition rather than SetOrientation: same x/y/z makes `relocated` false and `turn` true, so this
+        // fires AURA_INTERRUPT_FLAG_TURNING exactly as a real turn does. Nothing in stage 1 casts, but the
+        // combat stages do.
+        bot->UpdatePosition(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(), *facing);
+
         Movement::MoveSplineInit init(bot);
         init.MoveTo(x, y, z, true);
-        init.SetFacing(*facing);
+        init.SetOrientationFixed(true);
+        init.SetFacing(*facing);        // and for the final tick, on the rare spline that does finish
         init.Launch();
     }
 
@@ -721,15 +744,61 @@ namespace Animus::Curriculum::Encoding
         //
         // No SetFly: a swimming unit is not a flying one, and telling the client otherwise is a different bug.
         bot->GetMotionMaster()->Clear();
+        if (facing)
+        {
+            // Same as MoveTo: interrupt first so Launch seeds the orientation from the unit rather than from the
+            // spline still in flight, then hold it for the spline's whole life.
+            bot->DisableSpline();
+            bot->UpdatePosition(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(), *facing);
+        }
+
         Movement::MoveSplineInit init(bot);
         init.MoveTo(x, y, z, false, true);
         if (facing)
+        {
+            init.SetOrientationFixed(true);
             init.SetFacing(*facing);
+        }
+        init.Launch();
+    }
+
+    void JumpTo(Player* bot, float x, float y, float z, float speedXY, float speedZ, float const* facing)
+    {
+        // MotionMaster::MoveJump would do most of this, and cannot be used: MoveJumpTo refuses players outright
+        // ("this function may make players fall below map") and MoveJump sets no orientation-fixed flag, so the
+        // spline would go back to writing the direction of travel onto the seat's orientation -- the exact bug
+        // that made a held bearing spiral. A jump is built here for the same reason MoveTo is.
+        //
+        // No pathfinding, deliberately: a jump is the one move that leaves the navmesh, and asking the
+        // pathfinder to route it would either refuse it or walk the seat round. Whether there is anywhere to
+        // land is decided before this is called, because nothing here can undo a bad landing.
+        bot->GetMotionMaster()->Clear();
+        bot->DisableSpline();
+        if (facing)
+            bot->UpdatePosition(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(), *facing);
+
+        float const moveTimeHalf = speedZ / float(Movement::gravity);
+        float const maxHeight = -Movement::computeFallElevation(moveTimeHalf, false, -speedZ);
+
+        Movement::MoveSplineInit init(bot);
+        init.MoveTo(x, y, z, false);
+        init.SetParabolic(maxHeight, 0.0f);
+        init.SetVelocity(speedXY);
+        if (facing)
+        {
+            init.SetOrientationFixed(true);
+            init.SetFacing(*facing);
+        }
         init.Launch();
     }
 
     void FlyTo(Player* bot, float x, float y, float z, float const* facing)
     {
+        // Deliberately NOT orientation-fixed, unlike MoveTo and SwimTo. SetFly puts the spline in Catmullrom
+        // mode, and Spline::init_spline places the virtual first control point at
+        // controls[0] - (cos(initialOrientation), sin(initialOrientation)): a facing off the direction of travel
+        // would bend the start of the flight path rather than only turn the seat's head. Flying seats therefore
+        // keep the old face-along-the-path behaviour until a stage needs to strafe in the air.
         bot->GetMotionMaster()->Clear();
         Movement::MoveSplineInit init(bot);
         init.MoveTo(x, y, z, false, true);
