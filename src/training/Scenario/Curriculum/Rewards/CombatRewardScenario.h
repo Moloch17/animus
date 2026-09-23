@@ -16,7 +16,6 @@
  * with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
-
 #ifndef ANIMUS_COMBAT_REWARD_SCENARIO_H
 #define ANIMUS_COMBAT_REWARD_SCENARIO_H
 
