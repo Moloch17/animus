@@ -46,6 +46,11 @@ function(AnimusLibTuneForwardPass)
 endfunction()
 
 function(AnimusLibRequire dependent bundleDir)
+  # RUNTIME_ONLY collects src/runtime alone: the blocks, the layout and encoders, the characters, the model and the
+  # bots -- everything needed to run a trained model, and nothing that builds a training episode. It is what
+  # mod-animus asks for, because src/training calls PathGenerator::SetIncludeFlags (Encounters/TravelEncounter.cpp),
+  # which exists only on the Animus Forge core. Collecting both roots is the default and what mod-animus-forge does.
+  cmake_parse_arguments(ANIMUS_LIB "RUNTIME_ONLY" "" "" ${ARGN})
   ModuleNameToVariable(${dependent} dependentVariable)
   set(dependentLinkage "${${dependentVariable}}")
   if(NOT dependentLinkage MATCHES "static|dynamic")
@@ -59,8 +64,8 @@ function(AnimusLibRequire dependent bundleDir)
   get_property(tuned GLOBAL PROPERTY ANIMUS_LIB_FORWARD_PASS_TUNED)
   if(NOT tuned)
     set_property(GLOBAL PROPERTY ANIMUS_LIB_FORWARD_PASS_TUNED TRUE)
-    AnimusLibTuneForwardPass("${ANIMUS_LIB_MODULE_DIR}/src/Model/MlpPolicy.cpp"
-      "${bundleDir}/src/Model/MlpPolicy.cpp")
+    AnimusLibTuneForwardPass("${ANIMUS_LIB_MODULE_DIR}/src/runtime/Model/MlpPolicy.cpp"
+      "${bundleDir}/src/runtime/Model/MlpPolicy.cpp")
   endif()
 
   list(FIND MODULES_MODULE_LIST ${ANIMUS_LIB_MODULE} libraryIndex)
@@ -83,10 +88,20 @@ function(AnimusLibRequire dependent bundleDir)
       target_link_libraries(${dependentProject} PUBLIC ${libraryProject})
     endif()
 
+    # A development checkout is built by AzerothCore's own module machinery, which collects the module's whole src
+    # tree -- both roots, whatever the dependent asked for. So the training half is always present here and its
+    # hooks must be registered; RUNTIME_ONLY cannot be honoured in this layout, and a dependent that needs a stock
+    # core should build against its bundle instead (remove modules/mod-animus-lib).
+    target_compile_definitions(modules PRIVATE ANIMUS_LIB_TRAINING)
+
     get_property(announced GLOBAL PROPERTY ANIMUS_LIB_ANNOUNCED)
     if(NOT announced)
       set_property(GLOBAL PROPERTY ANIMUS_LIB_ANNOUNCED TRUE)
       message(STATUS "  animus-lib: using the ${ANIMUS_LIB_MODULE} module; bundled copies are ignored")
+      if(ANIMUS_LIB_RUNTIME_ONLY)
+        message(STATUS "  animus-lib: ${dependent} asked for the runtime half only, but a ${ANIMUS_LIB_MODULE} "
+          "checkout builds both roots; it needs the forge core's PathGenerator::SetIncludeFlags")
+      endif()
     endif()
     return()
   endif()
@@ -96,21 +111,39 @@ function(AnimusLibRequire dependent bundleDir)
       "${bundleDir} to ${ANIMUS_LIB_MODULE_DIR} and build it dynamic too")
   endif()
 
-  get_property(alreadyAdded GLOBAL PROPERTY ANIMUS_LIB_ADDED_TO_MODULES)
-  if(alreadyAdded)
-    return()
-  endif()
 
-  if(NOT EXISTS "${bundleDir}/src/animus_lib_loader.cpp")
+  if(NOT EXISTS "${bundleDir}/src/runtime/animus_lib_loader.cpp")
     message(FATAL_ERROR "${dependent}'s bundled animus-lib is missing (${bundleDir}/src); restore the module's "
       "animus-lib directory")
   endif()
 
-  set_property(GLOBAL PROPERTY ANIMUS_LIB_ADDED_TO_MODULES TRUE)
+  # A root is added once per configure, but which roots are wanted depends on the dependent -- and a runtime-only
+  # dependent configuring first must not stop a later one getting the training half. So the two are tracked apart
+  # rather than under one "already added" flag.
+  set(animusLibRoots runtime)
+  if(NOT ANIMUS_LIB_RUNTIME_ONLY)
+    list(APPEND animusLibRoots training)
+  endif()
 
-  CollectSourceFiles("${bundleDir}/src" librarySources)
-  CollectIncludeDirectories("${bundleDir}/src" libraryIncludes)
-  target_sources(modules PRIVATE ${librarySources})
-  target_include_directories(modules PUBLIC ${libraryIncludes})
-  message(STATUS "  animus-lib: built from ${bundleDir}")
+  foreach(root ${animusLibRoots})
+    string(TOUPPER "${root}" rootUpper)
+    get_property(rootAdded GLOBAL PROPERTY ANIMUS_LIB_ADDED_${rootUpper})
+    if(rootAdded)
+      continue()
+    endif()
+
+    set_property(GLOBAL PROPERTY ANIMUS_LIB_ADDED_${rootUpper} TRUE)
+    CollectSourceFiles("${bundleDir}/src/${root}" rootSources)
+    CollectIncludeDirectories("${bundleDir}/src/${root}" rootIncludes)
+    target_sources(modules PRIVATE ${rootSources})
+    target_include_directories(modules PUBLIC ${rootIncludes})
+  endforeach()
+
+  # The loader registers the training half's core hooks only when that half is compiled (animus_lib_loader.cpp).
+  if(NOT ANIMUS_LIB_RUNTIME_ONLY)
+    target_compile_definitions(modules PRIVATE ANIMUS_LIB_TRAINING)
+  endif()
+
+  string(REPLACE ";" " + " animusLibRootsShown "${animusLibRoots}")
+  message(STATUS "  animus-lib: built from ${bundleDir} (${animusLibRootsShown})")
 endfunction()

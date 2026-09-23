@@ -18,6 +18,7 @@
 
 #include "Encounters.h"
 #include "CombatReward.h"
+#include "CombatRewardScenario.h"
 #include "Creature.h"
 #include "Env.h"
 #include "Opponents.h"

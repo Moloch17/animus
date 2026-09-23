@@ -21,6 +21,7 @@
 #include "IncomingSpell.h"
 #include "BotAccounts.h"
 #include "CombatReward.h"
+#include "CombatRewardScenario.h"
 #include "Env.h"
 #include "Map.h"
 #include "Player.h"

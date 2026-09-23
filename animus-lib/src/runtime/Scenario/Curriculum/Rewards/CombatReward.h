@@ -72,11 +72,6 @@ namespace Animus::Curriculum
         /// the time. Counted for whatever the seat is fighting, so a pack's target counts as a duel's opponent does.
         void Style(Player const* bot, Unit const* target, uint32 decisionMs, CombatTally& tally);
 
-        /// A seat's reward against one opponent (a creature or a player): damage dealt as a fraction of its health,
-        /// damage taken, casting, approach, stealth openers, the kill (faster and healthier pays more), death.
-        void OneOnOne(StageScenario& scenario, Env const& env, uint32 seat, Player* bot, Unit* opponent,
-            RewardLedger& ledger);
-
         /// The fraction of the episode length not yet spent since `sinceMs`. The fast kill and clear bonuses count
         /// from the engagement, so the approach, stealth and preparation before it cost nothing but the discount.
         [[nodiscard]] float TimeLeftSince(Env const& env, uint32 sinceMs);
