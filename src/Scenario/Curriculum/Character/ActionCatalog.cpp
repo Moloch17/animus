@@ -83,11 +83,12 @@ namespace
             case SPELL_AURA_TRACK_CREATURES:
             case SPELL_AURA_TRACK_RESOURCES:
             case SPELL_AURA_TRACK_STEALTHED:
-            case SPELL_AURA_WATER_WALK:
             case SPELL_AURA_WATER_BREATHING:
             // Feather fall and hover used to be excluded here with the rest of the travel conveniences. They are
             // survival auras now (IsSurvivalAura): a drop off a ledge is a move the seat may choose, and Slow Fall
             // or Levitate is what decides whether it costs health, so the classes that have one need the button.
+            // Water walk left the list with them, because Levitate carries it too and an excluded aura vetoes the
+            // whole spell; on its own it makes nothing useful (Path of Frost, Water Walking), so those stay out.
             case SPELL_AURA_FAR_SIGHT:
             case SPELL_AURA_BIND_SIGHT:
             case SPELL_AURA_MOD_POSSESS:
