@@ -16,6 +16,15 @@
  * with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
+
+// The stage viewer runs a real curriculum stage -- StageScenario and an EnvPool -- so it needs animus-lib's training
+// half, which mod-animus does not compile by default: that half calls PathGenerator::SetIncludeFlags, which exists
+// only on the Animus Forge core, and mod-animus is meant to build against a stock AzerothCore.
+//
+// Configure with -DANIMUS_STAGE_VIEWER=ON to get it back. That collects both of the library's source roots, defines
+// ANIMUS_LIB_TRAINING, and needs the core patch. Without it the class still exists and every command still answers,
+// so AnimusMod compiles and links untouched -- the commands just say what is missing rather than failing to build.
+#ifdef ANIMUS_LIB_TRAINING
 #include "StageViewer.h"
 #include "CellImpl.h"
 #include "Chat.h"
@@ -650,3 +659,67 @@ void Animus::StageViewer::Tell(std::string const& text) const
     if (Player* viewer = ObjectAccessor::FindConnectedPlayer(_viewer))
         ChatHandler(viewer->GetSession()).SendSysMessage(text);
 }
+
+#else   // ANIMUS_LIB_TRAINING
+
+#include "StageViewer.h"
+#include "ObjectGuid.h"
+#include "StageState.h"      // NO_ARENA, NO_TIER, NO_LAYOUT: the same "not chosen" the real viewer starts at
+
+namespace
+{
+    constexpr char const* NO_VIEWER =
+        "The stage viewer is not in this build: configure with -DANIMUS_STAGE_VIEWER=ON (it needs animus-lib's "
+        "training half and the forge core's PathGenerator::SetIncludeFlags).";
+}
+
+Animus::StageViewer::StageViewer(ObjectGuid viewer, uint32 envId, StageSettings settings)
+    : _viewer(viewer), _envId(envId), _settings(std::move(settings)), _arena(Curriculum::NO_ARENA),
+    _tier(Curriculum::NO_TIER), _layout(Curriculum::NO_LAYOUT)
+{
+    _settings.FirstEnvId = envId;
+}
+
+Animus::StageViewer::~StageViewer() = default;
+
+bool Animus::StageViewer::Begin(Player* /*viewer*/, std::string const& /*stage*/, std::string const& /*policy*/,
+    std::string const& /*arena*/, std::string& message)
+{
+    message = NO_VIEWER;
+    return false;
+}
+
+Animus::StageViewer::Status Animus::StageViewer::Update(uint32 /*diff*/, ModelLibrary& /*models*/)
+{
+    return Status::Ended;
+}
+
+bool Animus::StageViewer::Spawn(std::string_view /*tier*/, std::string_view /*classRole*/,
+    std::string_view /*level*/, ModelLibrary& /*models*/, std::string& message)
+{
+    message = NO_VIEWER;
+    return false;
+}
+
+bool Animus::StageViewer::Run(std::string& message)
+{
+    message = NO_VIEWER;
+    return false;
+}
+
+bool Animus::StageViewer::Freeze(std::string& message)
+{
+    message = NO_VIEWER;
+    return false;
+}
+
+void Animus::StageViewer::Stop()
+{
+}
+
+std::vector<std::string> Animus::StageViewer::Describe(ModelLibrary& /*models*/) const
+{
+    return { NO_VIEWER };
+}
+
+#endif  // ANIMUS_LIB_TRAINING

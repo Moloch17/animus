@@ -127,8 +127,14 @@ namespace Animus
         uint32 _tier;                               // Spawn's choices: NO_TIER, NO_LAYOUT and 0 = the curriculum's
         uint32 _layout;
         uint32 _level = 0;
+        // Only a build that carries animus-lib's training half has a scenario to run or a pool to run it in; the
+        // stub in StageViewer.cpp answers every command without them. Held here rather than behind a pimpl because
+        // a unique_ptr to an incomplete type still needs that type complete wherever it is destroyed, and without
+        // this half neither type exists at all.
+#ifdef ANIMUS_LIB_TRAINING
         std::unique_ptr<Curriculum::StageScenario> _scenario;
         std::unique_ptr<EnvPool> _pool;
+#endif
 
         Phase _phase = Phase::Travelling;
         uint32 _travelMs = 0;

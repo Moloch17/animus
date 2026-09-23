@@ -32,6 +32,15 @@ Both run the same scenario and encoding code as training, so a model sees and do
    (`Animus.Curriculum.Stage = stage1_duel`). Models you place by hand go in `<DataDir>/animus`, which is searched
    first; the startup log names the directory used.
 
+### The GM stage viewer
+
+The viewer runs a real curriculum stage in the world, so it needs animus-lib's training half -- and that half calls
+`PathGenerator::SetIncludeFlags`, which a stock AzerothCore does not have (it is an eight-line addition on the Animus
+Forge core, and `_filter` is private upstream, so the module cannot shim it). It is therefore **off by default**, which
+is what keeps the "no core changes" promise above true: configure with `-DANIMUS_STAGE_VIEWER=ON` on a core that has
+the patch to build it. Without it the class and its commands still exist and answer saying what is missing, so nothing
+else about the module changes. Companions never needed the training half.
+
 Don't build it into the forge core; a forge build disables it. Where the models come from, and how `DataDir` and the
 install step line up, is in
 [manual 6.3 and 6.4](https://github.com/Moloch17/animus-forge/blob/master/docs/manual/06-animus.md#63-installing).
