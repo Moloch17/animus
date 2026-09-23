@@ -36,6 +36,10 @@ namespace
 {
     using namespace Animus::Curriculum;
 
+    /// This block's spline, distinct from the movement block's "MV" so a leg of a route and a held bearing
+    /// cannot be mistaken for one another.
+    constexpr uint32 TRAVEL_MOVE_POINT_ID = 0x5452;     // "TR"
+
     constexpr float MAX_GROUND_SEARCH = 200.0f;
     constexpr float AIRBORNE_ABOVE = 2.0f;      // higher than this without flight is falling
 
@@ -105,6 +109,14 @@ namespace
                 return view.MountsAllowed && CanSummon(bot, TravelBlock::FlyingMount(bot));
             case TravelBlock::ACTION_DISMOUNT:
                 return bot->IsMounted();
+            case TravelBlock::ACTION_FOLLOW_ROUTE:
+                // A way to follow, somewhere still to get to, an arena that offers the action -- and enough of
+                // the trip left to be worth delegating. Inside the handoff the seat walks it itself, because
+                // the last forty yards are the part a pathfinder cannot do: arriving on the mark, keeping off
+                // the walls, stepping round whatever is underfoot.
+                return view.Route.Allowed && view.Route.Valid && view.HasObjective
+                    && view.Route.Remaining > view.Route.Handoff
+                    && !TravelBlock::AtObjective(bot, view.Objective);
             default:
                 return false;
         }
@@ -133,9 +145,10 @@ float Animus::Curriculum::TravelBlock::HeightAboveGround(Player const* bot)
     return ground > INVALID_HEIGHT ? std::max(0.0f, bot->GetPositionZ() - ground) : 0.0f;
 }
 
-bool Animus::Curriculum::TravelBlock::AtObjective(Player const* bot, Position const& objective)
+bool Animus::Curriculum::TravelBlock::AtObjective(Player const* bot, Position const& objective, float maxRise)
 {
-    return bot->GetExactDist2d(&objective) <= ARRIVE_DISTANCE && HeightAboveGround(bot) <= AIRBORNE_ABOVE;
+    return bot->GetExactDist2d(&objective) <= ARRIVE_DISTANCE && HeightAboveGround(bot) <= AIRBORNE_ABOVE
+        && std::fabs(bot->GetPositionZ() - objective.GetPositionZ()) <= maxRise;
 }
 
 void Animus::Curriculum::TravelBlock::FallIfAirborne(Player* bot)
@@ -175,6 +188,16 @@ Animus::Curriculum::BlockSize Animus::Curriculum::TravelBlock::Size(Layout const
     return { OBS_COUNT, ACTION_COUNT };
 }
 
+std::string Animus::Curriculum::TravelBlock::ActionName(Layout const& /*layout*/, uint32 local) const
+{
+    static constexpr std::array<char const*, ACTION_COUNT> NAMES =
+    {
+        "mount_ground", "mount_flying", "dismount", "follow_route",
+    };
+
+    return local < NAMES.size() ? NAMES[local] : std::string();
+}
+
 void Animus::Curriculum::TravelBlock::Observe(SeatView const& view, float* obs, uint8* mask) const
 {
     Player* bot = view.Bot;
@@ -200,6 +223,15 @@ void Animus::Curriculum::TravelBlock::Observe(SeatView const& view, float* obs, 
         obs[OBS_OBJECTIVE_HEIGHT] = std::clamp((view.Objective.GetPositionZ() - bot->GetPositionZ()) / 50.0f, -1.0f,
             1.0f);
         obs[OBS_AT_OBJECTIVE] = AtObjective(bot, view.Objective) ? 1.0f : 0.0f;
+    }
+
+    if (view.Route.Valid)
+    {
+        obs[OBS_ROUTE_OK] = 1.0f;
+        obs[OBS_ROUTE_REMAIN] = std::min(1.0f, view.Route.Remaining / 500.0f);
+        float const corner = bot->GetRelativeAngle(&view.Route.Next);
+        obs[OBS_ROUTE_SIN] = std::sin(corner);
+        obs[OBS_ROUTE_COS] = std::cos(corner);
     }
 
     // Asked here rather than of the mask: the policy sees whether mounting is possible even when no mask is wanted.
@@ -285,6 +317,17 @@ void Animus::Curriculum::TravelBlock::Apply(SeatView& view, uint32 local, SeatAc
             // As CMSG_CANCEL_MOUNT_AURA.
             bot->RemoveAurasByType(SPELL_AURA_MOUNTED);
             FallIfAirborne(bot);
+            return;
+        case ACTION_FOLLOW_ROUTE:
+            // Through Encoding::MoveTo like every other walk in the curriculum, so the orientation-fixed spline
+            // holds and the seat's own facing frame survives -- MotionMaster would write the direction of travel
+            // onto the seat's orientation, which is the spiral this design removed.
+            //
+            // One corner at a time rather than the whole way. A leg is short enough that the route is re-planned
+            // under it as the seat walks, which is what lets a journey cross ground whose tiles were not loaded
+            // when it set out.
+            Encoding::MoveTo(bot, TRAVEL_MOVE_POINT_ID, view.Route.Next.GetPositionX(),
+                view.Route.Next.GetPositionY(), view.Route.Next.GetPositionZ(), &view.Facing);
             return;
         default:
             return;

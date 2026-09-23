@@ -332,7 +332,10 @@ bool Animus::Curriculum::FlagEncounter::Build(Env& env, Map* map, uint8 /*level*
     else
     {
         flags.Sides[0].Base.Relocate(first);
-        if (!TravelEncounter::FindPlace(first, map, tuning.BaseMin, tuning.BaseMax, false, flags.Sides[1].Base))
+        // No time budget: this is where the other base stands, a fixed feature of the arena, not a trip a seat
+        // has to finish before a clock runs out.
+        if (!TravelEncounter::FindPlace(first, map, tuning.BaseMin, tuning.BaseMax, false, flags.Sides[1].Base,
+            0.0f))
             return false;
 
         flags.Sides[1].Base.SetOrientation(flags.Sides[1].Base.GetAngle(&flags.Sides[0].Base));

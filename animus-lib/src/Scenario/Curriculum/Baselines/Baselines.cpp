@@ -552,6 +552,23 @@ namespace
                     return ride;
             }
 
+            // A mount is a cast, and moving cancels it. Wait the cast out.
+            //
+            // Without this the scripted policy cancelled its own mount every single time, and the numbers said
+            // so: it mounted in 2 of 2048 evaluation episodes. The sequence is that the press stops the seat and
+            // starts the cast; on the next decision the seat is still not mounted, so this branch asks for the
+            // mount again -- and CanSummon now refuses it, because a cast is in progress. The request comes back
+            // empty, the branch falls through to facing and steering, Encoding::MoveTo runs, and the cast dies
+            // one decision after it began. Every time, for both the scripted policy and any learned one that
+            // presses mount and then steers.
+            //
+            // OBS_CASTING is the seat's own "casting or channeling", so the wait needs no state kept between
+            // decisions. Scoped to the case that wants it -- on a trip, meaning to be mounted, mid-cast -- so
+            // that nothing else in the policy starts waiting on casts it should be moving through.
+            if (!mounted && yards > MOUNT_BEYOND_YARDS
+                && row.Obs(BlockId::Core, CoreBlock::OBS_CASTING) > 0.0f)
+                return 0;
+
             // Look at it first. Once the head is held that way the action masks itself, so this falls through on
             // every later decision without needing to be asked whether it already did.
             if (std::optional<int32> face = row.Allowed(BlockId::Move, MoveBlock::ACTION_FACE_OBJECTIVE))

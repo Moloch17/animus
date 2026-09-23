@@ -26,6 +26,7 @@
 #include "Env.h"
 #include "ObjectGuid.h"
 #include "RewardLedger.h"
+#include "RoutePlanner.h"
 #include "ScriptedPlayer.h"
 #include "SeatView.h"
 #include "StageDefinition.h"
@@ -547,14 +548,28 @@ namespace Animus::Curriculum
         /// line, it insists on one, and checks that what lies between is water rather than a cliff. `across` also
         /// requires a dry way round to exist at all -- water is only worth getting into when there is a choice --
         /// and reports its length in `dry`, which is what the way round costs on foot.
+        ///
+        /// `budgetSeconds` is what makes the whole thing honest: a place is only accepted if the path to it can
+        /// be covered in that long at the speed this character actually has. Reachable and reachable-in-time are
+        /// different claims, and only the first was ever checked. 0 means no budget, for a placement that is a
+        /// feature of the arena rather than a trip against a clock.
+        ///
+        /// `shortcut`, if given, reports that the accepted place's path was not a path. PathGenerator answers
+        /// PATHFIND_NORMAL | PATHFIND_NOT_USING_PATH on a missing tile, a hole in the mesh, or a start too far
+        /// from it -- and what it returns then is BuildShortcut's two-point straight line, whose length is the
+        /// distance as the crow flies. Tested for PATHFIND_NORMAL alone, as this function has always tested it,
+        /// that reads as a clean route with a detour of exactly 1.0, and the feasibility budget it is measured
+        /// against means nothing. Opponents::Walkable has always checked the flag; here it was missed.
         static bool FindPlace(Player* bot, Map* map, float nearest, float furthest, bool flying, Position& place,
-            float* walk = nullptr, bool across = false, float* dry = nullptr);
+            float budgetSeconds, float* walk = nullptr, bool across = false, float* dry = nullptr,
+            bool indoors = false, bool* shortcut = nullptr);
         /// Whether the straight line from `bot` to (x, y) passes through water.
         static bool CrossesWater(Player const* bot, Map* map, Position const& place, float x, float y);
 
     private:
         struct EnvTravel
         {
+            bool Indoors = false;           // the arena is inside a building: placement and arrival both change
             bool Crossing = false;          // the objective was placed across water (a water arena that found one)
             float DryDistance = 0.0f;       // yards of the way round on foot, water excluded; 0 = no dry route
             uint32 SwimMs = 0;              // how long the seat has been in the water this episode
@@ -562,7 +577,34 @@ namespace Animus::Curriculum
             Position Objective;
             float StartDistance = 0.0f;         // yards on the ground at the start
             float WalkDistance = 0.0f;          // yards of path to the objective: what covering it on foot costs
+            /// How much of the episode's clock the trip needs at this character's own speed -- path length over
+            /// speed over episode length. The feasibility cap in FindPlace is a ceiling on this, and reporting it
+            /// is how the distribution under that ceiling stays visible rather than assumed.
+            float TripShare = 0.0f;
             float LastDistance = -1.0f;         // shaping: yards at the last reward; < 0 = none yet
+            /// The closest the seat ever got to the objective this episode, and how far into the clock that was.
+            ///
+            /// objective_distance_at_end says where a failure stopped, which turns out to say very little. A seat
+            /// that touched seven yards forty seconds in and then wandered off has a steering fault; one that
+            /// never closed past fifty has a routing fault, or was sent somewhere it cannot reach. Those are
+            /// different bugs with different fixes and the end distance cannot tell them apart -- both of them
+            /// finish sixty yards out.
+            /// The way to the objective, and when it was last planned.
+            ///
+            /// Held per env rather than per seat because the objective is the env's: travel is one trip that
+            /// one seat makes. It is what Progress is shaped on -- the distance along this, not the distance
+            /// through the hillside between here and there.
+            Route Way;
+            uint32 WayMs = 0;
+            bool WayFailed = false;         // a route was wanted and none was found
+            /// The trip was measured against a straight line rather than a route -- see FindPlace. Reported and
+            /// not yet acted on: the first question is how many episodes this is.
+            bool Shortcut = false;
+            bool DryShortcut = false;
+            float Nearest = -1.0f;
+            uint32 NearestMs = 0;
+            float NearestX = 0.0f;              // and where the seat was standing when it was that close
+            float NearestY = 0.0f;
             /// Yards the seat has actually covered, summed decision by decision -- as against WalkDistance, which
             /// is the length of the path it was *given* and says nothing about whether the legs turned. A seat
             /// that times out 96 yards short of a 106 yard trip either never moved or moved in circles, and only
@@ -600,6 +642,17 @@ namespace Animus::Curriculum
             uint32 AloftFlagged = 0;
             uint32 LastRewardMs = 0;
         };
+
+        /// Re-plan the way to the objective if it has gone stale, and say whether it was re-planned.
+        ///
+        /// Movement first, then the clock, for the reason the ground probe gives: at seven yards a second a
+        /// timer alone goes stale inside the first corner. A route that cannot be found leaves WayFailed set
+        /// and the straight line standing, which is worse shaping but not no shaping.
+        bool RefreshWay(EnvTravel& travel, Player* bot, float stray, float refreshSeconds, float corner,
+            uint32 nowMs);
+
+        /// Yards to the objective along the way there, or the straight line where there is no way.
+        static float WayDistance(EnvTravel const& travel, Player const* bot);
 
         /// How much of the walk the trip saved, 0 (no faster than walking, or slower) to 1. Mounting is worth what
         /// it saves: nothing over a hop too short to pay for the cast, most of it over a long haul.

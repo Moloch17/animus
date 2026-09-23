@@ -81,6 +81,44 @@ namespace Animus::Curriculum
 
     /// A hostile ground effect: where its centre is and how wide it is, so a seat can see both which way out is
     /// shortest and, for one it is not in yet, which way not to walk.
+    /// The ray march along each of the eight bearings, kept between decisions.
+    ///
+    /// A march is forty map queries where the old single probe was eight, which is too much to redo every 250 ms
+    /// for 128 environments. It does not have to be: the ground forty yards out does not change, only the seat's
+    /// place in it, so the march is redone when the seat has walked far enough or turned far enough for the old
+    /// one to be describing somewhere else -- the same trick the hazard search already uses, with the triggers
+    /// that matter here. A plain clock will not do, because at seven yards a second a one-second-old march is
+    /// seven yards stale and the nearest cell it reports is six.
+    struct GroundProbe
+    {
+        float Reach[8] = {};                    // distance to the first obstruction along each bearing / MARCH_MAX
+        float Step[8] = {};                     // the height change that stopped it, signed, / MAX_STEP
+        float Shore[8] = {};                    // how far dry ground runs that way / MARCH_MAX
+        float Burns[8] = {};                    // how near the magma or slime is, 1 at the feet, 0 for none
+        bool CanJump = false;                   // a jump along Facing had somewhere to land when measured
+        uint64 JumpUntilMs = 0;                 // a jump launched from here is still in the air until this clock
+        float Clearance = 1.0f;                 // yards to the nearest edge of walkable space / CLEARANCE_RANGE
+        float ClearanceSin = 0.0f;              // and which way is out, in the seat's frame when it was measured
+        float ClearanceCos = 0.0f;
+        Position From;                          // where it was marched from
+        float Facing = 0.0f;                    // and which way the seat was looking at the time
+        uint32 Ms = 0;
+        bool Valid = false;
+    };
+
+    /// The way to the objective, as much of it as a seat needs: whether there is one, how far along it is
+    /// left, and the corner being walked to. The route itself is the encounter's -- this is the borrowed view
+    /// of it, copied per decision like everything else here.
+    struct SeatRoute
+    {
+        bool Allowed = false;       // the arena offers ACTION_FOLLOW_ROUTE at all
+        bool Valid = false;         // and there is a way to follow
+        bool Complete = false;      // which reaches the objective rather than stopping short
+        float Remaining = 0.0f;     // yards left along it
+        float Handoff = 0.0f;       // ... and the point inside which the seat walks it itself
+        Position Next;              // the corner being walked to
+    };
+
     struct Hazard
     {
         float Distance = 0.0f;      // yards from the unit to its centre
@@ -187,6 +225,18 @@ namespace Animus::Curriculum
         /// lets a seat strafe or back away without turning round.
         uint8 HeldBearing = 0xFF;
         uint8 FacingMode = 0xFF;
+        /// **Where the seat believes it is looking**, and the frame every bearing is measured off.
+        ///
+        /// Not bot->GetOrientation(), which is not the seat's to own: a spline writes the direction of travel
+        /// onto it every tick, and a knockback, a fall or another block's move overwrite it outright. Steering
+        /// off it meant the frame moved under the seat between one decision and the next, so a held bearing
+        /// rotated 45 degrees a decision and the seat spiralled instead of walking a line. This is the policy's
+        /// own heading: the spline is told to hold it, so the two normally agree, but when they disagree this is
+        /// the one that decides where "forward" is.
+        float Facing = 0.0f;
+        /// The seat's own ray march, borrowed rather than copied: Observe is const, but the march it reads is
+        /// refreshed in place, exactly as the hazard search is.
+        GroundProbe* Probe = nullptr;
         /// Which way it is turning (-1 left, +1 right, 0 not) and how far up or down it is looking, in radians.
         /// Yaw and pitch are held like a mouse: the seat keeps turning while the key is down and stays where it got
         /// to when the key comes up, which is what makes a heading between two compass points reachable at all.
@@ -281,6 +331,7 @@ namespace Animus::Curriculum
         float CloseRate = 0.0f;
         /// False in an on-foot arena (ArenaDefinition::OnFoot): the mount actions are masked out.
         bool MountsAllowed = true;
+        SeatRoute Route;
 
         // Flag match: the seat's flag and the other side's, from the seat's side.
         enum class FlagState : uint8 { AtBase, Carried, Dropped };

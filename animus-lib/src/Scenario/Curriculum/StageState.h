@@ -175,6 +175,14 @@ namespace Animus::Curriculum
         /// FaceWhile only ever saw the "leave it where it is" default. Steering has to be remembered to work.
         uint8 HeldBearing = 0xFF;
         uint8 FacingMode = 0xFF;
+        /// Where the seat is looking, in its own keeping rather than the spline's (SeatView::Facing). Seeded from
+        /// the bot when an episode starts, because a default of 0 would aim every seat due east.
+        float Facing = 0.0f;
+        /// What the ground looks like each way it could go, marched out to MARCH_MAX and reused until the seat
+        /// has moved or turned enough to make it stale.
+        /// Mutable because it is a cache and nothing else: observing a seat does not change it, but it does
+        /// refresh what the seat has already looked at, and ViewSeat reads a const seat.
+        mutable GroundProbe Probe;
         int8 Turning = 0;                       // -1 left, +1 right, 0 not turning
         int8 PitchTurning = 0;                  // the pitch key held: -1 down, +1 up, 0 none
         float Pitch = 0.0f;                     // radians above (+) or below (-) level; only used off the ground
@@ -285,6 +293,17 @@ namespace Animus::Curriculum
             SpellCasts = 0;
             TrinketUses = 0;
             Option = SeatOptionSet();
+            // Steering is state, and it used to be the only state that outlived its episode. A FACE_* is masked
+            // once chosen, so a mode picked in one episode latched for the rest of the run and could never be
+            // pressed again; a bearing and a turn carried over the same way. Facing is seeded from the bot once
+            // the seat has been placed (StageScenario::ResetSeats), not here, where there is no bot to ask.
+            HeldBearing = 0xFF;
+            FacingMode = 0xFF;
+            Turning = 0;
+            PitchTurning = 0;
+            Pitch = 0.0f;
+            Facing = 0.0f;
+            Probe = GroundProbe();
             OptionPresses = 0;
             OptionMs = 0;
             ItemUses = 0;

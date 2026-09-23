@@ -72,6 +72,10 @@ namespace Animus::Curriculum
         PlaceMatch,
         BrokeContact,
         Stalk,
+        /// Room to move: charged by the second for being closer to the edge of walkable space than a seat
+        /// ought to be. Shaped, never a gate -- a doorway is narrower than any margin worth keeping in the open,
+        /// so a rule that forbade closeness would forbid doorways.
+        Clearance,
         Repeat,
         Hazard,
         HealingMana,

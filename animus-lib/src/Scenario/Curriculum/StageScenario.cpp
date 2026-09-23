@@ -1596,6 +1596,12 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
         return false;
     }
 
+    // Where each seat is looking starts as where the world put it. ResetEpisode cleared it to 0, which would aim
+    // every seat due east; this is the first point at which the bots have stopped being teleported about.
+    for (uint32 seat = 0; seat < data.ActiveSeats; ++seat)
+        if (Player const* bot = SeatBot(env, seat))
+            data.Seats[seat].Facing = bot->GetOrientation();
+
     StockSeats(env);
     GivePets(env);
     return true;
@@ -1983,6 +1989,8 @@ Animus::Curriculum::SeatView Animus::Curriculum::StageScenario::ViewSeat(Env con
     view.Turning = seat.Turning;
     view.PitchTurning = seat.PitchTurning;
     view.Pitch = seat.Pitch;
+    view.Facing = seat.Facing;
+    view.Probe = &seat.Probe;
     view.SubmergedTime = seat.SubmergedSinceMs && env.EpisodeElapsedMs > seat.SubmergedSinceMs
         ? float(env.EpisodeElapsedMs - seat.SubmergedSinceMs) / 1000.0f : 0.0f;
     view.Build = &seat.Build;
@@ -2094,6 +2102,7 @@ void Animus::Curriculum::StageScenario::ApplySeatAction(Env& env, uint32 seatInd
     seat.Turning = view.Turning;
     seat.PitchTurning = view.PitchTurning;
     seat.Pitch = view.Pitch;
+    seat.Facing = view.Facing;
     // A breath starts when the head goes under and is finished the moment it comes up again.
     if (bot && bot->IsAlive() && bot->IsUnderWater())
     {
@@ -2400,8 +2409,10 @@ void Animus::Curriculum::StageScenario::TrackHazards(Env const& env, SeatState& 
 
     // It may have run out, and the seat has moved: measure it again rather than search again.
     nearest.Distance = bot->GetExactDist2d(nearest.Centre.GetPositionX(), nearest.Centre.GetPositionY());
+    // The seat's own frame, not the spline's: OBS_HAZARD_BEARING_* has to agree with every other bearing the
+    // move block reports, and bot->GetOrientation() is the direction of travel while a spline is running.
     nearest.Bearing = bot->GetAngle(nearest.Centre.GetPositionX(), nearest.Centre.GetPositionY())
-        - bot->GetOrientation();
+        - seat.Facing;
 }
 
 /// Count an enemy cast the seat could have interrupted, once per cast. The press-to-interrupt ratio alone cannot
