@@ -195,6 +195,16 @@ namespace
         return 2.0f * (MoveBlock::JUMP_SPEED_Z / float(Movement::gravity)) * speedXY;
     }
 
+    /// Whether the seat is on its way down right now: a fall spline running. Not Unit::IsFalling, which also reads
+    /// MOVEMENTFLAG_FALLING -- a flag the core sets on a player when it starts a fall and clears only when a client
+    /// reports the landing, which a seat never does, so on a bot it sticks from the first step down a slope to the
+    /// end of the episode. Masking the feet on it masked them for good (stage1_move on format 7, first run: the
+    /// scripted baseline arrived 0.23 against 0.84 the run before, stalling after ninety yards).
+    bool Descending(Player const* bot)
+    {
+        return !bot->movespline->Finalized() && bot->movespline->Initialized() && bot->movespline->isFalling();
+    }
+
     /// How high the arc rises above the launch: what JumpTo builds the parabola from.
     float JumpApex()
     {
@@ -556,7 +566,7 @@ namespace
         // Where a jump would come down, cached with the rest. The mask reads this; the press reads it too while
         // the cache still describes where the seat stands, and measures again once it has moved or turned.
         JumpAim const aim = JumpLandingTest(map, query, bot, facing, view.JumpDropSearch);
-        probe->CanJump = !bot->IsFalling() && aim.Ok;
+        probe->CanJump = !Descending(bot) && !probe->JumpDropPending && aim.Ok;
         probe->JumpLanding = aim.Landing;
         probe->JumpDrop = aim.Ok ? aim.Drop : 0.0f;
 
@@ -958,8 +968,9 @@ void Animus::Curriculum::MoveBlock::Observe(SeatView const& view, float* obs, ui
     // thing it must always be able to do.
     bool const mounting = bot && Encoding::MountCastInProgress(bot);
     // And a fall: a bearing pressed on the way down would Clear() the fall spline from mid-air and start a second
-    // fall from there, with a second HandleFall at the bottom.
-    bool const falling = bot && (bot->IsFalling() || (view.Probe && view.Probe->JumpDropPending));
+    // fall from there, with a second HandleFall at the bottom. The spline's own word and this block's drop flag,
+    // never the core's falling flag (Descending).
+    bool const falling = bot && (Descending(bot) || (view.Probe && view.Probe->JumpDropPending));
     bool const canMove = bot && bot->IsAlive() && !bot->HasUnitState(Encoding::IMMOBILE_STATES)
         && !inFlight && !mounting && !falling;
     bool const airborne = Airborne(bot);
@@ -1129,8 +1140,8 @@ void Animus::Curriculum::MoveBlock::Observe(SeatView const& view, float* obs, ui
 
     // A jump is legs, so it goes with the other movement: on the ground, not already in the air, and only
     // where the cached probe found somewhere to land. Apply checks the landing again before it commits.
-    allowed[ACTION_JUMP] = canMove && !airborne && bot && !bot->IsFalling()
-        && view.Probe && view.Probe->CanJump ? 1 : 0;   // canMove already excludes an arc still in the air
+    allowed[ACTION_JUMP] = canMove && !airborne && bot
+        && view.Probe && view.Probe->CanJump ? 1 : 0;   // canMove already excludes an arc or a fall in the air
 
     // Pitch only means something off the ground. On foot the ground decides the seat's height, so the three
     // actions are masked rather than merely useless -- a masked action cannot be explored into.
@@ -1149,6 +1160,14 @@ void Animus::Curriculum::MoveBlock::BeforeApply(SeatView& view, SeatActionResult
     // core's own fall with the core's own damage. Here rather than only in the travel block, which does the same
     // for a dismount, because this block is in every stage and a drop in a pack stage must not leave the seat
     // standing on air. Idempotent with the travel block's call: the second sees the fall spline running.
+    // The core's falling flag, stuck on a seat that is standing on the ground (Descending): taken off here, every
+    // decision, so nothing downstream that still asks Unit::IsFalling -- the core's own movement code among them --
+    // sees a seat that landed a minute ago as still in the air.
+    if (view.Bot->IsAlive() && view.Bot->movespline->Finalized()
+        && view.Bot->HasUnitMovementFlag(MOVEMENTFLAG_FALLING | MOVEMENTFLAG_FALLING_FAR)
+        && TravelBlock::HeightAboveGround(view.Bot) <= DROP_ABOVE)
+        view.Bot->RemoveUnitMovementFlag(MOVEMENTFLAG_FALLING | MOVEMENTFLAG_FALLING_FAR);
+
     if (view.Probe && view.Probe->JumpDropPending && view.Bot->movespline->Finalized())
     {
         view.Probe->JumpDropPending = false;
@@ -1250,7 +1269,7 @@ void Animus::Curriculum::MoveBlock::Apply(SeatView& view, uint32 local, SeatActi
 
     if (local == ACTION_JUMP)
     {
-        if (bot->IsFalling())
+        if (Descending(bot) || (view.Probe && view.Probe->JumpDropPending))
             return;
 
         // The probe's landing while it still describes where the seat stands; measured again once the seat has
