@@ -270,11 +270,13 @@ namespace
         // nothing parses them and training order comes from AnimusForge.Queue -- and the name says where it
         // belongs without the churn.
         //
-        // In the default queue, straight after stage1_move. It stayed out while its spawn points were guesses;
-        // every one below has since been stood on with `forge rays`, and it is the stage that tests what the
-        // sixteen rays, the fifteen-degree turn, the clearance term and the jump were built for -- a doorway off
-        // the objective's axis, which open country never asks for. stage2_dodge still extends stage1_move
-        // directly: the seed chain is the definition's, not the queue's.
+        // Not in the default queue: a side branch off stage1_move, trained by name, and stage2_dodge extends
+        // stage1_move directly. It is the stage that tests what the sixteen rays, the fifteen-degree turn, the
+        // clearance term and the jump were built for -- a doorway off the objective's axis, which open country
+        // never asks for -- and it joins the queue once two things hold: its rooms have been stood on again with
+        // `forge rays` on this build, and its gate is one a run can pass. A queued stage that halts below its
+        // target halts `forge start` with it (AnimusForge.Queue), and this drill's config expects its first run
+        // to fail its gate.
         stages.push_back({
             .Name = "stage1b_indoor",
             .Suffix = "_indoor",
@@ -287,6 +289,7 @@ namespace
                 { .Name = "rooms", .Against = Opposition::Travel, .EpisodeSeconds = 90,
                     .OnFoot = true, .Indoors = true },
             },
+            .InDefaultQueue = false,
             .MapId = MAP_KALIMDOR,
             // Every inn on Kalimdor that areatrigger_tavern names, spread across regions for the same reason the
             // ground list is: a policy that sees four rooms learns four rooms.

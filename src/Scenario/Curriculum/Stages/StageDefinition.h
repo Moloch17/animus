@@ -152,7 +152,9 @@ namespace Animus::Curriculum
         bool Indoors = false;
         /// Travel, flying: the place can only be reached by air. FindPlace refuses a candidate the ground route
         /// reaches within Travel.AirDetour of the straight line, the ground mount is masked, and arriving means
-        /// standing within Travel.AirArriveRise yards of the objective's own height.
+        /// standing within Travel.AirArriveRise yards of the objective's own height. A spawn point with no such
+        /// place in reach builds an ordinary flight instead and reports air_only 0, as a water arena that finds no
+        /// crossing reports crossing 0: the shortfall is the ground's, and the gate can name it.
         ///
         /// Without this a flying arena never needs its wings. A flight objective is placed anywhere on dry
         /// ground the height probe finds, which in Nagrand is nearly always walkable, and 700 yards at run speed
