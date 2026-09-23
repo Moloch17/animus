@@ -21,6 +21,9 @@
 #include "EpisodeInfoTable.h"
 #include "Map.h"
 #include "MapDefines.h"
+#include "MapCollisionData.h"
+#include "DetourNavMeshQuery.h"
+#include "DetourExtended.h"
 #include "PathGenerator.h"
 #include "Player.h"
 #include "Random.h"
@@ -62,6 +65,7 @@ namespace
     /// off one is this many yards above or below the corner it was walking towards, which the way's own
     /// two-dimensional Advance cannot see -- so the way is planned again from the foot at once.
     constexpr float LEDGE_SAMPLE = 1.0f;
+    constexpr float LEDGE_LANDING_REACH = 8.0f;    // how far past the edge the landing may be: a jump's carry
     constexpr float LEDGE_STRAY_Z = 6.0f;
     constexpr float HEIGHT_SEARCH = 120.0f;
     /// What an interior arena probes with instead: a step up from the seat's feet, searching down far enough to
@@ -543,13 +547,31 @@ bool Animus::Curriculum::TravelEncounter::CrossesWater(Player const* bot, Map* m
 bool Animus::Curriculum::TravelEncounter::LedgeOnLine(Player const* bot, Map* map, float x, float y, float z,
     TravelPlaceRules const& rules, float& drop)
 {
-    // Walk the straight line a yard at a time. Before the edge every sample has to be walkable from the one
-    // before it -- the same step-plus-slope allowance the sixteen rays use -- so the seat can reach the edge on
-    // foot; the edge is the first sample whose ground is more than a step below the last, or not found within a
-    // step at all. The ground under that sample, searched the arena's deepest drop down, is the landing: it has
-    // to be there, within DropMax, and the way on from it to the place has to be an ordinary walk (RoutePlanner,
-    // complete, at most MAX_PATH_DETOUR), which also says the landing is on the mesh.
+    // Walk the straight line a yard at a time. The approach is every sample the seat could walk to: ground within
+    // a step and a slope of the last, and on the navmesh. The edge is where that stops -- which is the mesh's
+    // word, not a height march's, because a slope too steep to walk (the southern Barrens escarpment) drops a
+    // yard a yard and no height test calls that a cliff, while the mesh has already refused it. The landing is
+    // the deep ground under the samples just past the edge, as far as a jump carries: it has to be there, more
+    // than a step but no more than DropMax below the edge, on the mesh, and the way on from it to the place has
+    // to be an ordinary walk (RoutePlanner, complete, at most MAX_PATH_DETOUR).
     drop = 0.0f;
+    dtNavMeshQuery const* query = map->GetMapCollisionData().GetMMapData().GetNavMeshQuery();
+    if (!query)
+        return false;
+
+    auto const onMesh = [query](float px, float py, float pz)
+    {
+        dtQueryFilterExt filter;
+        filter.setIncludeFlags(NAV_GROUND);
+        filter.setExcludeFlags(0);
+        float const at[3] = { py, pz, px };
+        float const extents[3] = { 1.5f, MoveBlock::MAX_STEP, 1.5f };
+        float nearest[3] = { 0.0f, 0.0f, 0.0f };
+        dtPolyRef ref = 0;
+        return !dtStatusFailed(query->findNearestPoly(at, extents, &filter, &ref, nearest)) && ref
+            && std::fabs(nearest[1] - pz) <= MoveBlock::MAX_STEP;
+    };
+
     uint32 const phase = bot->GetPhaseMask();
     float const fromX = bot->GetPositionX();
     float const fromY = bot->GetPositionY();
@@ -567,33 +589,39 @@ bool Animus::Curriculum::TravelEncounter::LedgeOnLine(Player const* bot, Map* ma
         float const sampleY = fromY + dy * along / length;
         float const shallow = map->GetHeight(phase, sampleX, sampleY, previousZ + MoveBlock::MAX_STEP, true,
             allowance + MoveBlock::MAX_STEP);
-        if (shallow > INVALID_HEIGHT && previousZ - shallow <= allowance)
+        if (shallow > INVALID_HEIGHT && std::fabs(shallow - previousZ) <= allowance && onMesh(sampleX, sampleY, shallow))
         {
-            if (shallow - previousZ > allowance)
-                return false;               // a wall on the approach: the edge cannot be reached on foot
             previousZ = shallow;
             continue;
         }
 
-        // The edge. The landing is the deep ground under this sample.
-        float const landing = map->GetHeight(phase, sampleX, sampleY, previousZ + MoveBlock::MAX_STEP, true,
-            rules.DropMax + 2.0f * MoveBlock::MAX_STEP);
-        if (landing <= INVALID_HEIGHT)
-            return false;
-        float const fall = previousZ - landing;
-        if (fall <= MoveBlock::MAX_STEP || fall > rules.DropMax)
-            return false;
+        // The edge. The landing is the deep ground under the next few yards, as far as the arc carries.
+        float const edgeZ = previousZ;
+        for (float past = along; past < std::min(length, along + LEDGE_LANDING_REACH); past += LEDGE_SAMPLE)
+        {
+            float const landX = fromX + dx * past / length;
+            float const landY = fromY + dy * past / length;
+            float const landing = map->GetHeight(phase, landX, landY, edgeZ + MoveBlock::MAX_STEP, true,
+                rules.DropMax + 2.0f * MoveBlock::MAX_STEP);
+            if (landing <= INVALID_HEIGHT)
+                continue;
+            float const fall = edgeZ - landing;
+            if (fall <= MoveBlock::MAX_STEP || fall > rules.DropMax || !onMesh(landX, landY, landing))
+                continue;
 
-        Route rest;
-        Position const foot(sampleX, sampleY, landing, 0.0f);
-        Position const to(x, y, z, 0.0f);
-        float const straight = foot.GetExactDist2d(&to);
-        if (!RoutePlanner::Instance().Plan(map, foot, to, rest) || !rest.Complete
-            || rest.Length > std::max(straight, LEDGE_SAMPLE) * MAX_PATH_DETOUR)
-            return false;
+            Route rest;
+            Position const foot(landX, landY, landing, 0.0f);
+            Position const to(x, y, z, 0.0f);
+            float const straight = foot.GetExactDist2d(&to);
+            if (!RoutePlanner::Instance().Plan(map, foot, to, rest) || !rest.Complete
+                || rest.Length > std::max(straight, LEDGE_SAMPLE) * MAX_PATH_DETOUR)
+                return false;
 
-        drop = fall;
-        return true;
+            drop = fall;
+            return true;
+        }
+
+        return false;                       // an edge with nothing to land on within a jump of it
     }
 
     return false;                           // no edge on the line: the place is walkable straight to

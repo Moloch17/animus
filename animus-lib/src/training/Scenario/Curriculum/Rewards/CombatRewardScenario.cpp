@@ -16,7 +16,6 @@
  * with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
-
 #include "CombatRewardScenario.h"
 #include "CombatReward.h"        // Style and TimeLeftSince, which OneOnOne calls unqualified
 #include "RewardLedger.h"
