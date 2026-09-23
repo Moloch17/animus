@@ -164,6 +164,12 @@ namespace Animus::Curriculum
         /// control ground instead when the episode is being scored (StageDefinition::HeldOutSpawnPoints).
         [[nodiscard]] std::vector<Position> const& SpawnGroundFor(Env const& env) const;
         [[nodiscard]] Position const& SpawnPointFor(Env const& env) const;
+        /// Move each seat off the spawn point by up to ArenaDefinition::SpawnScatter yards and turn it a random
+        /// way. Does nothing at all for an arena that leaves SpawnScatter at 0, which is every arena that has
+        /// not asked for it. Called once the seats are in the world and again whenever a failed build moves them
+        /// to another point, always before the encounters build: the objective is placed from where the seat
+        /// ends up, so scattering afterwards would measure the trip from somewhere the seat is not.
+        void ScatterSeats(Env const& env, Map* map) const;
         /// Whether the envs share a continent (each in its own phase) rather than each having an instance.
         [[nodiscard]] bool OnContinent() const { return _continent; }
         /// The phase of the env's seats and everything they meet on a continent.

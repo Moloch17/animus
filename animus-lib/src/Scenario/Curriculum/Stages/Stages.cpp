@@ -300,7 +300,7 @@ namespace
                 // Short trips and a short clock: an inn is twenty to thirty yards across, so an outdoor arena's
                 // first step would already be through an outside wall.
                 { .Name = "rooms", .Against = Opposition::Travel, .EpisodeSeconds = 90,
-                    .OnFoot = true, .Indoors = true },
+                    .OnFoot = true, .Indoors = true, .SpawnScatter = 4.0f },
             },
             .InDefaultQueue = false,
             .MapId = MAP_KALIMDOR,
@@ -334,6 +334,19 @@ namespace
             // Rooms no training episode stands in, for the same reason every other stage holds ground back.
             // Desolace is the tightest room found anywhere on the map at 0.71 yards of clearance, which makes it
             // the one worth scoring on.
+            //
+            // It has never once been scored on. Grouping all 14336 evaluation episodes the first indoor run ever
+            // recorded by where they ran: Tanaris 7314, Theramore 7022, Desolace 0. The reset draws it as often
+            // as the others and no episode has ever started there, which with SPAWN_ATTEMPTS re-rolling a point
+            // that cannot build (StageScenario, "Somewhere else in the list") means every Desolace draw became a
+            // Theramore or a Tanaris one in silence. So this stage's gate has been read off two rooms while
+            // reporting three -- and the two are not one task: Theramore arrives 0.9980 in 1.7 s, Tanaris 0.8947
+            // in 13.9 s, so 0.9453 is a trivial room averaged with a hard one.
+            //
+            // The columns `spawn_drawn` and `spawn_point` now say this outright, and what to do about Desolace
+            // waits on them rather than on a guess: a room whose draws all re-roll wants either a shorter
+            // objective range than Travel's 8-40 yards or a different room, and which of those it is depends on
+            // whether FindPlace is failing on the distance or on the walls.
             .HeldOutSpawnPoints = {
                 { -1596.2f, 3145.3f, 62.53f, 0.0f },   // Desolace, clearance 0.71
                 { -3615.5f, -4467.3f, 21.10f, 0.0f },  // Theramore Isle, 3.43
