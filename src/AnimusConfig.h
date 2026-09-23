@@ -22,7 +22,6 @@
 #include "Define.h"
 #include "Position.h"
 #include "CurriculumTuning.h"
-#include "StageSettings.h"
 #include <string>
 #include <vector>
 
@@ -45,19 +44,6 @@ namespace Animus
         /// Animus.Curriculum.Options.*: how long a companion's durative actions (rest, hold an interrupt, keep range)
         /// may run, as the forge's seats have them.
         Curriculum::CurriculumTuning::OptionTuning CurriculumOptions;
-
-        /// Animus.Stage.*: the stage viewer (`.animus stage open`).
-        uint32 StageDecisionMs = 250;
-        uint32 StageEpisodeSeconds = 60;
-        std::string StagePolicy = "model";
-        std::vector<std::string> StageClasses;
-        uint32 StageLevel = 0;
-        uint32 StageMaxViewers = 4;
-        uint32 StageSpawnMapId = 560;
-        Position StageSpawnPosition{ 2741.9f, 1315.2f, 14.0f, 2.96f };
-
-        /// A viewer's scenario settings: one env, placed by the viewer, with env id `envId` (bot accounts and names).
-        [[nodiscard]] StageSettings ViewerSettings(uint32 envId) const;
 
         void Load();
     };

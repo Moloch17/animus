@@ -129,7 +129,7 @@ void Animus::AnimusMod::LoadConfig()
 
 void Animus::AnimusMod::OnUpdate(uint32 diff)
 {
-    if (_parties.empty() && _viewers.empty())
+    if (_parties.empty())
         return;
 
     if (!_config.Enable)
@@ -150,14 +150,6 @@ void Animus::AnimusMod::OnUpdate(uint32 diff)
 
     // A companion a party lost on its own (not dismissed) no longer counts damage.
     std::erase_if(_partyByBot, [](auto const& entry) { return !entry.second->HasBot(entry.first); });
-
-    std::vector<ObjectGuid> ended;
-    for (auto const& [viewer, stage] : _viewers)
-        if (stage->Update(diff, _models) == StageViewer::Status::Ended)
-            ended.push_back(viewer);
-
-    for (ObjectGuid const& viewer : ended)
-        RemoveViewer(viewer);
 }
 
 void Animus::AnimusMod::OnShutdown()
@@ -298,109 +290,12 @@ std::vector<std::string> Animus::AnimusMod::StageList() const
 
         lines.push_back(Acore::StringFormat("{}: {} (arenas: {})", stage.Name, stage.Summary, arenas));
     }
-
-    lines.push_back("Open one with .animus stage open <stage> [model|random|greedy|fight] [arena]: it teleports you "
-        "to where the stage happens and spawns its first episode, frozen.");
     return lines;
-}
-
-bool Animus::AnimusMod::StageOpen(Player* viewer, std::string_view stage, std::string_view policy,
-    std::string_view arena, std::string& message)
-{
-    if (!_config.Enable)
-    {
-        message = "Animus is disabled.";
-        return false;
-    }
-
-    if (viewer->IsInFlight())
-    {
-        message = "Land first: a stage cannot start while you are in flight.";
-        return false;
-    }
-
-    // A viewer has one stage open at a time: opening another replaces it.
-    bool const replacing = _viewers.contains(viewer->GetGUID());
-    RemoveViewer(viewer->GetGUID());
-
-    // The lowest free env id: bot accounts and names of viewers running side by side must differ.
-    uint32 envId = 0;
-    while (std::any_of(_viewers.begin(), _viewers.end(),
-        [envId](auto const& entry) { return entry.second->GetEnvId() == envId; }))
-        ++envId;
-
-    if (envId >= _config.StageMaxViewers)
-    {
-        message = Acore::StringFormat("{} stages are already running (Animus.Stage.MaxViewers).", _viewers.size());
-        return false;
-    }
-
-    auto stageViewer = std::make_unique<StageViewer>(viewer->GetGUID(), envId, _config.ViewerSettings(envId));
-    std::string const chosenPolicy = policy.empty() ? _config.StagePolicy : std::string(policy);
-    if (!stageViewer->Begin(viewer, std::string(stage), chosenPolicy, std::string(arena), message))
-        return false;
-
-    if (replacing)
-        message = "Your previous stage closed. " + message;
-
-    _viewers[viewer->GetGUID()] = std::move(stageViewer);
-    return true;
-}
-
-bool Animus::AnimusMod::StageSpawn(Player* viewer, std::string_view tier, std::string_view classRole,
-    std::string_view level, std::string& message)
-{
-    StageViewer* stage = FindViewer(viewer, message);
-    return stage && stage->Spawn(tier, classRole, level, _models, message);
-}
-
-bool Animus::AnimusMod::StageRun(Player* viewer, std::string& message)
-{
-    StageViewer* stage = FindViewer(viewer, message);
-    return stage && stage->Run(message);
-}
-
-bool Animus::AnimusMod::StageFreeze(Player* viewer, std::string& message)
-{
-    StageViewer* stage = FindViewer(viewer, message);
-    return stage && stage->Freeze(message);
-}
-
-bool Animus::AnimusMod::StageClose(Player* viewer, std::string& message)
-{
-    if (!FindViewer(viewer, message))
-        return false;
-
-    RemoveViewer(viewer->GetGUID());
-    message = "Stage closed.";
-    return true;
-}
-
-Animus::StageViewer* Animus::AnimusMod::FindViewer(Player* viewer, std::string& message)
-{
-    auto const itr = _viewers.find(viewer->GetGUID());
-    if (itr == _viewers.end())
-    {
-        message = "You have no stage open: `.animus stage open <stage>` opens one.";
-        return nullptr;
-    }
-
-    return itr->second.get();
-}
-
-std::vector<std::string> Animus::AnimusMod::StageStatus(Player* viewer)
-{
-    auto const itr = _viewers.find(viewer->GetGUID());
-    if (itr == _viewers.end())
-        return {};
-
-    return itr->second->Describe(_models);
 }
 
 void Animus::AnimusMod::OnPlayerLogout(Player* player)
 {
     RemoveParty(player->GetGUID());
-    RemoveViewer(player->GetGUID());
 }
 
 void Animus::AnimusMod::RecordDamage(Unit const* attacker, Unit const* victim, uint32 damage, DamageEffectType type)
@@ -433,25 +328,10 @@ void Animus::AnimusMod::RemoveParty(ObjectGuid owner)
     party->DestroyAll();
 }
 
-void Animus::AnimusMod::RemoveViewer(ObjectGuid viewer)
-{
-    auto const itr = _viewers.find(viewer);
-    if (itr == _viewers.end())
-        return;
-
-    // Unlink before stopping: logging the stage's bots out re-enters the module through OnPlayerLogout.
-    std::unique_ptr<StageViewer> const stage = std::move(itr->second);
-    _viewers.erase(itr);
-    stage->Stop();
-}
-
 void Animus::AnimusMod::RemoveAll()
 {
     while (!_parties.empty())
         RemoveParty(_parties.begin()->first);
-
-    while (!_viewers.empty())
-        RemoveViewer(_viewers.begin()->first);
 }
 
 Animus::Curriculum::Layout const& Animus::AnimusMod::LayoutFor(Curriculum::ClassProfile const& profile)

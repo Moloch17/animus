@@ -54,14 +54,6 @@ endif()
 # mod-animus builds against a stock AzerothCore, so it takes animus-lib's runtime half only: the blocks, the layout
 # and encoders, the characters, the model and the bots. The training half builds curriculum episodes, and it calls
 # PathGenerator::SetIncludeFlags, which exists only on the Animus Forge core -- collecting it here would make the
-# module need a core patch to compile, which for a long while it silently did.
-#
-# The one feature that wants the training half is the GM stage viewer, which runs a real stage: turn it on with
-# -DANIMUS_STAGE_VIEWER=ON and patch the core. Without it the viewer's commands answer saying so (Viewer/StageViewer.cpp).
-option(ANIMUS_STAGE_VIEWER "Build mod-animus's GM stage viewer (needs animus-lib's training half and a patched core)" OFF)
-if(ANIMUS_STAGE_VIEWER)
-  message(STATUS "  mod-animus: stage viewer ON -- this core must have PathGenerator::SetIncludeFlags")
-  AnimusLibRequire(mod-animus "${ANIMUS_LIB_BUNDLE}")
-else()
-  AnimusLibRequire(mod-animus "${ANIMUS_LIB_BUNDLE}" RUNTIME_ONLY)
-endif()
+# module need a core patch to compile, which for a long while it silently did. Nothing here builds an episode: the
+# stage viewer that once did was removed, and companions never needed it.
+AnimusLibRequire(mod-animus "${ANIMUS_LIB_BUNDLE}" RUNTIME_ONLY)

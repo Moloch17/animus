@@ -54,94 +54,13 @@ Animus.Curriculum.Stage = "stage1_duel"
 Animus.Curriculum.DecisionMs = 250
 
 ###################################################################################################
-# STAGE VIEWER
-#
-# ".animus stage open <stage> [policy] [arena]" builds a curriculum stage the way mod-animus-forge
-# trains it, without the learner, in the game master's own instance at the spawn point below: one
-# env (its seats, owner, pulls and enemy players), its first episode spawned frozen for inspection.
-# ".animus stage spawn [tier] [class] [level]" spawns another, ".animus stage start" plays
-# episode after episode until ".animus stage stop" freezes it, and ".animus stage close" (or
-# leaving the instance) removes it.
-#
-#    Animus.Stage.Policy
-#        Description: What the seats play when ".animus stage open" names no policy.
-#        Default:     "model"  - each seat's exported class model from Animus.ModelDir; a
-#                                seat whose model is missing does nothing
-#                     "random" - random allowed actions
-#                     "greedy" - the first usable spell or trinket (scripted baseline)
-#                     "fight"  - greedy, plus attacking, moving, eating and healing (stages with
-#                                the duel block)
-
-Animus.Stage.Policy = "model"
-
-#
-#    Animus.Stage.DecisionMs
-#        Description: Game time per seat decision, in milliseconds: the interval the models were
-#                     trained with (AnimusForge.DecisionMs). World updates shorter than this wait
-#                     for it; a longer one still makes a single decision.
-#        Default:     250
-
-Animus.Stage.DecisionMs = 250
-
-#
-#    Animus.Stage.EpisodeSeconds
-#        Description: Episode length for arenas without their own, in seconds
-#                     (AnimusForge.EpisodeSeconds).
-#        Default:     60
-
-Animus.Stage.EpisodeSeconds = 60
-
-#
-#    Animus.Stage.Classes
-#        Description: Comma-separated classes the seats are drawn from. A class brings every role it
-#                     has a spec for: one model per class, not one per class and role. Unlike the forge's
-#                     list it does not change the layouts, only which characters appear.
-#                     Available: warrior, paladin, hunter, rogue, priest, deathknight, shaman, mage,
-#                     warlock, druid
-#        Default:     "" - (all of them)
-
-Animus.Stage.Classes = ""
-
-#
-#    Animus.Stage.Level
-#        Description: Every character's level, or 0 for the curriculum's random levels
-#                     (Animus.Curriculum.Characters.*).
-#        Default:     0
-
-Animus.Stage.Level = 0
-
-#
-#    Animus.Stage.MaxViewers
-#        Description: Most stages running at once (one per game master).
-#        Default:     4
-
-Animus.Stage.MaxViewers = 4
-
-#
-#    Animus.Stage.SpawnPoint.MapId
-#    Animus.Stage.SpawnPoint.X / Y / Z / O
-#        Description: Instanceable (dungeon) map and position where a stage happens: ".animus
-#                     stage open" teleports the game master here and builds the stage in their
-#                     instance. Use the forge's AnimusForge.SpawnPoint.* to watch what it trains.
-#                     The default is the Old Hillsbrad Foothills entrance.
-#        Default:     560, 2741.9, 1315.2, 14.0, 2.96
-
-Animus.Stage.SpawnPoint.MapId = 560
-Animus.Stage.SpawnPoint.X     = 2741.9
-Animus.Stage.SpawnPoint.Y     = 1315.2
-Animus.Stage.SpawnPoint.Z     = 14.0
-Animus.Stage.SpawnPoint.O     = 2.96
-
-###################################################################################################
 # CURRICULUM TUNING
 #
-# What the stage viewer's stages meet: the characters, parties, pulls and scripted players, and
-# the reward weights its episode reports show. The keys and defaults are mod-animus-forge's
-# AnimusForge.Curriculum.* under this prefix: to watch a stage as a model was trained, copy the
-# values of that run (its stage.json "tuning") here. Every key is optional; a missing one keeps the
-# default shown. Per-decision reward terms are tuned per 50 ms decision and scaled with
-# Animus.Stage.DecisionMs. Class companions use only the Actions.* keys (pacing, and the
-# movement and stance locks), so they play with the masks their models trained with.
+# The keys and defaults are mod-animus-forge's AnimusForge.Curriculum.* under this prefix: to play a
+# model as it was trained, copy the values of that run (its stage.json "tuning") here. Every key is
+# optional; a missing one keeps the default shown. Class companions use only the Actions.* keys
+# (pacing, and the movement and stance locks), so they play with the masks their models trained
+# with; the rest describe episodes this module no longer builds and are read but unused.
 
 #
 #    Animus.Curriculum.Arena.<stage>.<arena>.Weight

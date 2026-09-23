@@ -7,10 +7,7 @@ changes, together with [animus-lib](https://github.com/Moloch17/animus-lib), the
 - **Class/role companions.** Up to four characters of the race, class and role you choose join your party at your
   level and level up with you. They follow you through loading screens, into instances and onto transports, and play
   their class model in every fight.
-- **The stage viewer.** A game master runs any curriculum stage exactly as the forge trains it, in their own instance,
-  and watches the seats play their models, a scripted baseline or random actions.
-
-Both run the same scenario and encoding code as training, so a model sees and does exactly what it trained on.
+They run the same encoding code as training, so a model sees and does exactly what it trained on.
 
 **The detail is in [chapter 6 of the Animus manual][manual-6].** This page is the map.
 
@@ -32,15 +29,6 @@ Both run the same scenario and encoding code as training, so a model sees and do
    (`Animus.Curriculum.Stage = stage1_duel`). Models you place by hand go in `<DataDir>/animus`, which is searched
    first; the startup log names the directory used.
 
-### The GM stage viewer
-
-The viewer runs a real curriculum stage in the world, so it needs animus-lib's training half -- and that half calls
-`PathGenerator::SetIncludeFlags`, which a stock AzerothCore does not have (it is an eight-line addition on the Animus
-Forge core, and `_filter` is private upstream, so the module cannot shim it). It is therefore **off by default**, which
-is what keeps the "no core changes" promise above true: configure with `-DANIMUS_STAGE_VIEWER=ON` on a core that has
-the patch to build it. Without it the class and its commands still exist and answer saying what is missing, so nothing
-else about the module changes. Companions never needed the training half.
-
 Don't build it into the forge core; a forge build disables it. Where the models come from, and how `DataDir` and the
 install step line up, is in
 [manual 6.3 and 6.4](https://github.com/Moloch17/animus-forge/blob/master/docs/manual/06-animus.md#63-installing).
@@ -60,16 +48,10 @@ Game master commands, not available from the console.
 | `.animus summon <race> <class> <role>` | A companion of that race, class and role joins your party (`human priest heal`, `orc warrior tank`) |
 | `.animus list` | Your companions and whether their models are loaded |
 | `.animus dismiss` | Remove all your companions |
-| `.animus stage list` | Every curriculum stage and its arenas |
-| `.animus stage open <stage> [policy] [arena]` | Build a stage in your own instance and spawn its first episode, frozen. `policy` is `model` (the default), `random`, `greedy` or `fight` |
-| `.animus stage spawn [tier] [class] [level]` | Replace the episode with a new one, frozen: a difficulty tier (stages that fight one creature or one pack), what the first seat plays (`warlock`), every character's level. Each is `any` or left out for the curriculum's own, and holds for later episodes |
-| `.animus stage start` | Let it play: episodes follow one another until `stop` |
-| `.animus stage stop` | Freeze everything where it is |
-| `.animus stage status` | The open stage: frozen or playing, episode, arena, spawn choices, seats and their models |
-| `.animus stage close` | Remove the stage |
+| `.animus stage list` | Every curriculum stage and its arenas: the names `Animus.Curriculum.Stage` accepts |
 
-A stage duel at the top tier, frozen, then played: `.animus stage open stage1_duel`, `.animus stage spawn 6 warlock
-70`, `.animus stage start`.
+Running a curriculum stage in the world is Animus Forge's job, not this module's: building an episode needs
+animus-lib's training half, which needs a core patch this module deliberately does without.
 
 ## Models
 

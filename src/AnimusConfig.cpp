@@ -119,33 +119,5 @@ void Animus::AnimusConfig::Load()
     CurriculumActions = curriculum.Actions;
     CurriculumOptions = curriculum.Options;
 
-    StageDecisionMs = std::max<uint32>(1, sConfigMgr->GetOption<uint32>("Animus.Stage.DecisionMs", 250));
-    StageEpisodeSeconds = std::max<uint32>(1, sConfigMgr->GetOption<uint32>("Animus.Stage.EpisodeSeconds", 60));
-    StagePolicy = sConfigMgr->GetOption<std::string>("Animus.Stage.Policy", "model");
-    StageClasses = GetList("Animus.Stage.Classes");
-    StageLevel = std::min<uint32>(DEFAULT_MAX_LEVEL, sConfigMgr->GetOption<uint32>("Animus.Stage.Level", 0));
-    StageMaxViewers = sConfigMgr->GetOption<uint32>("Animus.Stage.MaxViewers", 4);
-
-    StageSpawnMapId = sConfigMgr->GetOption<uint32>("Animus.Stage.SpawnPoint.MapId", 560);
-    StageSpawnPosition.Relocate(
-        sConfigMgr->GetOption<float>("Animus.Stage.SpawnPoint.X", 2741.9f),
-        sConfigMgr->GetOption<float>("Animus.Stage.SpawnPoint.Y", 1315.2f),
-        sConfigMgr->GetOption<float>("Animus.Stage.SpawnPoint.Z", 14.0f),
-        sConfigMgr->GetOption<float>("Animus.Stage.SpawnPoint.O", 2.96f));
 }
 
-Animus::StageSettings Animus::AnimusConfig::ViewerSettings(uint32 envId) const
-{
-    StageSettings settings;
-    settings.Envs = 1;
-    settings.FirstEnvId = envId;
-    settings.DecisionMs = StageDecisionMs;
-    settings.EpisodeSeconds = StageEpisodeSeconds;
-    settings.ReportEpisodes = 1;
-    settings.Classes = StageClasses;
-    settings.SpawnMapId = StageSpawnMapId;
-    settings.SpawnPosition = StageSpawnPosition;
-    settings.Level = StageLevel;
-    settings.TuningPrefix = "Animus.Curriculum.";
-    return settings;
-}

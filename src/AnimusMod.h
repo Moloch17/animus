@@ -24,7 +24,6 @@
 #include "Layout.h"
 #include "ModelLibrary.h"
 #include "ObjectGuid.h"
-#include "StageViewer.h"
 #include "Unit.h"
 #include <memory>
 #include <string>
@@ -37,7 +36,7 @@ class Unit;
 
 namespace Animus
 {
-    /// Module root: settings, the models, every player's class party and every game master's stage viewer.
+    /// Module root: settings, the models and every player's class party.
     ///
     /// Everything except RecordDamage runs on the world thread (config load, commands, world update, shutdown), and
     /// none of it while maps are updating. RecordDamage runs on map threads and only reads the bot index and the
@@ -64,19 +63,11 @@ namespace Animus
         /// One line per class companion of `owner`.
         [[nodiscard]] std::vector<std::string> List(Player* owner);
 
-        /// Stage viewer commands (see StageViewer): every stage and its arenas; open one where the stage happens, its
-        /// first episode frozen; spawn another episode, frozen; let it play, or freeze it; describe it; close it.
+        /// Every curriculum stage with its arenas: the names Animus.Curriculum.Stage accepts, and so which models a
+        /// companion will look for.
         [[nodiscard]] std::vector<std::string> StageList() const;
-        bool StageOpen(Player* viewer, std::string_view stage, std::string_view policy, std::string_view arena,
-            std::string& message);
-        bool StageSpawn(Player* viewer, std::string_view tier, std::string_view classRole, std::string_view level,
-            std::string& message);
-        bool StageRun(Player* viewer, std::string& message);
-        bool StageFreeze(Player* viewer, std::string& message);
-        bool StageClose(Player* viewer, std::string& message);
-        [[nodiscard]] std::vector<std::string> StageStatus(Player* viewer);
 
-        /// A player logged out: remove the companions they own and the stage they watch.
+        /// A player logged out: remove the companions they own.
         void OnPlayerLogout(Player* player);
 
         void RecordDamage(Unit const* attacker, Unit const* victim, uint32 damage, DamageEffectType type);
@@ -86,11 +77,7 @@ namespace Animus
     private:
         AnimusMod() = default;
 
-        /// The stage `viewer` has open, or null with `message` set.
-        StageViewer* FindViewer(Player* viewer, std::string& message);
-
         void RemoveParty(ObjectGuid owner);
-        void RemoveViewer(ObjectGuid viewer);
         void RemoveAll();
 
         /// The layout of a profile at the configured stage, built on first use and kept (companions point at it).
@@ -102,8 +89,6 @@ namespace Animus
 
         std::unordered_map<ObjectGuid, std::unique_ptr<CompanionParty>> _parties;   // by owner
         std::unordered_map<ObjectGuid, CompanionParty*> _partyByBot;
-
-        std::unordered_map<ObjectGuid, std::unique_ptr<StageViewer>> _viewers;      // by viewer
     };
 }
 
