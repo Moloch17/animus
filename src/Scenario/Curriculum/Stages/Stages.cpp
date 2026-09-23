@@ -228,6 +228,19 @@ namespace
                         // Dustwallow Marsh: broken shore
                         { -2631.0f, -3607.0f, 42.0f, 0.0f },  { -2751.0f, -3660.0f, 39.0f, 0.0f },
                         { -2851.0f, -3650.0f, 33.0f, 0.0f },  { -2987.0f, -3940.0f, 39.0f, 0.0f },
+                        // Cliff feet: low ground under a plateau 30-50 yd up, whose top the route reaches by one
+                        // ramp at 1.3-1.8x the straight line. The first format-6 run (2026-09-23, 22M steps)
+                        // arrived 0.96 on the held-out escarpment below and lost 50 of its 80 failures at its
+                        // cliff foot: the seat ran at the objective's bearing, reached the wall under it, and
+                        // paced there for the rest of the clock, because nothing it had trained on had taught it
+                        // to back off and follow the wall to the way up. None of the lists above had that shape.
+                        // Each of these was found from the creature spawns' relief, then stood on with `forge
+                        // rays` (floor found, no water) and routed to its three nearest plateau points with
+                        // `forge route`. The escarpment itself stays held out.
+                        { -2032.2f, -3618.1f, 22.3f, 0.0f },  // southern Barrens, plateau +40..50, 1.47-2.31x
+                        { -2563.7f, -3798.6f, 7.0f, 0.0f },   // Barrens/Dustwallow edge, +41..49, 1.03-1.36x
+                        { 190.8f, -4516.5f, 27.1f, 0.0f },    // Durotar canyon, +30..37, 1.76-2.2x
+                        { 479.5f, -4658.7f, 41.7f, 0.0f },    // Durotar canyon, +28..34, 1.3-1.77x
                     },
                     // The southern Barrens escarpment, relief 47, in no training list. Rougher ground held back
                     // for scoring, on the same argument as the stage's own control: if `arrived` here tracks
