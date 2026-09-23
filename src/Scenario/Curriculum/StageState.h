@@ -398,6 +398,12 @@ namespace Animus::Curriculum
         /// Which spawn point this episode drew, into whichever list it drew from. Drawn once at the reset and
         /// held, because the seat is placed from it and the state's origin is read off it every decision.
         uint32 Spawn = 0;
+        /// The point this episode drew before anything was tried with it; Spawn is where it was finally built.
+        /// The two differ exactly when a drawn point could not build an episode and the reset moved to another,
+        /// which used to leave no trace at all -- and silently dropped the tightest of stage1b_indoor's three
+        /// control rooms out of all 14336 evaluation episodes it ever ran, so its gate was measured on two rooms
+        /// while reading as three. The episode columns `spawn_drawn` and `spawn_point` are these two fields.
+        uint32 SpawnDrawn = 0;
         std::array<SeatState, MAX_SEATS> Seats;
         uint32 ActiveSeats = 1;                 // seats with a character this episode (the first ones)
         bool Fresh = false;                     // built by Setup, not yet reset

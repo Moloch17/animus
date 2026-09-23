@@ -74,6 +74,9 @@ namespace
     static_assert(PARTY_MEMBERS == GROUP_MEMBERS + SPOTLIGHT_SLOTS, "teammate slots are the group and the spotlights");
 
     constexpr float PARTY_SPACING = 3.0f;
+    /// The shortest scatter worth asking for. Under a yard PathGenerator builds a spline with no length, which
+    /// is the zero-length-jump fault again: Validate() checks a path's size and its velocity, never its length.
+    constexpr float SCATTER_MIN = 1.0f;
     constexpr float REWARD_TUNING_MS = 50.0f;       // per-decision reward terms are tuned for this decision interval
     constexpr float MAX_COMBAT_TIME_MS = 60000.0f;
     constexpr float MAX_UNSEEN_TIME_MS = 20000.0f;
@@ -527,6 +530,36 @@ Position const& Animus::Curriculum::StageScenario::SpawnPointFor(Env const& env)
     return ground[std::min<std::size_t>(Data(env).Spawn, ground.size() - 1)];
 }
 
+void Animus::Curriculum::StageScenario::ScatterSeats(Env const& env, Map* map) const
+{
+    ArenaDefinition const& arena = Arena(env);
+    if (arena.SpawnScatter < SCATTER_MIN || !map)
+        return;
+
+    EnvState const& data = Data(env);
+    for (uint32 seat = 0; seat < data.ActiveSeats; ++seat)
+    {
+        Player* bot = SeatBot(env, seat);
+        if (!bot)
+            continue;
+
+        // The facing costs nothing and needs no ground to be true, so it is taken whether the offset is found or
+        // not: a seat that cannot be moved in a tight room can still open the episode looking somewhere else.
+        Position where(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(),
+            frand(0.0f, 2.0f * float(M_PI)));
+
+        // FindPlace is the same validation the objective gets -- on the mesh, reachable, and inside the building
+        // when the arena is -- which is the reason to spend a pathfind here rather than offset blindly into a
+        // wall. A room that has no room for one keeps the spawn point; Relocate leaves the facing alone.
+        Position place;
+        if (TravelEncounter::FindPlace(bot, map, SCATTER_MIN, arena.SpawnScatter, false, place, 0.0f, nullptr,
+            false, nullptr, arena.Indoors))
+            where.Relocate(place.GetPositionX(), place.GetPositionY(), place.GetPositionZ());
+
+        BotFactory::TeleportWithinMap(bot, where);
+    }
+}
+
 uint32 Animus::Curriculum::StageScenario::EnvPhase(Env const& env)
 {
     // Phase 1 is the world's own; each env takes one of the other 31 bits.
@@ -663,6 +696,16 @@ void Animus::Curriculum::StageScenario::AddCoreEpisodeInfo()
         uint32 const arena = Data(env).Arena;
         return arena == NO_ARENA ? 0.0f : float(arena);
     });
+    // Which spawn point the episode was built from, and which one it drew first. An index into the stage's (or
+    // the arena's) SpawnPoints, or HeldOutSpawnPoints while evaluating -- the two lists are never mixed, so the
+    // column means whichever list the episode drew from.
+    //
+    // Read them together. Equal, the first choice worked. Different, that point could not build an episode and
+    // the reset moved on, and a point that is drawn often and never built from is one no episode can start at:
+    // a control room that scores nothing while still being counted as control ground. That is not hypothetical
+    // -- it is how stage1b_indoor came to be scored on two of its three rooms without anything saying so.
+    _info.Add("spawn_point", [this](Env const& env, uint32) { return float(Data(env).Spawn); });
+    _info.Add("spawn_drawn", [this](Env const& env, uint32) { return float(Data(env).SpawnDrawn); });
     // The other side of a self-play episode: an evaluation against a scripted opponent leaves its row out.
     _info.Add("opponent_seat", [this](Env const& env, uint32 index)
     {
@@ -1358,6 +1401,7 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
     {
         std::vector<Position> const& ground = SpawnGroundFor(env);
         data.Spawn = ground.empty() ? 0 : urand(0, uint32(ground.size()) - 1);
+        data.SpawnDrawn = data.Spawn;
     }
     ArenaDefinition const& arena = Arena(env);
     env.EpisodeLengthMs = _arenaEpisodeMs[data.Arena];
@@ -1559,6 +1603,8 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
         env.Bots.push_back(ObjectGuid::Empty);
     env.Targets.clear();
 
+    ScatterSeats(env, map);
+
     // A spawn point no objective can be found from used to take the whole run down with it: the plan stops when
     // its first scenario fails to start, so one bad patch in a list of twenty-six was a dead run. The ground is
     // drawn per episode now, so the answer is to draw again -- move the seats to another point and build there.
@@ -1585,6 +1631,8 @@ bool Animus::Curriculum::StageScenario::Rebuild(Env& env)
         for (uint32 seat = 0; seat < data.ActiveSeats; ++seat)
             if (Player* bot = SeatBot(env, seat))
                 BotFactory::TeleportWithinMap(bot, retry);
+
+        ScatterSeats(env, map);
     }
 
     if (!built)

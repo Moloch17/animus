@@ -170,6 +170,20 @@ namespace Animus::Curriculum
         /// getting away needs a fight the seat cannot win; every other arena wants an even match and leaves
         /// this at 0. Ignored unless the opposition is a scripted player.
         int32 OpponentLevelBonus = 0;
+        /// Yards of validated random offset applied to each seat's start, with a random facing to go with it.
+        /// 0 leaves the seat exactly on the spawn point facing due east, which is what every arena did and what
+        /// every arena that leaves this alone keeps doing.
+        ///
+        /// A spawn point is one pose, not one place. Drawing the objective at a uniform bearing varies the task
+        /// but not the view the episode opens on, so a policy sees as many opening views as the stage has points
+        /// -- seven in stage1b_indoor's training, two in the evaluation that actually runs. "Read the walls from
+        /// this spot" is a smaller thing to learn than "read the walls", and the gap between them is the whole
+        /// claim an indoor drill makes.
+        ///
+        /// The offset goes through TravelEncounter::FindPlace, so it is on the mesh, reachable, and inside the
+        /// building when the arena is Indoors. A room too tight to hold one keeps the spawn point and still
+        /// takes the facing: the scatter is an improvement where it fits, never a reason to lose an episode.
+        float SpawnScatter = 0.0f;
 
         [[nodiscard]] uint32 SeatCount() const;
     };
