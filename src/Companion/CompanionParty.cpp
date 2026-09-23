@@ -569,6 +569,7 @@ Animus::Curriculum::SeatView Animus::CompanionParty::View(Member const& member, 
     view.PlayRole = member.PlayRole;
     view.Build = &member.Build;
     view.Memory = &member.Memory;
+    view.Trail = &member.Trail;
     view.Options = settings.Options;
     view.NowMs = _nowMs;
     view.LastStepDamage = member.LastStepDamage;

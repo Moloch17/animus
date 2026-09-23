@@ -136,7 +136,10 @@ namespace Animus
             std::vector<float> Obs;
             std::vector<uint8> Mask;
             Curriculum::SeatMemory Memory;      // pacing, and what it has been doing (as a forge seat's)
-            Curriculum::SeatOptionSet Option;   // the durative actions it is running (keep range, hold an interrupt)
+            Curriculum::SeatOptionSet Option;   // the durative actions it is running (a bearing, hold an interrupt)
+            /// Where it has been (MovementTrail), sampled in place by the move block as a forge seat's is: the
+            /// model plays with what it trained with. Mutable because it is a cache and View reads a const member.
+            mutable Curriculum::MovementTrail Trail;
             MlpPolicy::State Policy;            // what its model carries between decisions (memory, goal)
             int32 Goal = Curriculum::NO_GOAL;   // ... the goal of it, as its teammates see it
             bool ModelErrorLogged = false;
