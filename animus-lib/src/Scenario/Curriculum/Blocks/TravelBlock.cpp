@@ -21,7 +21,6 @@
 #include "Map.h"
 #include "MotionMaster.h"
 #include "MoveSpline.h"
-#include "MoveSplineInit.h"
 #include "Player.h"
 #include "SeatView.h"
 #include "Spell.h"
@@ -35,10 +34,6 @@
 namespace
 {
     using namespace Animus::Curriculum;
-
-    /// This block's spline, distinct from the movement block's "MV" so a leg of a route and a held bearing
-    /// cannot be mistaken for one another.
-    constexpr uint32 TRAVEL_MOVE_POINT_ID = 0x5452;     // "TR"
 
     constexpr float MAX_GROUND_SEARCH = 200.0f;
     constexpr float AIRBORNE_ABOVE = 2.0f;      // higher than this without flight is falling
@@ -84,15 +79,22 @@ namespace
     /// the key does. Gating this on a finished spline instead made mounting unreachable on the only trips worth
     /// mounting for: the seat moves every decision, so the spline is live from the first one to the last, and the
     /// action was masked out of every decision but the one before the bot had started.
-    bool CanSummon(Player* bot, SpellInfo const* mount)
+    /// `reason` reports the SpellCastResult when the cast is what refused it, SPELL_CAST_OK when the refusal
+    /// was one of the cheap checks above it, and NO_MOUNT_KNOWN when there is no such mount to summon.
+    constexpr uint32 NO_MOUNT_KNOWN = 0xFFFF;
+
+    bool CanSummon(Player* bot, SpellInfo const* mount, uint32* reason = nullptr)
     {
+        if (reason)
+            *reason = mount ? uint32(SPELL_CAST_OK) : NO_MOUNT_KNOWN;
+
         if (!mount || bot->IsMounted() || !bot->IsAlive() || Encoding::CastInProgress(bot)
             || bot->GetGlobalCooldownMgr().HasGlobalCooldown(mount))
             return false;
 
         SpellCastTargets targets;
         targets.SetUnitTarget(bot);
-        return Animus::SpellChecks::CheckCast(bot, mount, targets, nullptr);
+        return Animus::SpellChecks::CheckCast(bot, mount, targets, nullptr, reason);
     }
 
     bool IsAllowed(SeatView const& view, uint32 action)
@@ -104,19 +106,13 @@ namespace
         switch (action)
         {
             case TravelBlock::ACTION_MOUNT_GROUND:
-                return view.MountsAllowed && CanSummon(bot, TravelBlock::GroundMount(bot));
+                // An air-only arena masks the ground mount (ArenaDefinition::AirOnly): its objective cannot be
+                // walked to, and a ride that cannot arrive is not a choice worth exploring into.
+                return view.MountsAllowed && view.GroundMountAllowed && CanSummon(bot, TravelBlock::GroundMount(bot));
             case TravelBlock::ACTION_MOUNT_FLYING:
                 return view.MountsAllowed && CanSummon(bot, TravelBlock::FlyingMount(bot));
             case TravelBlock::ACTION_DISMOUNT:
                 return bot->IsMounted();
-            case TravelBlock::ACTION_FOLLOW_ROUTE:
-                // A way to follow, somewhere still to get to, an arena that offers the action -- and enough of
-                // the trip left to be worth delegating. Inside the handoff the seat walks it itself, because
-                // the last forty yards are the part a pathfinder cannot do: arriving on the mark, keeping off
-                // the walls, stepping round whatever is underfoot.
-                return view.Route.Allowed && view.Route.Valid && view.HasObjective
-                    && view.Route.Remaining > view.Route.Handoff
-                    && !TravelBlock::AtObjective(bot, view.Objective);
             default:
                 return false;
         }
@@ -128,9 +124,9 @@ SpellInfo const* Animus::Curriculum::TravelBlock::GroundMount(Player const* bot)
     return FastestMount(bot, false);
 }
 
-bool Animus::Curriculum::TravelBlock::CanSummonFlying(Player* bot)
+bool Animus::Curriculum::TravelBlock::CanSummonFlying(Player* bot, uint32* reason)
 {
-    return CanSummon(bot, FlyingMount(bot));
+    return CanSummon(bot, FlyingMount(bot), reason);
 }
 
 SpellInfo const* Animus::Curriculum::TravelBlock::FlyingMount(Player const* bot)
@@ -145,9 +141,10 @@ float Animus::Curriculum::TravelBlock::HeightAboveGround(Player const* bot)
     return ground > INVALID_HEIGHT ? std::max(0.0f, bot->GetPositionZ() - ground) : 0.0f;
 }
 
-bool Animus::Curriculum::TravelBlock::AtObjective(Player const* bot, Position const& objective, float maxRise)
+bool Animus::Curriculum::TravelBlock::AtObjective(Player const* bot, Position const& objective, float maxRise,
+    float within)
 {
-    return bot->GetExactDist2d(&objective) <= ARRIVE_DISTANCE && HeightAboveGround(bot) <= AIRBORNE_ABOVE
+    return bot->GetExactDist2d(&objective) <= within && HeightAboveGround(bot) <= AIRBORNE_ABOVE
         && std::fabs(bot->GetPositionZ() - objective.GetPositionZ()) <= maxRise;
 }
 
@@ -192,7 +189,7 @@ std::string Animus::Curriculum::TravelBlock::ActionName(Layout const& /*layout*/
 {
     static constexpr std::array<char const*, ACTION_COUNT> NAMES =
     {
-        "mount_ground", "mount_flying", "dismount", "follow_route",
+        "mount_ground", "mount_flying", "dismount",
     };
 
     return local < NAMES.size() ? NAMES[local] : std::string();
@@ -215,7 +212,13 @@ void Animus::Curriculum::TravelBlock::Observe(SeatView const& view, float* obs, 
 
     if (view.HasObjective)
     {
-        float const bearing = bot->GetRelativeAngle(&view.Objective);
+        // In the seat's own frame (SeatView::Facing), the frame every bearing the move block reports is measured
+        // in. GetRelativeAngle reads the unit's orientation, and a flight spline -- which is not orientation-fixed
+        // -- writes the direction of travel onto that every tick, so the two blocks disagreed about where the
+        // objective lay exactly when it mattered most: in the air.
+        float const relative = bot->GetAngle(view.Objective.GetPositionX(), view.Objective.GetPositionY())
+            - view.Facing;
+        float const bearing = std::atan2(std::sin(relative), std::cos(relative));
         obs[OBS_OBJECTIVE] = 1.0f;
         obs[OBS_OBJECTIVE_DISTANCE] = std::min(1.0f, bot->GetExactDist2d(&view.Objective) / 500.0f);
         obs[OBS_OBJECTIVE_BEARING_SIN] = std::sin(bearing);
@@ -223,15 +226,6 @@ void Animus::Curriculum::TravelBlock::Observe(SeatView const& view, float* obs, 
         obs[OBS_OBJECTIVE_HEIGHT] = std::clamp((view.Objective.GetPositionZ() - bot->GetPositionZ()) / 50.0f, -1.0f,
             1.0f);
         obs[OBS_AT_OBJECTIVE] = AtObjective(bot, view.Objective) ? 1.0f : 0.0f;
-    }
-
-    if (view.Route.Valid)
-    {
-        obs[OBS_ROUTE_OK] = 1.0f;
-        obs[OBS_ROUTE_REMAIN] = std::min(1.0f, view.Route.Remaining / 500.0f);
-        float const corner = bot->GetRelativeAngle(&view.Route.Next);
-        obs[OBS_ROUTE_SIN] = std::sin(corner);
-        obs[OBS_ROUTE_COS] = std::cos(corner);
     }
 
     // Asked here rather than of the mask: the policy sees whether mounting is possible even when no mask is wanted.
@@ -310,24 +304,25 @@ void Animus::Curriculum::TravelBlock::Apply(SeatView& view, uint32 local, SeatAc
             targets.SetUnitTarget(bot);
             Spell* spell = new Spell(bot, mount, TRIGGERED_NONE);
             if (spell->prepare(&targets) == SPELL_CAST_OK)
+            {
                 ++result.SpellCasts;
+
+                // And the feet let go of whatever they were holding.
+                //
+                // Stopping the bot is not enough on its own: a held bearing is re-issued by the option machinery
+                // every decision without being asked, so the spline would come straight back under the cast and
+                // kill it. Masking movement stops the policy pressing anything; this stops the machinery doing it
+                // on the policy's behalf. ACTION_JUMP lets go of the same two things for the same reason.
+                view.HeldBearing = 0xFF;
+                if (view.Option)
+                    view.Option->Stop(SeatOptionKind::MoveBearing);
+            }
             return;
         }
         case ACTION_DISMOUNT:
             // As CMSG_CANCEL_MOUNT_AURA.
             bot->RemoveAurasByType(SPELL_AURA_MOUNTED);
             FallIfAirborne(bot);
-            return;
-        case ACTION_FOLLOW_ROUTE:
-            // Through Encoding::MoveTo like every other walk in the curriculum, so the orientation-fixed spline
-            // holds and the seat's own facing frame survives -- MotionMaster would write the direction of travel
-            // onto the seat's orientation, which is the spiral this design removed.
-            //
-            // One corner at a time rather than the whole way. A leg is short enough that the route is re-planned
-            // under it as the seat walks, which is what lets a journey cross ground whose tiles were not loaded
-            // when it set out.
-            Encoding::MoveTo(bot, TRAVEL_MOVE_POINT_ID, view.Route.Next.GetPositionX(),
-                view.Route.Next.GetPositionY(), view.Route.Next.GetPositionZ(), &view.Facing);
             return;
         default:
             return;

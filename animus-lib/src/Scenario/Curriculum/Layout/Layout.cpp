@@ -36,7 +36,11 @@ namespace
     // 5: the move block steers in three dimensions (a held yaw and pitch, the ground read along each bearing, and
     // water), and the travel block gave up the point order and the two climb hops that went with it. Every layout
     // changed shape, so a manifest of an earlier format describes a model that no longer fits.
-    constexpr uint32 MANIFEST_FORMAT = 5;
+    /// 6: the pathfinder's choices left the actor -- the travel block's follow-route and the route features, the
+    /// move block's face-objective, the duel block's target-relative moves and their two option clocks -- the
+    /// ground is sensed along sixteen rays instead of eight, and the move block carries a trail of where the
+    /// seat has been. Every block of every layout changed shape; no format 5 checkpoint fits a format 6 layout.
+    constexpr uint32 MANIFEST_FORMAT = 6;
 
     /// The catalog's long buffs, grouped by what a unit can have at once: chains joined when any of their ranks share
     /// a spell group (spell_group, whose stack rules keep one of them per target) or an exclusive kind (a seal, an
@@ -255,16 +259,12 @@ Animus::Curriculum::Layout Animus::Curriculum::Layout::Build(ClassProfile const&
         layout._blockMask |= 1u << uint32(id);
     }
 
-    layout.MoveDirections.assign(layout.NumActions, 0);
     layout.ModeGroups.assign(layout.NumActions, 0);
     for (BlockId id : layout.Blocks)
     {
         BlockSlice const& slice = layout.Slice(id);
         for (uint32 local = 0; local < slice.ActionCount; ++local)
-        {
-            layout.MoveDirections[slice.ActionFirst + local] = GetBlock(id).MoveDirection(local);
             layout.ModeGroups[slice.ActionFirst + local] = uint8(GetBlock(id).ModeGroupOf(layout, local));
-        }
     }
 
     return layout;
@@ -277,7 +277,6 @@ Animus::Curriculum::Layout Animus::Curriculum::Layout::BuildDirector(StageDefini
     layout.Director = true;
     layout.ObsDim = DirectorLayout::OBS_COUNT;
     layout.NumActions = DirectorLayout::ACTION_COUNT;
-    layout.MoveDirections.assign(layout.NumActions, 0);
     layout.ModeGroups.assign(layout.NumActions, 0);
     return layout;
 }

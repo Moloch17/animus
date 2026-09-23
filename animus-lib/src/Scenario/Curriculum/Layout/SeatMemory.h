@@ -37,8 +37,8 @@ namespace Animus::Curriculum
     /// plays with what it trained with: when each action may be pressed again (CurriculumTuning::ActionTuning), what
     /// it pressed and when, and how its and its target's health have been going.
     ///
-    /// A policy sees one observation at a time. Without these it cannot tell running in from backing off, a stance it
-    /// just took from one it has held all fight, or a target it is wearing down from one that is healing.
+    /// A policy sees one observation at a time. Without these it cannot tell a stance it just took from one it has
+    /// held all fight, or a target it is wearing down from one that is healing.
     class SeatMemory
     {
     public:
@@ -54,8 +54,8 @@ namespace Animus::Curriculum
 
         /// Whether layout action `action` may not be pressed now: pressed too recently (RepeatMs, MoveRepeatMs), a
         /// spell the bot stopped itself (RecastAfterStopMs), a stop of a cast that has only just begun
-        /// (StopCastMinMs), a movement order back the way the last one went (ReverseMoveMs), or a stance, form,
-        /// aspect, aura, seal, armor or pet stance within ModeLockMs of the last change of its kind.
+        /// (StopCastMinMs), or a stance, form, aspect, aura, seal, armor or pet stance within ModeLockMs of the last
+        /// change of its kind.
         [[nodiscard]] bool Paced(Layout const& layout, uint32 action, uint64 nowMs,
             CurriculumTuning::ActionTuning const& tuning) const;
 
@@ -67,7 +67,6 @@ namespace Animus::Curriculum
         // Features (CoreBlock), each in [0, 1] or [-1, 1].
         [[nodiscard]] float SincePressed(uint32 action, uint64 nowMs) const;    // / 10 s; 1 = never
         [[nodiscard]] float SinceMove(uint64 nowMs) const;                      // / 5 s; 1 = never
-        [[nodiscard]] float LastMoveDirection() const { return float(_lastMoveDirection); }
         [[nodiscard]] float SinceModeChange(uint64 nowMs) const;                // / 10 s; 1 = never
         [[nodiscard]] float SelfHealthTrend() const { return _selfTrend; }      // health now - its average
         [[nodiscard]] float TargetHealthTrend() const { return _targetTrend; }
@@ -78,7 +77,6 @@ namespace Animus::Curriculum
         uint32 _castSpellId = 0;
         uint64 _castStartMs = 0;
         uint64 _lastMoveMs = 0;
-        int8 _lastMoveDirection = 0;
         std::array<uint64, std::size_t(ModeGroup::Count)> _modeChangeMs{};
         uint64 _lastModeChangeMs = 0;
 

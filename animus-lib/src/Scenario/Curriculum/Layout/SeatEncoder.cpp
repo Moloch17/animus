@@ -94,18 +94,26 @@ void Animus::Curriculum::SeatEncoder::Apply(SeatView& view, int32 action, SeatAc
             if (option.Kind != SeatOptionKind::None && view.NowMs >= option.UntilMs)
                 option = SeatOption();
 
-    // A durative action runs until the policy does something else: anything but the no-op takes over from it, except
-    // that a positioning option (IsPositioning) survives everything but the seat steering the other way -- casting
-    // and swinging are what it is there to keep the seat in place for, and so is closing in while keeping range --
-    // and a standby (IsStandby) survives everything, since waiting for the target's cast is not a thing the seat
-    // stops fighting to do. Each option's own action is masked while it runs, so this cannot cancel a fresh press.
+    // A durative action runs until the policy does something else: anything but the no-op takes over from it,
+    // except that a positioning option (IsPositioning: the held bearing) survives everything but the seat moving
+    // its feet another way -- casting and swinging are what it keeps walking through -- an aiming option
+    // (IsAiming: a held turn or pitch) survives everything but its own contradiction, and a standby (IsStandby)
+    // survives everything, since waiting for the target's cast is not a thing the seat stops fighting to do. Each
+    // option's own action is masked while it runs, so this cannot cancel a fresh press.
     if (action > 0 && view.Option)
     {
         bool const movement = block && GetBlock(*block).IsMovement(local);
-        int8 const direction = block ? GetBlock(*block).MoveDirection(local) : 0;
+        bool const aiming = block && GetBlock(*block).IsAiming(local);
         for (SeatOption& option : view.Option->Slots)
         {
             if (option.Kind == SeatOptionKind::None || IsStandby(option.Kind))
+                continue;
+
+            // A held turn or pitch ends only on the press that contradicts it -- its opposite, or levelling off --
+            // which the move block does itself when it applies that press. Ending it on any press meant a seat
+            // could not turn while it did anything else, and turning while walking is the one gait this design
+            // exists to allow.
+            if (IsAiming(option.Kind))
                 continue;
 
             if (!IsPositioning(option.Kind))
@@ -114,21 +122,11 @@ void Animus::Curriculum::SeatEncoder::Apply(SeatView& view, int32 action, SeatAc
                 continue;
             }
 
-            // A bearing is the seat steering, so any other movement ends it -- there is no direction that agrees
-            // with a compass point the seat chose for itself. A fresh bearing ends it here and Apply starts the new
-            // one straight after, which is how one bearing replaces another.
-            if (option.Kind == SeatOptionKind::MoveBearing)
-            {
-                if (movement)
-                    option = SeatOption();
-                continue;
-            }
-
-            // Only movement that contradicts it: backing off ends staying on the target, closing in ends keeping
-            // range, and a step that does neither (to casting range, stop, follow) leaves both alone. A bearing has
-            // no direction of its own (MoveBlock::MoveDirection), so it ends these through `movement` below.
-            int8 const against = option.Kind == SeatOptionKind::StayOnTarget ? -1 : 1;
-            if (movement && (direction == against || direction == 0))
+            // A bearing is the seat steering, so any other movement of the feet ends it -- there is no direction
+            // that agrees with a compass point the seat chose for itself. A fresh bearing ends it here and Apply
+            // starts the new one straight after, which is how one bearing replaces another. Aiming is not the
+            // feet: a turn under a held bearing curves the walk rather than stopping it.
+            if (movement && !aiming)
                 option = SeatOption();
         }
     }

@@ -318,6 +318,8 @@ namespace Animus::Curriculum
 
     /// The nearest hazard the seat is not standing in, cached and refreshed about once a second.
     void TrackHazards(Env const& env, SeatState& seat, Player* bot);
+    /// Whether the seat's legs are getting anywhere (SeatState::MoveRate, CloseRate), for every arena.
+    static void TrackMotion(Env const& env, SeatState& seat, Player const* bot, Unit const* target);
 
     void TrackSupport(Env& env, uint32 seatIndex, Player* bot);
         void WriteState(Env const& env, float* state) const;

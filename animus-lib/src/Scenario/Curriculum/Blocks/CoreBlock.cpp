@@ -285,7 +285,6 @@ void Animus::Curriculum::CoreBlock::Observe(SeatView const& view, float* obs, ui
     if (memory)
     {
         obs[OBS_SINCE_MOVE] = memory->SinceMove(view.NowMs);
-        obs[OBS_LAST_MOVE_DIRECTION] = memory->LastMoveDirection();
         obs[OBS_SINCE_MODE_CHANGE] = memory->SinceModeChange(view.NowMs);
         obs[OBS_HEALTH_TREND] = memory->SelfHealthTrend();
         obs[OBS_TARGET_HEALTH_TREND] = memory->TargetHealthTrend();

@@ -74,6 +74,11 @@ namespace
     /// objective, and refusing a real room is cheap while accepting a hillside is not.
     constexpr uint32 WMO_GROUP_OUTDOORS = 0x8;
     constexpr float BODY_HEIGHT = 2.0f;             // for the water check
+    /// A stall, for stall_seconds and stalls: the route distance has not fallen by STALL_GAIN_YARDS for
+    /// STALL_MIN_MS. Two yards is more than the wobble of walking a corner and less than a decision's travel at
+    /// run speed; three seconds outlasts a mount cast and a jump, which gain nothing and are not stalls.
+    constexpr float STALL_GAIN_YARDS = 2.0f;
+    constexpr uint32 STALL_MIN_MS = 3000;
 }
 
 Animus::Curriculum::TravelEncounter::TravelEncounter(StageScenario& scenario, uint32 envs)
@@ -230,6 +235,18 @@ void Animus::Curriculum::TravelEncounter::AddEpisodeInfo(EpisodeInfoTable& table
     {
         return _envs[env.Index].CouldMountFlyer ? 1.0f : 0.0f;
     });
+    table.Add("flying_zone", [this](Env const& env, uint32)
+    {
+        return float(_envs[env.Index].FlyerZone);
+    });
+    table.Add("flying_area", [this](Env const& env, uint32)
+    {
+        return float(_envs[env.Index].FlyerArea);
+    });
+    table.Add("flying_refusal", [this](Env const& env, uint32)
+    {
+        return float(_envs[env.Index].FlyerRefusal);
+    });
     table.Add("flying_mount_fraction", [this](Env const& env, uint32)
     {
         return env.EpisodeElapsedMs ? float(_envs[env.Index].FlyingMountMs) / float(env.EpisodeElapsedMs) : 0.0f;
@@ -244,6 +261,18 @@ void Animus::Curriculum::TravelEncounter::AddEpisodeInfo(EpisodeInfoTable& table
     {
         return env.EpisodeElapsedMs ? float(_envs[env.Index].FlyingMs) / float(env.EpisodeElapsedMs) : 0.0f;
     });
+    // Where the trip stopped gaining: the longest stretch without closing on the objective, in seconds, and how
+    // many stretches of STALL_MIN_MS or more there were. `lost` and `wedged` (evaluation.py) say how far a failure
+    // wandered; this says how long it spent getting nowhere, arrivals included.
+    table.Add("stall_seconds", [this](Env const& env, uint32)
+    {
+        return float(_envs[env.Index].StallLongestMs) / 1000.0f;
+    });
+    table.Add("stalls", [this](Env const& env, uint32) { return float(_envs[env.Index].Stalls); });
+    // What the trip was asked to be: the detour band it was drawn for (-1 where none was), and whether it can
+    // only be reached by air.
+    table.Add("detour_band", [this](Env const& env, uint32) { return float(_envs[env.Index].Band); });
+    table.Add("air_only", [this](Env const& env, uint32) { return _envs[env.Index].AirOnly ? 1.0f : 0.0f; });
 }
 
 float Animus::Curriculum::TravelEncounter::Saved(EnvTravel const& travel)
@@ -262,7 +291,8 @@ void Animus::Curriculum::TravelEncounter::ResetEpisode(Env& env)
 }
 
 bool Animus::Curriculum::TravelEncounter::FindPlace(Player* bot, Map* map, float nearest, float furthest, bool flying,
-    Position& place, float budgetSeconds, float* walk, bool across, float* dry, bool indoors, bool* shortcut)
+    Position& place, float budgetSeconds, float* walk, bool across, float* dry, bool indoors, bool* shortcut,
+    TravelPlaceRules const& rules)
 {
     // What the seat can actually cover in the time it has. Reachability was the only test until now -- a path of
     // type PATHFIND_NORMAL, no longer than MAX_PATH_DETOUR times the straight line -- and reachable is not the
@@ -291,8 +321,13 @@ bool Animus::Curriculum::TravelEncounter::FindPlace(Player* bot, Map* map, float
         // ground, and the broken arena's ridges span seventy yards of relief. Inside a building the same probe
         // returns the roof, because Map::GetHeight casts a strictly downward ray from the z it is given -- so an
         // interior arena looks from a step above its own feet instead, and finds the floor it is standing on.
-        float const from = indoors ? bot->GetPositionZ() + INDOOR_RISE : bot->GetPositionZ() + HEIGHT_SEARCH * 0.5f;
-        float const search = indoors ? INDOOR_SEARCH : HEIGHT_SEARCH;
+        // An air-only place may sit on a plateau or an island far above the seat, so that probe starts from as
+        // high as the seat may fly and searches the same relief downwards.
+        float const from = indoors ? bot->GetPositionZ() + INDOOR_RISE
+            : rules.AirOnly ? bot->GetPositionZ() + TravelBlock::MAX_ALTITUDE
+            : bot->GetPositionZ() + HEIGHT_SEARCH * 0.5f;
+        float const search = indoors ? INDOOR_SEARCH
+            : rules.AirOnly ? TravelBlock::MAX_ALTITUDE + HEIGHT_SEARCH * 0.5f : HEIGHT_SEARCH;
         float const z = map->GetHeight(bot->GetPhaseMask(), x, y, from, true, search);
         if (z <= INVALID_HEIGHT)
             continue;
@@ -380,8 +415,43 @@ bool Animus::Curriculum::TravelEncounter::FindPlace(Player* bot, Map* map, float
                 if (dryWalk < distance * MIN_DETOUR_ACROSS)
                     continue;                      // the way round is barely longer: nothing to decide
             }
-            else if (walked > distance * MAX_PATH_DETOUR)
-                continue;
+            else
+            {
+                if (walked > distance * MAX_PATH_DETOUR)
+                    continue;
+
+                // The band this episode asked for (TravelPlaceRules::Band), insisted on for the first half of the
+                // attempts and let go after, so an arena whose ground has no long way round still builds. The
+                // ratio is the walking path over the straight line, which is what the seat is asked to cover.
+                if (rules.Band >= 0 && attempt < attempts / 2)
+                {
+                    float const detour = walked / std::max(1.0f, distance);
+                    int32 const band = detour < rules.DetourEasy ? 0 : detour < rules.DetourHard ? 1 : 2;
+                    if (band != rules.Band)
+                        continue;
+                }
+            }
+        }
+        else if (rules.AirOnly)
+        {
+            // Reachable by air only: no complete ground route, or one so much longer than the straight line that
+            // the wings are the way. RoutePlanner rather than PathGenerator, whose point cap answers "incomplete"
+            // for any ground trip of this length whether the ground allows it or not -- and with the grids along
+            // the straight line loaded first, because the planner can only walk mesh that is in memory, and a
+            // route that stopped at a tile boundary would read as no route.
+            for (uint32 step = 1; step < WATER_SAMPLES; ++step)
+            {
+                float const along = float(step) / float(WATER_SAMPLES);
+                map->LoadGrid(bot->GetPositionX() + (x - bot->GetPositionX()) * along,
+                    bot->GetPositionY() + (y - bot->GetPositionY()) * along);
+            }
+
+            Route ground;
+            Position const from(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(), 0.0f);
+            Position const to(placeX, placeY, placeZ, 0.0f);
+            if (RoutePlanner::Instance().Plan(map, from, to, ground) && ground.Complete
+                && ground.Length <= distance * rules.AirDetour)
+                continue;                      // walkable: a ride would do, and the wings would teach nothing
         }
 
         // Far enough inside the clock to be winnable by a seat that is still learning to steer, rather than only
@@ -454,27 +524,42 @@ bool Animus::Curriculum::TravelEncounter::Build(Env& env, Map* map, uint8 /*leve
     // crossing at all (`crossing`), and the stage gates the water arena on the seat actually swimming: a run
     // whose spawn points have no water in reach fails that gate and says so.
     travel.Indoors = arena.Indoors;
+    travel.AirOnly = arena.AirOnly;
     travel.Crossing = false;
     travel.DryDistance = 0.0f;
     travel.Travelled = 0.0f;
     travel.HasLastPos = false;
     travel.MarkMs = 0;
-    travel.MarkTravelled = 0.0f;
     travel.MarkDistance = -1.0f;
     travel.Nearest = -1.0f;
     travel.NearestMs = 0;
-    travel.MoveRate = 0.0f;
     travel.CloseRate = 0.0f;
+    // What kind of trip is wanted beyond its length (TravelPlaceRules). The ground arenas draw a detour band first and
+    // then look for an objective in it -- drawn uniformly, real detours were the tail: 51% of stage1_move's trips
+    // and 82% of stage3_travel's had a dry detour under 1.15 -- while a crossing, a room and a flight each ask for
+    // their own kind of trip and draw none. An air-only arena asks for a place the ground route does not reach.
+    TravelPlaceRules rules;
+    rules.DetourEasy = tuning.DetourEasy;
+    rules.DetourHard = tuning.DetourHard;
+    rules.AirOnly = arena.AirOnly;
+    rules.AirDetour = tuning.AirDetour;
+    if (!flying && !arena.Water && !arena.Indoors)
+    {
+        float const roll = frand(0.0f, 1.0f);
+        rules.Band = roll < tuning.DetourEasyShare ? 0
+            : roll < tuning.DetourEasyShare + tuning.DetourMidShare ? 1 : 2;
+    }
+    travel.Band = rules.Band;
     // The clock this arena actually runs, not the stage's default: `open` and `broken` do not have to agree, and
     // a share of it rather than all of it, because arriving with one second to spare is not a trip a seat can be
     // asked to make every time.
     float const budget = float(env.EpisodeLengthMs) / 1000.0f * FEASIBLE_SHARE;
     if (arena.Water
         && FindPlace(bot, map, least, most, flying, travel.Objective, budget, &walk, true, &travel.DryDistance,
-            false, &travel.Shortcut))
+            false, &travel.Shortcut, rules))
         travel.Crossing = true;
     else if (!FindPlace(bot, map, least, most, flying, travel.Objective, budget, &walk, false, nullptr,
-        arena.Indoors, &travel.Shortcut))
+        arena.Indoors, &travel.Shortcut, rules))
         return false;
 
     // What the way round costs on foot, for every arena rather than only the ones built around a crossing:
@@ -505,6 +590,9 @@ bool Animus::Curriculum::TravelEncounter::Build(Env& env, Map* map, uint8 /*leve
         travel.TripShare = seconds > 0.0f ? travel.WalkDistance / speed / seconds : 0.0f;
     }
     travel.KnowsFlyer = TravelBlock::FlyingMount(bot) != nullptr;
+    travel.CouldMountFlyer = TravelBlock::CanSummonFlying(bot, &travel.FlyerRefusal);
+    travel.FlyerZone = bot->GetZoneId();
+    travel.FlyerArea = bot->GetAreaId();
     travel.CouldMountFlyer = TravelBlock::CanSummonFlying(bot);
     _scenario.PrepareFighter(bot, data.Seats[0]);
     return true;
@@ -586,20 +674,15 @@ void Animus::Curriculum::TravelEncounter::View(Env const& env, uint32 /*seat*/, 
     view.Objective = travel.Objective;
     view.Detour = travel.HasObjective && travel.StartDistance > 0.0f && travel.DryDistance > 0.0f
         ? travel.DryDistance / travel.StartDistance : 0.0f;
-    view.MoveRate = travel.MoveRate;
-    view.CloseRate = travel.CloseRate;
+    // The closing rate toward the objective replaces the scenario's toward the target; the moving rate is the
+    // scenario's, measured for every seat (StageScenario::TrackMotion). The route the reward is shaped on stays
+    // the encounter's: the actor never sees it.
+    if (travel.HasObjective)
+        view.CloseRate = travel.CloseRate;
     view.MountsAllowed = !_scenario.Arena(env).OnFoot;
-
-    view.Route.Allowed = _scenario.Arena(env).Routes;
-    view.Route.Handoff = _scenario.Tuning().Travel.RouteHandoff;
-    view.Route.Valid = travel.Way.Valid;
-    view.Route.Complete = travel.Way.Complete;
-    view.Route.Remaining = travel.Way.Valid ? travel.Way.Length : 0.0f;
-    if (travel.Way.Valid && travel.Way.Count > 0)
-    {
-        uint32 const corner = std::min(travel.Way.Next, travel.Way.Count - 1);
-        view.Route.Next.Relocate(travel.Way.X[corner], travel.Way.Y[corner], travel.Way.Z[corner]);
-    }
+    view.ArriveWithin = travel.Indoors ? TravelBlock::ARRIVE_INDOORS : TravelBlock::ARRIVE_DISTANCE;
+    // An air-only arena keeps the flying mount and masks the ground one: its objective cannot be walked to.
+    view.GroundMountAllowed = !_scenario.Arena(env).AirOnly;
 }
 
 void Animus::Curriculum::TravelEncounter::Reward(Env& env, uint32 seatIndex, Player* bot, RewardLedger& ledger)
@@ -630,22 +713,20 @@ void Animus::Curriculum::TravelEncounter::Reward(Env& env, uint32 seatIndex, Pla
     travel.LastY = bot->GetPositionY();
     travel.HasLastPos = true;
 
-    // Refreshed about once a second rather than every decision: a quarter of a second of walking is 1.75 yards,
-    // which is mostly noise, and the question these answer is whether the seat has been getting anywhere.
+    // The closing rate toward the objective, refreshed about once a second rather than every decision: a quarter
+    // of a second of walking is 1.75 yards, which is mostly noise, and the question is whether the seat has been
+    // getting anywhere. The moving rate is the scenario's now (StageScenario::TrackMotion), for every arena.
     if (!travel.MarkMs || env.EpisodeElapsedMs < travel.MarkMs)
     {
         travel.MarkMs = env.EpisodeElapsedMs;
-        travel.MarkTravelled = travel.Travelled;
         travel.MarkDistance = travel.LastDistance;
     }
     else if (env.EpisodeElapsedMs - travel.MarkMs >= 1000)
     {
         float const seconds = float(env.EpisodeElapsedMs - travel.MarkMs) / 1000.0f;
-        travel.MoveRate = (travel.Travelled - travel.MarkTravelled) / (seconds * TravelBlock::BASE_RUN_SPEED);
         travel.CloseRate = travel.MarkDistance > 0.0f && travel.LastDistance >= 0.0f
             ? (travel.MarkDistance - travel.LastDistance) / (seconds * TravelBlock::BASE_RUN_SPEED) : 0.0f;
         travel.MarkMs = env.EpisodeElapsedMs;
-        travel.MarkTravelled = travel.Travelled;
         travel.MarkDistance = travel.LastDistance;
     }
     if (bot->IsMounted())
@@ -710,8 +791,14 @@ void Animus::Curriculum::TravelEncounter::Reward(Env& env, uint32 seatIndex, Pla
     // A re-planned route is a new potential function, and the difference between the old one and the new one is
     // not progress the seat made. FlagEncounter has the same rule where a flag changes hands: start over and
     // pay nothing for the change itself.
+    // Spread over the trip rather than paid per 100 yd, so closing the whole way pays Travel.Progress once
+    // whatever the trip's length. Per 100 yd, a 350-700 yd flight paid 4.3 for progress against 3.0 for arriving
+    // -- shaping worth more than the outcome, which rewards.py's own audit flagged every twenty-five updates --
+    // and a ground ride that closed most of the way was paid nearly as well as one that arrived. The ground
+    // stages' trips are 40-160 yd, so they barely move.
+    float const trip = std::max(100.0f, travel.WalkDistance);
     if (travel.LastDistance >= 0.0f && !travel.Arrived && !replanned)
-        ledger.Add(RewardTerm::Progress, tuning.Progress * (travel.LastDistance - distance) / 100.0f);
+        ledger.Add(RewardTerm::Progress, tuning.Progress * (travel.LastDistance - distance) / trip);
     travel.LastDistance = distance;
 
     // The high-water mark of the trip, kept whether the seat arrives or not.
@@ -721,6 +808,28 @@ void Animus::Curriculum::TravelEncounter::Reward(Env& env, uint32 seatIndex, Pla
         travel.NearestMs = env.EpisodeElapsedMs;
         travel.NearestX = bot->GetPositionX();
         travel.NearestY = bot->GetPositionY();
+    }
+
+    // How long it has been since the trip last gained on the objective (stall_seconds, stalls). A re-plan that
+    // finds a shorter way counts as gaining and a longer one as not, which is the honest reading of both.
+    if (!travel.Arrived)
+    {
+        if (travel.StallBest < 0.0f || distance < travel.StallBest - STALL_GAIN_YARDS)
+        {
+            travel.StallBest = distance;
+            travel.StallSinceMs = env.EpisodeElapsedMs;
+            travel.Stalling = false;
+        }
+        else
+        {
+            uint32 const stretch = env.EpisodeElapsedMs - std::min(env.EpisodeElapsedMs, travel.StallSinceMs);
+            travel.StallLongestMs = std::max(travel.StallLongestMs, stretch);
+            if (!travel.Stalling && stretch >= STALL_MIN_MS)
+            {
+                travel.Stalling = true;
+                ++travel.Stalls;
+            }
+        }
     }
 
     // Room to move, charged by the second like a hazard and capped the same way. A seat scraping a wall is not
@@ -743,9 +852,12 @@ void Animus::Curriculum::TravelEncounter::Reward(Env& env, uint32 seatIndex, Pla
     ledger.Add(RewardTerm::DamageTaken, -tuning.DamageTaken * seat.LastStepDamageTaken);
 
     // Indoors, arriving has to mean the right floor: two-dimensional arrival puts a seat under a staircase six
-    // yards from an objective it has not reached.
-    float const maxRise = travel.Indoors ? TravelBlock::ARRIVE_SAME_FLOOR : TravelBlock::ARRIVE_ANY_RISE;
-    if (!travel.Arrived && bot->IsAlive() && TravelBlock::AtObjective(bot, travel.Objective, maxRise))
+    // yards from an objective it has not reached. Air-only, it has to mean the plateau and not the cliff foot six
+    // yards under its edge (Travel.AirArriveRise).
+    float const maxRise = travel.Indoors ? TravelBlock::ARRIVE_SAME_FLOOR
+        : travel.AirOnly ? tuning.AirArriveRise : TravelBlock::ARRIVE_ANY_RISE;
+    float const within = travel.Indoors ? TravelBlock::ARRIVE_INDOORS : TravelBlock::ARRIVE_DISTANCE;
+    if (!travel.Arrived && bot->IsAlive() && TravelBlock::AtObjective(bot, travel.Objective, maxRise, within))
     {
         travel.Arrived = true;
         travel.ArriveMs = env.EpisodeElapsedMs;

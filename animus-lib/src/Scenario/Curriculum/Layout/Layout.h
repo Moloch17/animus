@@ -54,8 +54,7 @@ namespace Animus::Curriculum
         /// spell group (Blessings of Might and Kings, Fortitude and Prayer of Fortitude) are one group. Each group
         /// lists every rank's spell id. Buff coverage (a friend's share of groups up) reads them.
         std::vector<std::vector<uint32>> BuffGroups;
-        /// Per action: Block::MoveDirection and Block::ModeGroupOf (as uint8), resolved once for SeatMemory.
-        std::vector<int8> MoveDirections;
+        /// Per action: Block::ModeGroupOf (as uint8), resolved once for SeatMemory.
         std::vector<uint8> ModeGroups;
 
         /// The layout of `profile` at `stage` (Index 0). Builds the profile's assets on first use.

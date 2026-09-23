@@ -43,31 +43,38 @@ namespace Animus::Curriculum
     /// One bot's situation at a decision: what the blocks cannot read from the world themselves. The scenario fills
     /// it; each part is only used by the blocks that need it.
     /// What a durative action ("option") the seat started is doing. One press stands for many decisions -- resting
-    /// until it is ready to fight, holding an interrupt for the target's next cast, keeping a caster's distance --
-    /// which is how a plan longer than a decision is expressed at all: 1800 decisions of a 450 s episode are far more
-    /// than credit reaches back over. The block that owns the action starts it, the block that can act runs it every
+    /// until it is ready to fight, holding an interrupt for the target's next cast, walking a bearing -- which is
+    /// how a plan longer than a decision is expressed at all: 1800 decisions of a 450 s episode are far more than
+    /// credit reaches back over. The block that owns the action starts it, the block that can act runs it every
     /// decision until its own stop condition or UntilMs, and any other action the policy takes cancels it.
+    ///
+    /// The duel's keep-range and stay-on-target are gone with the pathfinder moves they issued: a position
+    /// relative to the target is the policy's to hold with a bearing now, not the engine's to run to.
     enum class SeatOptionKind : uint8
     {
         None = 0,
         RestUntilReady,     // eat and drink between pulls until health and mana are back
         HoldInterrupt,      // interrupt the target as soon as it casts
-        KeepRange,          // a ranged spec: back to its range whenever the target closes in
-        StayOnTarget,       // a melee spec: back into melee reach whenever the target leaves it
         MoveBearing,        // walking a compass point of its own choosing (MoveBlock), until it chooses another
         MoveTurn,           // turning on the spot, as a held key, while the feet do whatever they are doing
         MovePitch,          // looking further up or down, the same way; only off the ground
         Count
     };
 
-    /// Positioning options (KeepRange, StayOnTarget) hold the seat where its spec fights from. Only the seat moving
-    /// itself takes over from one: a fight is spells and swings between steps, and cancelling on those left a melee
-    /// seat re-issuing its own movement every decision (stage1_duel 2026-09-17: the rogue pressed one every 0.39 s
-    /// while it stood in melee reach 96% of the time).
+    /// A positioning option owns the feet, and the held bearing is the only one. Only the seat moving its feet
+    /// another way takes over from it: a fight is spells and swings between steps, and ending it on those left a
+    /// melee seat re-issuing its own movement every decision (stage1_duel 2026-09-17: the rogue pressed one every
+    /// 0.39 s while it stood in melee reach 96% of the time). Aiming does not end it either (IsAiming): a player
+    /// looks round while walking.
+    ///
+    /// **Nothing but the feet may end it.** DuelBlock::BeforeApply used to clear the positioning slot whenever
+    /// there was no living target, which was written for keep-range and became, the day the bearing joined this
+    /// list, the end of every bearing in every travel arena one decision after it was pressed (2026-09-21 to
+    /// 2026-09-23: 13,579 of 15,418 re-presses on stage1_move came exactly two decisions after the press, none
+    /// after one; the three-second hold was a one-decision hold and the "held key" was never trained on).
     [[nodiscard]] constexpr bool IsPositioning(SeatOptionKind kind)
     {
-        return kind == SeatOptionKind::KeepRange || kind == SeatOptionKind::StayOnTarget
-            || kind == SeatOptionKind::MoveBearing;
+        return kind == SeatOptionKind::MoveBearing;
     }
 
     /// Holding an interrupt is a standby, not something the seat does: it waits for the target to cast while the seat
@@ -81,20 +88,24 @@ namespace Animus::Curriculum
 
     /// A hostile ground effect: where its centre is and how wide it is, so a seat can see both which way out is
     /// shortest and, for one it is not in yet, which way not to walk.
-    /// The ray march along each of the eight bearings, kept between decisions.
+    /// The ray march along each of the SENSE_RAYS rays, kept between decisions.
     ///
-    /// A march is forty map queries where the old single probe was eight, which is too much to redo every 250 ms
-    /// for 128 environments. It does not have to be: the ground forty yards out does not change, only the seat's
-    /// place in it, so the march is redone when the seat has walked far enough or turned far enough for the old
-    /// one to be describing somewhere else -- the same trick the hazard search already uses, with the triggers
-    /// that matter here. A plain clock will not do, because at seven yards a second a one-second-old march is
-    /// seven yards stale and the nearest cell it reports is six.
+    /// A march is eighty height samples and forty-eight navmesh rays where the old single probe was eight, which
+    /// is too much to redo every 250 ms for 128 environments. It does not have to be: the ground forty yards out
+    /// does not change, only the seat's place in it, so the march is redone when the seat has walked far enough
+    /// or turned far enough for the old one to be describing somewhere else -- the same trick the hazard search
+    /// already uses, with the triggers that matter here. A plain clock will not do, because at seven yards a
+    /// second a one-second-old march is seven yards stale and the nearest cell it reports is six.
+    ///
+    /// Sixteen rays rather than the eight bearings the seat can walk: a gully's mouth or a doorway sits between
+    /// two 45-degree rays as often as on one, and a seat that cannot see it cannot choose the turn that lines it
+    /// up. Ray 2 * b lies along bearing b.
     struct GroundProbe
     {
-        float Reach[8] = {};                    // distance to the first obstruction along each bearing / MARCH_MAX
-        float Step[8] = {};                     // the height change that stopped it, signed, / MAX_STEP
-        float Shore[8] = {};                    // how far dry ground runs that way / MARCH_MAX
-        float Burns[8] = {};                    // how near the magma or slime is, 1 at the feet, 0 for none
+        float Reach[SENSE_RAYS] = {};           // distance to the first obstruction along each ray / MARCH_MAX
+        float Step[SENSE_RAYS] = {};            // the height change that stopped it, signed, / MAX_STEP
+        float Shore[SENSE_RAYS] = {};           // how far dry ground runs that way / MARCH_MAX
+        float Burns[SENSE_RAYS] = {};           // how near the magma or slime is, 1 at the feet, 0 for none
         bool CanJump = false;                   // a jump along Facing had somewhere to land when measured
         uint64 JumpUntilMs = 0;                 // a jump launched from here is still in the air until this clock
         float Clearance = 1.0f;                 // yards to the nearest edge of walkable space / CLEARANCE_RANGE
@@ -106,17 +117,26 @@ namespace Animus::Curriculum
         bool Valid = false;
     };
 
-    /// The way to the objective, as much of it as a seat needs: whether there is one, how far along it is
-    /// left, and the corner being walked to. The route itself is the encounter's -- this is the borrowed view
-    /// of it, copied per decision like everything else here.
-    struct SeatRoute
+    /// Where the seat has been: its last TRAIL_SAMPLES positions, one every INTERVAL_MS, kept between decisions
+    /// and read back in the seat's own frame (MoveBlock::OBS_TRAIL_FIRST). A policy has memory, but a recurrent
+    /// state is a poor place to keep a map, and the episodes a trained policy loses are lost rather than wedged:
+    /// they cover three times the route and end where they began. This is the concrete thing it can hold against
+    /// a loop -- the spot it stood on eight seconds ago is behind it and to the left, or it is under its feet
+    /// again. Nothing here says which way to go.
+    struct MovementTrail
     {
-        bool Allowed = false;       // the arena offers ACTION_FOLLOW_ROUTE at all
-        bool Valid = false;         // and there is a way to follow
-        bool Complete = false;      // which reaches the objective rather than stopping short
-        float Remaining = 0.0f;     // yards left along it
-        float Handoff = 0.0f;       // ... and the point inside which the seat walks it itself
-        Position Next;              // the corner being walked to
+        static constexpr uint32 INTERVAL_MS = 1000;
+        /// Within this many yards of an earlier sample the seat counts as still there: arriving's own six.
+        static constexpr float DWELL_YARDS = 6.0f;
+
+        float X[TRAIL_SAMPLES] = {};
+        float Y[TRAIL_SAMPLES] = {};
+        uint32 Count = 0;                       // samples taken so far, up to TRAIL_SAMPLES
+        uint32 Next = 0;                        // the ring slot the next sample goes in
+        uint64 LastMs = 0;                      // the clock the last one was taken at
+        bool Started = false;
+
+        void Clear() { *this = MovementTrail(); }
     };
 
     struct Hazard
@@ -237,7 +257,10 @@ namespace Animus::Curriculum
         /// The seat's own ray march, borrowed rather than copied: Observe is const, but the march it reads is
         /// refreshed in place, exactly as the hazard search is.
         GroundProbe* Probe = nullptr;
-        /// Which way it is turning (-1 left, +1 right, 0 not) and how far up or down it is looking, in radians.
+        /// Where it has been, the same way: sampled in place by the move block once a second.
+        MovementTrail* Trail = nullptr;
+        /// Which way it is turning (+1 left, -1 right, 0 not: orientation runs counter-clockwise, so left is the
+        /// positive way round) and how far up or down it is looking, in radians.
         /// Yaw and pitch are held like a mouse: the seat keeps turning while the key is down and stays where it got
         /// to when the key comes up, which is what makes a heading between two compass points reachable at all.
         int8 Turning = 0;
@@ -331,7 +354,12 @@ namespace Animus::Curriculum
         float CloseRate = 0.0f;
         /// False in an on-foot arena (ArenaDefinition::OnFoot): the mount actions are masked out.
         bool MountsAllowed = true;
-        SeatRoute Route;
+        /// How near counts as arrived, which is not the same number indoors as it is in open country. Carried
+        /// on the view so OBS_AT_OBJECTIVE, the masks that ask whether the seat is there yet, and the reward
+        /// that pays for arriving all read one answer.
+        float ArriveWithin = 6.0f;
+        /// False in an air-only arena (ArenaDefinition::AirOnly): the ground mount is masked, the wings are not.
+        bool GroundMountAllowed = true;
 
         // Flag match: the seat's flag and the other side's, from the seat's side.
         enum class FlagState : uint8 { AtBase, Carried, Dropped };
