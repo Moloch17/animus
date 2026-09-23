@@ -530,6 +530,13 @@ Animus.Curriculum.Options.StayOnTargetMs = 10000
 #   as soon as the ground is covered, where a standing instruction about a target stays true while the fight does.
 Animus.Curriculum.Options.MoveBearingMs = 3000
 
+#   ... and how long a turn or a pitch keeps being held (ms). Shorter again than a bearing: a seat that keeps turning
+#   for three seconds has spun round twice, so this is the length of a glance rather than of a journey. What it has
+#   turned to is kept when it stops, the way a mouse leaves the camera where it was left.
+Animus.Curriculum.Options.MoveTurnMs = 750
+
+Animus.Curriculum.Options.MovePitchMs = 750
+
 #   Ground effects: damage from something standing on the ground rather than aimed at the companion, charged per
 #   fraction of maximum health on top of the damage itself. The only term that pays for moving its feet.
 Animus.Curriculum.Hazards.Damage = 0.5
@@ -697,6 +704,36 @@ Animus.Curriculum.Travel.DamageTaken = 1.0
 Animus.Curriculum.Travel.Death = 3.0
 #   per decision
 Animus.Curriculum.Travel.StepCost = 0.0002
+
+#   room to move, charged by the second while the seat is inside ClearanceMargin yards of the nearest edge of
+#   walkable space, and capped per episode by ClearanceMax. Never a mask: a doorway is narrower than any margin
+#   worth keeping in the open, so forbidding closeness would forbid doorways
+Animus.Curriculum.Travel.Clearance = 0.08
+
+Animus.Curriculum.Travel.ClearanceMargin = 1.5
+
+Animus.Curriculum.Travel.ClearanceMax = 0.6
+
+#   indoor arenas (stage1b_indoor): yards from the start, by path. Shorter than anything outdoors because it is
+#   a trip across a room -- the far end of an inn is nearer than the first march range of an open-country probe
+Animus.Curriculum.Travel.IndoorMin = 8.0
+
+Animus.Curriculum.Travel.IndoorMax = 40.0
+
+#   routing. The way to the objective is re-planned when the seat has strayed RouteStray yards from the corner it
+#   was walking to, or after RouteRefresh seconds -- movement first, because at seven yards a second a clock alone
+#   goes stale inside the first corner. RouteCorner is how near counts as having reached one, and wants to be
+#   wider than a decision's travel (1.75 yd at run speed) so a corner cannot be stepped over and walked back to
+#   where the pathfinder hands the trip back: follow-route is offered while more than this many yards of route
+#   remain and masked inside it, so the long haul can be delegated and the approach cannot. The last forty yards
+#   are where arriving on the mark, keeping off the walls and stepping round what is underfoot live
+Animus.Curriculum.Travel.RouteHandoff = 40.0
+
+Animus.Curriculum.Travel.RouteStray = 25.0
+
+Animus.Curriculum.Travel.RouteRefresh = 5.0
+
+Animus.Curriculum.Travel.RouteCorner = 5.0
 
 #   Flag match (Warsong Gulch's rules). Yards between the bases, by path
 Animus.Curriculum.Flag.BaseMin = 100.0
