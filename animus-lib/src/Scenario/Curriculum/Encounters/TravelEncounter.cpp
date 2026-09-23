@@ -305,8 +305,8 @@ bool Animus::Curriculum::TravelEncounter::FindPlace(Player* bot, Map* map, float
     // A crossing is a much narrower thing to ask for than a trip -- it wants water on the straight line and a dry
     // way round at least MIN_DETOUR_ACROSS longer -- so it gets more tries before it gives up and the arena falls
     // back to an ordinary trip. At 32 it found one in 0.65 of its episodes; the ones it missed were not bad ground
-    // but too few throws at it.
-    uint32 const attempts = across ? OBJECTIVE_ATTEMPTS * 4 : OBJECTIVE_ATTEMPTS;
+    // but too few throws at it. An air-only place is as narrow: a plateau or an island, not any dry ground.
+    uint32 const attempts = across || rules.AirOnly ? OBJECTIVE_ATTEMPTS * 4 : OBJECTIVE_ATTEMPTS;
     for (uint32 attempt = 0; attempt < attempts; ++attempt)
     {
         // Later attempts settle for shorter trips rather than failing the episode.
@@ -524,7 +524,7 @@ bool Animus::Curriculum::TravelEncounter::Build(Env& env, Map* map, uint8 /*leve
     // crossing at all (`crossing`), and the stage gates the water arena on the seat actually swimming: a run
     // whose spawn points have no water in reach fails that gate and says so.
     travel.Indoors = arena.Indoors;
-    travel.AirOnly = arena.AirOnly;
+    travel.AirOnly = false;
     travel.Crossing = false;
     travel.DryDistance = 0.0f;
     travel.Travelled = 0.0f;
@@ -554,13 +554,27 @@ bool Animus::Curriculum::TravelEncounter::Build(Env& env, Map* map, uint8 /*leve
     // a share of it rather than all of it, because arriving with one second to spare is not a trip a seat can be
     // asked to make every time.
     float const budget = float(env.EpisodeLengthMs) / 1000.0f * FEASIBLE_SHARE;
+    // What the arena asked for first -- a crossing, or a place only the air reaches -- and an ordinary trip when
+    // this spawn point has none within reach, rather than an env that cannot build an episode and takes the run
+    // down with it. `crossing` and `air_only` report what was achieved, not what was asked, so a spawn point
+    // with no plateau in range shows up as an air-only arena that offered none, and can be gated on like the
+    // water arena's crossing.
     if (arena.Water
         && FindPlace(bot, map, least, most, flying, travel.Objective, budget, &walk, true, &travel.DryDistance,
             false, &travel.Shortcut, rules))
         travel.Crossing = true;
-    else if (!FindPlace(bot, map, least, most, flying, travel.Objective, budget, &walk, false, nullptr,
-        arena.Indoors, &travel.Shortcut, rules))
-        return false;
+    else if (arena.AirOnly
+        && FindPlace(bot, map, least, most, flying, travel.Objective, budget, &walk, false, nullptr, false,
+            &travel.Shortcut, rules))
+        travel.AirOnly = true;
+    else
+    {
+        TravelPlaceRules plain = rules;
+        plain.AirOnly = false;
+        if (!FindPlace(bot, map, least, most, flying, travel.Objective, budget, &walk, false, nullptr,
+            arena.Indoors, &travel.Shortcut, plain))
+            return false;
+    }
 
     // What the way round costs on foot, for every arena rather than only the ones built around a crossing:
     // OBS_DETOUR is how a seat learns that the barrier in front of it runs for two hundred yards, and that is
@@ -681,8 +695,10 @@ void Animus::Curriculum::TravelEncounter::View(Env const& env, uint32 /*seat*/, 
         view.CloseRate = travel.CloseRate;
     view.MountsAllowed = !_scenario.Arena(env).OnFoot;
     view.ArriveWithin = travel.Indoors ? TravelBlock::ARRIVE_INDOORS : TravelBlock::ARRIVE_DISTANCE;
-    // An air-only arena keeps the flying mount and masks the ground one: its objective cannot be walked to.
-    view.GroundMountAllowed = !_scenario.Arena(env).AirOnly;
+    // An air-only trip keeps the flying mount and masks the ground one: its objective cannot be walked to. The
+    // trip's, not the arena's: an air-only arena whose spawn point offered no such place fell back to an ordinary
+    // flight, and a ride may arrive there.
+    view.GroundMountAllowed = !travel.AirOnly;
 }
 
 void Animus::Curriculum::TravelEncounter::Reward(Env& env, uint32 seatIndex, Player* bot, RewardLedger& ledger)
