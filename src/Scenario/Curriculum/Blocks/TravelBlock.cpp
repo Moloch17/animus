@@ -225,7 +225,9 @@ void Animus::Curriculum::TravelBlock::Observe(SeatView const& view, float* obs, 
         obs[OBS_OBJECTIVE_BEARING_COS] = std::cos(bearing);
         obs[OBS_OBJECTIVE_HEIGHT] = std::clamp((view.Objective.GetPositionZ() - bot->GetPositionZ()) / 50.0f, -1.0f,
             1.0f);
-        obs[OBS_AT_OBJECTIVE] = AtObjective(bot, view.Objective) ? 1.0f : 0.0f;
+        // The same radius the reward pays arrival at (SeatView::ArriveWithin: two yards indoors, six outside), so the
+        // feature and the reward never disagree about being there.
+        obs[OBS_AT_OBJECTIVE] = AtObjective(bot, view.Objective, ARRIVE_ANY_RISE, view.ArriveWithin) ? 1.0f : 0.0f;
     }
 
     // Asked here rather than of the mask: the policy sees whether mounting is possible even when no mask is wanted.
