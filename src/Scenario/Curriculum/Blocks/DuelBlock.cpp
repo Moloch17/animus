@@ -20,10 +20,8 @@
 #include "DBCStores.h"
 #include "EncoderSupport.h"
 #include "Layout.h"
-#include "Map.h"
 #include <boost/json/array.hpp>
 #include <boost/json/object.hpp>
-#include "MotionMaster.h"
 #include "MoveSpline.h"
 #include "ObjectMgr.h"
 #include "Player.h"
@@ -44,12 +42,6 @@ namespace
         SPELL_CALL_PET          = 883,      // its GCD is applied to calling a stabled beast
         SPELL_RECENTLY_BANDAGED = 11196,
     };
-
-    constexpr uint32 DUEL_MOVE_POINT_ID = 1;
-
-    /// A seat this far along DuelBlock::MOVE_TO_RANGE_DISTANCE is at its casting range already: running there again
-    /// would not move it.
-    constexpr float AT_RANGE_FRACTION = 0.6f;
 
     uint32 StableSlots(Layout const& layout)
     {
@@ -96,16 +88,6 @@ namespace
                 break;
         }
 
-        bool const canMove = !casting && !bot->HasUnitState(Encoding::IMMOBILE_STATES);
-
-        // A target it cannot see: all it can do about it is go look where it was last seen.
-        if (!target && view.HiddenTarget && view.TargetSeen)
-        {
-            if (action == DuelBlock::ACTION_MOVE_TO_TARGET)
-                return canMove;
-            return action == DuelBlock::ACTION_STOP && !bot->movespline->Finalized();
-        }
-
         // Calling a stable beast needs no target: a hunter calls its pet before a fight, or between pulls. Over a dead
         // pet too (CallHunterBeast dismisses the corpse).
         if (action >= DuelBlock::ACTION_CALL_BEAST_FIRST)
@@ -121,38 +103,10 @@ namespace
         if (!target || !target->IsAlive())
             return false;
 
-        // Standing still where the order would take it: the order is done, and offering it again is what a
-        // jittering policy presses (stage1_duel 2026-09-17: the rogue pressed a movement order every 0.39 s while
-        // it stood in melee reach 96% of the time). Moving, it is offered: the target may have moved on.
-        bool const standing = bot->movespline->Finalized();
-        bool const inMelee = target->IsWithinMeleeRange(bot);
         switch (action)
         {
-            case DuelBlock::ACTION_MOVE_TO_TARGET:
-                return canMove && !(standing && inMelee);
-            case DuelBlock::ACTION_MOVE_BEHIND:
-                // Behind is the target's back arc, which is where the order would have put it.
-                return canMove && !(standing && inMelee && !target->HasInArc(float(M_PI), bot));
-            case DuelBlock::ACTION_MOVE_TO_RANGE:
-                return canMove && !(standing && !inMelee
-                    && bot->GetDistance(target) >= AT_RANGE_FRACTION * DuelBlock::MOVE_TO_RANGE_DISTANCE
-                    && bot->GetDistance(target) <= DuelBlock::MOVE_TO_RANGE_DISTANCE);
-            case DuelBlock::ACTION_BACK_OFF:
-                return canMove;
-            case DuelBlock::ACTION_STOP:
-                return !bot->movespline->Finalized();
-            case DuelBlock::ACTION_BREAK_LINE_OF_SIGHT:
-                return canMove && bot->IsWithinLOSInMap(target);
             case DuelBlock::ACTION_START_ATTACK:
                 return bot->GetVictim() != target && bot->IsValidAttackTarget(target);
-            case DuelBlock::ACTION_KEEP_RANGE:
-                // A ranged spec only, and not while it is already keeping range.
-                return canMove && view.Option && !view.Option->Running(SeatOptionKind::KeepRange, view.NowMs)
-                    && view.L->Profile->Specs[view.Spec].Range != RangeBand::Melee;
-            case DuelBlock::ACTION_STAY_ON_TARGET:
-                // The melee mirror of keeping range.
-                return canMove && view.Option && !view.Option->Running(SeatOptionKind::StayOnTarget, view.NowMs)
-                    && view.L->Profile->Specs[view.Spec].Range == RangeBand::Melee;
             case DuelBlock::ACTION_PET_ATTACK:
                 return std::any_of(bot->m_Controlled.begin(), bot->m_Controlled.end(), [target](Unit* pet)
                 {
@@ -166,44 +120,6 @@ namespace
     }
 }
 
-bool Animus::Curriculum::DuelBlock::FindCover(Player* bot, Unit* target, Position& cover)
-{
-    Map const* map = bot->FindMap();
-    if (!map || !target)
-        return false;
-
-    // Eye height: what the target sees over, and what the bot hides behind.
-    constexpr float EYE = 2.0f;
-    constexpr float MAX_STEP = 6.0f;
-
-    // Nearest ring first; on a ring, the bearings pointing away from the target first.
-    float const away = target->GetAngle(bot);
-    for (float distance : COVER_DISTANCES)
-    {
-        for (uint32 step = 0; step < COVER_BEARINGS; ++step)
-        {
-            // 0, +1, -1, +2, -2, ... bearings from straight away.
-            int32 const offset = int32((step + 1) / 2) * (step % 2 ? 1 : -1);
-            float const angle = away + float(offset) * 2.0f * float(M_PI) / float(COVER_BEARINGS);
-            float const x = bot->GetPositionX() + distance * std::cos(angle);
-            float const y = bot->GetPositionY() + distance * std::sin(angle);
-            float const z = map->GetHeight(bot->GetPhaseMask(), x, y, bot->GetPositionZ() + MAX_STEP, true,
-                MAX_STEP * 2.0f);
-            if (z <= INVALID_HEIGHT || std::fabs(z - bot->GetPositionZ()) > MAX_STEP)
-                continue;
-
-            if (map->isInLineOfSight(target->GetPositionX(), target->GetPositionY(), target->GetPositionZ() + EYE,
-                x, y, z + EYE, bot->GetPhaseMask(), LINEOFSIGHT_ALL_CHECKS, VMAP::ModelIgnoreFlags::Nothing))
-                continue;
-
-            cover.Relocate(x, y, z);
-            return true;
-        }
-    }
-
-    return false;
-}
-
 Animus::Curriculum::BlockSize Animus::Curriculum::DuelBlock::Size(Layout const& layout) const
 {
     uint32 const stable = StableSlots(layout);
@@ -214,9 +130,8 @@ std::string Animus::Curriculum::DuelBlock::ActionName(Layout const& /*layout*/, 
 {
     static constexpr std::array<char const*, ACTION_COUNT_WITHOUT_STABLE> NAMES =
     {
-        "move_to_target", "move_behind", "move_to_range", "back_off", "stop", "start_attack", "pet_attack",
-        "stop_casting", "cancel_form", "health_potion", "mana_potion", "healthstone", "bandage", "soulstone_self",
-        "self_resurrect", "break_line_of_sight", "keep_range", "stay_on_target"
+        "start_attack", "pet_attack", "stop_casting", "cancel_form", "health_potion", "mana_potion", "healthstone",
+        "bandage", "soulstone_self", "self_resurrect"
     };
     // back() rather than size(): a short initialiser list still fills the declared length, with nulls.
     static_assert(NAMES.back() != nullptr, "every duel action needs a name");
@@ -414,46 +329,24 @@ void Animus::Curriculum::DuelBlock::ObserveDead(SeatView const& view, float* obs
         mask[ACTION_SELF_RESURRECT] = selfResurrect ? 1 : 0;
 }
 
-void Animus::Curriculum::DuelBlock::BeforeApply(SeatView& view, SeatActionResult& result) const
+void Animus::Curriculum::DuelBlock::BeforeApply(SeatView& view, SeatActionResult& /*result*/) const
 {
     // Face the target whenever not running somewhere: casts and swings need it, and turning is not a decision worth
-    // learning.
+    // learning. Written to the seat's own heading as well as to the unit, so the frame the move block measures
+    // every bearing in agrees with where the seat is actually looking -- a strafe chosen after this used to be
+    // measured off a heading the world had already overwritten.
+    //
+    // Nothing else happens here any more. This hook used to run the keep-range and stay-on-target options, and
+    // to clear the positioning slot whenever there was no living target -- which, once the held bearing became a
+    // positioning option, ended every bearing in every travel arena one decision after it was pressed: no target
+    // there, ever. The slot is the move block's; the duel block does not touch it.
     Player* bot = view.Bot;
     Unit* target = view.Target;
     if (target && bot->IsAlive() && bot->movespline->Finalized() && !bot->HasInArc(float(M_PI) / 2, target))
-        bot->SetFacingToObject(target);
-
-    if (!view.Option)
-        return;
-
-    SeatOption& option = view.Option->Slots[std::size_t(SeatOptionSlot::Positioning)];
-    if (!IsPositioning(option.Kind) || view.NowMs >= option.UntilMs)
-        return;
-
-    // A positioning option is over once there is nothing to position against.
-    if (!target || !target->IsAlive() || !bot->IsAlive())
     {
-        option = SeatOption();
-        return;
+        bot->SetFacingToObject(target);
+        view.Facing = bot->GetAngle(target);
     }
-
-    if (!bot->movespline->Finalized())
-        return;     // already running somewhere: let the step finish
-
-    // Not while it is casting. Keeping range means moving, and moving cancels the cast the seat is paid to finish:
-    // at 10M in stage1_duel the two classes furthest inside melee reach (mage_dps 0.56 of the fight, warlock_dps
-    // 0.60, against hunter_dps at 0.22) were also the two cancelling the most casts (0.57 and 0.52 an episode),
-    // which is that loop. The option keeps running, so it steps the moment the cast is done.
-    if (Spell const* casting = bot->GetCurrentSpell(CURRENT_GENERIC_SPELL);
-        casting && casting->getState() == SPELL_STATE_PREPARING)
-        return;
-
-    // Keeping range: the target in melee reach is what it runs back out from. Staying on the target: out of melee
-    // reach is what it closes again.
-    if (option.Kind == SeatOptionKind::KeepRange && target->IsWithinMeleeRange(bot))
-        Apply(view, ACTION_MOVE_TO_RANGE, result);
-    else if (option.Kind == SeatOptionKind::StayOnTarget && !target->IsWithinMeleeRange(bot))
-        Apply(view, ACTION_MOVE_TO_TARGET, result);
 }
 
 void Animus::Curriculum::DuelBlock::Apply(SeatView& view, uint32 local, SeatActionResult& result) const
@@ -497,71 +390,8 @@ void Animus::Curriculum::DuelBlock::Apply(SeatView& view, uint32 local, SeatActi
             break;
     }
 
-    float x = 0.0f;
-    float y = 0.0f;
-    float z = 0.0f;
-
-    // Keeping range is a durative action: it starts here and runs in BeforeApply until the policy does something else.
-    if (local == ACTION_KEEP_RANGE)
-    {
-        view.Option->Start(SeatOptionKind::KeepRange, view.NowMs + view.Options.KeepRangeMs);
-        if (target && target->IsWithinMeleeRange(bot))
-            Apply(view, ACTION_MOVE_TO_RANGE, result);
-        return;
-    }
-
-    if (local == ACTION_STAY_ON_TARGET)
-    {
-        view.Option->Start(SeatOptionKind::StayOnTarget, view.NowMs + view.Options.StayOnTargetMs);
-        if (target && !target->IsWithinMeleeRange(bot))
-            Apply(view, ACTION_MOVE_TO_TARGET, result);
-        return;
-    }
-
-    if (!target)
-    {
-        // Allowed without a target only to search for a hidden one, or to stop.
-        if (local == ACTION_MOVE_TO_TARGET)
-            Encoding::MoveTo(bot, DUEL_MOVE_POINT_ID, view.LastSeen.GetPositionX(), view.LastSeen.GetPositionY(),
-                view.LastSeen.GetPositionZ());
-        else if (local == ACTION_STOP)
-        {
-            bot->GetMotionMaster()->Clear();
-            bot->StopMoving();
-        }
-        return;
-    }
-
     switch (local)
     {
-        case ACTION_MOVE_TO_TARGET:
-            target->GetNearPoint(bot, x, y, z, bot->GetCombatReach(), 0.5f, target->GetAngle(bot));
-            break;
-        case ACTION_MOVE_BEHIND:
-            target->GetNearPoint(bot, x, y, z, bot->GetCombatReach(), 0.5f,
-                Position::NormalizeOrientation(target->GetOrientation() + float(M_PI)));
-            break;
-        case ACTION_MOVE_TO_RANGE:
-            target->GetNearPoint(bot, x, y, z, bot->GetCombatReach(), MOVE_TO_RANGE_DISTANCE, target->GetAngle(bot));
-            break;
-        case ACTION_BACK_OFF:
-            target->GetNearPoint(bot, x, y, z, bot->GetCombatReach(), bot->GetDistance(target) + BACK_OFF_DISTANCE,
-                target->GetAngle(bot));
-            break;
-        case ACTION_STOP:
-            bot->GetMotionMaster()->Clear();
-            bot->StopMoving();
-            return;
-        case ACTION_BREAK_LINE_OF_SIGHT:
-        {
-            Position cover;
-            if (!FindCover(bot, target, cover))
-                return;
-            x = cover.GetPositionX();
-            y = cover.GetPositionY();
-            z = cover.GetPositionZ();
-            break;
-        }
         case ACTION_START_ATTACK:
             bot->Attack(target, true);
             return;
@@ -585,6 +415,4 @@ void Animus::Curriculum::DuelBlock::Apply(SeatView& view, uint32 local, SeatActi
             result.CallBeast = view.Stable[local - ACTION_CALL_BEAST_FIRST];
             return;
     }
-
-    Encoding::MoveTo(bot, DUEL_MOVE_POINT_ID, x, y, z);
 }

@@ -57,6 +57,14 @@ namespace
         return Position::NormalizeOrientation(heading);
     }
 
+    /// The same for a sensing ray: sixteenths of a turn, so ray 2 * b lies along bearing b and the odd rays fall
+    /// half way between two bearings, where a doorway sits as often as not.
+    float RayHeading(float facing, uint32 ray)
+    {
+        float const heading = facing - float(ray) * float(M_PI) / 8.0f;
+        return Position::NormalizeOrientation(heading);
+    }
+
     /// `to`'s direction in the seat's own frame: 0 straight ahead, wrapped to (-pi, pi].
     float RelativeBearing(Position const& from, float facing, WorldObject const& to)
     {
@@ -96,13 +104,6 @@ namespace
             case MoveBlock::ACTION_FACE_TARGET:
                 if (view.Target)
                     view.Facing = bot->GetAngle(view.Target);
-                return;
-            case MoveBlock::ACTION_FACE_OBJECTIVE:
-                // Recomputed every decision, so with this held BEARING_FORWARD is the exact heading to the
-                // objective continuously -- which is what the action was designed to mean and what the rotating
-                // frame prevented it from meaning.
-                if (view.HasObjective)
-                    view.Facing = bot->GetAngle(view.Objective.GetPositionX(), view.Objective.GetPositionY());
                 return;
             case MoveBlock::ACTION_FACE_HEADING:
                 // Turn to face the way the feet are going -- and then, by construction, the way the feet are
@@ -373,8 +374,9 @@ namespace
 
     /// Redo the march if it has stopped describing where the seat is standing, and say whether it is usable.
     ///
-    /// Forty map queries against the eight the old probe made is too much to repeat every 250 ms for 128
-    /// environments, and it does not need repeating: the ground does not move, only the seat does. Movement is
+    /// Eighty height samples and forty-eight rays against the eight queries the old probe made is too much to
+    /// repeat every 250 ms for 128 environments, and it does not need repeating: the ground does not move, only
+    /// the seat does. Movement is
     /// the trigger that matters -- at seven yards a second a one-second-old march is seven yards stale and its
     /// nearest cell is six -- with a turn threshold because the grid is egocentric, and a clock as a backstop.
     void RefreshProbe(Animus::Curriculum::SeatView const& view, Player* bot, float facing)
@@ -397,7 +399,7 @@ namespace
                 return;
         }
 
-        // The seat's own polygon, once for all eight bearings. Extents match the core's own lookup in
+        // The seat's own polygon, once for all sixteen rays. Extents match the core's own lookup in
         // cs_mmaps; a seat standing somewhere the mesh does not cover simply gets no rays, and the height march
         // still answers.
         dtNavMeshQuery const* query = map->GetMapCollisionData().GetMMapData().GetNavMeshQuery();
@@ -413,12 +415,12 @@ namespace
                 startRef = 0;
         }
 
-        for (uint32 bearing = 0; bearing < MoveBlock::BEARING_COUNT; ++bearing)
+        for (uint32 ray = 0; ray < MoveBlock::RAY_COUNT; ++ray)
         {
-            float const heading = HeadingOf(facing, bearing);
+            float const heading = RayHeading(facing, ray);
             float water = 0.0f;
-            MarchBearing(bot, map, heading, probe->Reach[bearing], probe->Step[bearing], water,
-                probe->Burns[bearing]);
+            MarchBearing(bot, map, heading, probe->Reach[ray], probe->Step[ray], water,
+                probe->Burns[ray]);
 
             // Three rays, which differ only in what their filter will cross. The dry one walks ground alone,
             // so it stops at a shore, a lava edge or a wall. The wet one may cross water, so it stops at a lava
@@ -446,14 +448,14 @@ namespace
             // walls the march is blind to, and a seat wants to know about whichever comes first.
             if (wet >= 0.0f && dry >= 0.0f)
             {
-                probe->Reach[bearing] = std::min(probe->Reach[bearing], wet / MoveBlock::MARCH_MAX);
-                probe->Shore[bearing] = std::min(dry / MoveBlock::MARCH_MAX, probe->Reach[bearing]);
+                probe->Reach[ray] = std::min(probe->Reach[ray], wet / MoveBlock::MARCH_MAX);
+                probe->Shore[ray] = std::min(dry / MoveBlock::MARCH_MAX, probe->Reach[ray]);
             }
             else
             {
                 // No mesh here, or no answer from it. Fall back to what the height march saw, and say the dry
                 // reach is the reach -- claiming water of unknown width would be worse than claiming none.
-                probe->Shore[bearing] = water > 0.0f ? 0.0f : probe->Reach[bearing];
+                probe->Shore[ray] = water > 0.0f ? 0.0f : probe->Reach[ray];
             }
 
             // Where the burning starts, graded by how close it is: 1 at the seat's feet, falling to 0 at the
@@ -469,7 +471,7 @@ namespace
             {
                 // BURN_EDGE_MARGIN guards float noise between two rays cast from one origin; it is not the
                 // mesh's own 1.8 yd simplification error, which both rays share and which therefore cancels.
-                probe->Burns[bearing] = all > wet + MoveBlock::BURN_EDGE_MARGIN
+                probe->Burns[ray] = all > wet + MoveBlock::BURN_EDGE_MARGIN
                     ? 1.0f - std::clamp(wet / MoveBlock::MARCH_MAX, 0.0f, 1.0f)
                     : 0.0f;
             }
@@ -539,6 +541,51 @@ namespace
         probe->Facing = facing;
         probe->Ms = view.NowMs;
         probe->Valid = true;
+    }
+
+    /// Take a trail sample when one is due, then write the trail into the block's row: each sample as an offset
+    /// from where the seat stands now, in its own frame (ahead, left) over YARD_SCALE, oldest first with the newest
+    /// in the last pair, then the share of the samples it is still within DWELL_YARDS of. The first observation of
+    /// an episode takes the first sample, so the trail always knows where the seat set out from.
+    void ObserveTrail(Animus::Curriculum::SeatView const& view, Player const* bot, float* out)
+    {
+        using Animus::Curriculum::MovementTrail;
+        using Animus::Curriculum::TRAIL_SAMPLES;
+
+        MovementTrail* trail = view.Trail;
+        if (!trail)
+            return;
+
+        if (!trail->Started || view.NowMs < trail->LastMs
+            || view.NowMs - trail->LastMs >= MovementTrail::INTERVAL_MS)
+        {
+            trail->X[trail->Next] = bot->GetPositionX();
+            trail->Y[trail->Next] = bot->GetPositionY();
+            trail->Next = (trail->Next + 1) % TRAIL_SAMPLES;
+            trail->Count = std::min(trail->Count + 1, TRAIL_SAMPLES);
+            trail->LastMs = view.NowMs;
+            trail->Started = true;
+        }
+
+        float const cosFacing = std::cos(view.Facing);
+        float const sinFacing = std::sin(view.Facing);
+        uint32 dwelling = 0;
+        for (uint32 i = 0; i < trail->Count; ++i)
+        {
+            // Oldest first: with the ring full, the oldest sample is the slot Next points at.
+            uint32 const slot = (trail->Next + TRAIL_SAMPLES - trail->Count + i) % TRAIL_SAMPLES;
+            float const dx = trail->X[slot] - bot->GetPositionX();
+            float const dy = trail->Y[slot] - bot->GetPositionY();
+            // Into the seat's frame: ahead is +x and left is +y, orientation running counter-clockwise.
+            float const ahead = dx * cosFacing + dy * sinFacing;
+            float const left = dy * cosFacing - dx * sinFacing;
+            uint32 const feature = MoveBlock::OBS_TRAIL_FIRST + 2 * (TRAIL_SAMPLES - trail->Count + i);
+            out[feature] = std::clamp(ahead / YARD_SCALE, -1.0f, 1.0f);
+            out[feature + 1] = std::clamp(left / YARD_SCALE, -1.0f, 1.0f);
+            if (dx * dx + dy * dy <= MovementTrail::DWELL_YARDS * MovementTrail::DWELL_YARDS)
+                ++dwelling;
+        }
+        out[MoveBlock::OBS_TRAIL_DWELL] = float(dwelling) / float(TRAIL_SAMPLES);
     }
 
     /// One step of a held turn, and one of a held pitch. Exactly once per decision, whoever asks: BeforeApply
@@ -674,7 +721,6 @@ namespace
     }
 }
 
-
 Animus::Curriculum::BlockSize Animus::Curriculum::MoveBlock::Size(Layout const& /*layout*/) const
 {
     return { OBS_COUNT, ACTION_COUNT };
@@ -683,6 +729,9 @@ Animus::Curriculum::BlockSize Animus::Curriculum::MoveBlock::Size(Layout const& 
 void Animus::Curriculum::MoveBlock::DescribeManifest(Layout const& /*layout*/, boost::json::object& block) const
 {
     block["bearings"] = uint32(BEARING_COUNT);
+    block["rays"] = uint32(RAY_COUNT);
+    block["trail_samples"] = uint32(TRAIL_SAMPLES);
+    block["trail_interval_ms"] = uint32(MovementTrail::INTERVAL_MS);
     block["step_yards"] = double(STEP_YARDS);
     block["turn_step"] = double(TURN_STEP);
     block["pitch_step"] = double(PITCH_STEP);
@@ -703,7 +752,7 @@ std::string Animus::Curriculum::MoveBlock::ActionName(Layout const& /*layout*/, 
     {
         "move_forward", "move_forward_right", "move_right", "move_back_right",
         "move_back", "move_back_left", "move_left", "move_forward_left",
-        "halt", "face_target", "face_heading", "face_hold", "face_objective",
+        "halt", "face_target", "face_heading", "face_hold",
         "turn_left", "turn_right", "pitch_up", "pitch_down", "pitch_level", "jump",
     };
 
@@ -757,23 +806,26 @@ std::string Animus::Curriculum::MoveBlock::RayReport(Map* map, float x, float y,
         out << "\n";
     }
 
-    out << "  bearing      heading     dry     wet     all  beyond   burn\n";
+    out << "  ray          heading     dry     wet     all  beyond   burn\n";
     out << "  -----------  -------  ------  ------  ------  ------  -----\n";
 
-    static constexpr char const* NAMES[8] =
+    // The eight bearings by name and, between each pair, the ray that lies half way: "fwd|fr" is the ray
+    // between forward and forward-right.
+    static constexpr char const* NAMES[RAY_COUNT] =
     {
-        "forward", "fwd-right", "right", "back-right", "back", "back-left", "left", "fwd-left"
+        "forward", "fwd|fr", "fwd-right", "fr|right", "right", "right|br", "back-right", "br|back",
+        "back", "back|bl", "back-left", "bl|left", "left", "left|fl", "fwd-left", "fl|fwd"
     };
 
-    for (uint32 bearing = 0; bearing < BEARING_COUNT; ++bearing)
+    for (uint32 bearing = 0; bearing < RAY_COUNT; ++bearing)
     {
-        float const heading = HeadingOf(facing, bearing);
+        float const heading = RayHeading(facing, bearing);
         float const wet = NavRay(query, startRef, x, y, z, heading, MARCH_MAX, NAV_GROUND | NAV_WATER);
         float const dry = NavRay(query, startRef, x, y, z, heading, MARCH_MAX, NAV_GROUND);
         float const all = NavRay(query, startRef, x, y, z, heading, MARCH_MAX,
             NAV_GROUND | NAV_WATER | NAV_MAGMA | NAV_SLIME);
 
-        out << "  " << std::setw(11) << std::left << (bearing < 8 ? NAMES[bearing] : "?") << std::right
+        out << "  " << std::setw(11) << std::left << (bearing < RAY_COUNT ? NAMES[bearing] : "?") << std::right
             << "  " << std::setw(7) << (heading * 180.0f / float(M_PI))
             << "  " << std::setw(6) << dry
             << "  " << std::setw(6) << wet
@@ -871,7 +923,17 @@ void Animus::Curriculum::MoveBlock::Observe(SeatView const& view, float* obs, ui
     // EnableParabolic clears the Falling bit it tests. The arc is a known 825 ms, so the honest fix is to hold
     // the clock ourselves and mask the feet for as long as they are not under the seat.
     bool const inFlight = view.Probe && view.NowMs < view.Probe->JumpUntilMs;
-    bool const canMove = bot && bot->IsAlive() && !bot->HasUnitState(Encoding::IMMOBILE_STATES) && !inFlight;
+
+    // A mount cast owns the feet the same way a jump arc does, and for the same reason: it takes several
+    // decisions and any movement in them destroys it. Without this the mount was unreachable by construction --
+    // the scripted policy cancelled its own every time, and a learned one has to find a run of consecutive
+    // decisions in which it presses nothing that moves, while potential shaping charges it for the pause.
+    //
+    // Only a mount. Protecting casts in general would stop a seat walking out of fire mid-spell, and that is a
+    // thing it must always be able to do.
+    bool const mounting = bot && Encoding::MountCastInProgress(bot);
+    bool const canMove = bot && bot->IsAlive() && !bot->HasUnitState(Encoding::IMMOBILE_STATES)
+        && !inFlight && !mounting;
     bool const airborne = Airborne(bot);
 
     if (bot)
@@ -880,7 +942,9 @@ void Animus::Curriculum::MoveBlock::Observe(SeatView const& view, float* obs, ui
         // that and not the spline's idea of it.
         float const facing = view.Facing;
         out[OBS_MOVING] = bot->isMoving() ? 1.0f : 0.0f;
-        out[OBS_SPEED] = bot->GetSpeed(MOVE_RUN) / RUN_SPEED;
+        // Over twice the unhasted run speed and clamped: a mounted seat read 2.0 here and a flying one nearly 4,
+        // which are not features in [0, 1] and were the widest inputs the row had.
+        out[OBS_SPEED] = std::min(1.0f, bot->GetSpeed(MOVE_RUN) / (2.0f * RUN_SPEED));
         out[OBS_FACING_SIN] = std::sin(facing);
         out[OBS_FACING_COS] = std::cos(facing);
 
@@ -889,8 +953,8 @@ void Animus::Curriculum::MoveBlock::Observe(SeatView const& view, float* obs, ui
         else
             out[OBS_BEARING_NONE] = 1.0f;
 
-        out[OBS_TURNING_LEFT] = view.Turning < 0 ? 1.0f : 0.0f;
-        out[OBS_TURNING_RIGHT] = view.Turning > 0 ? 1.0f : 0.0f;
+        out[OBS_TURNING_LEFT] = view.Turning > 0 ? 1.0f : 0.0f;
+        out[OBS_TURNING_RIGHT] = view.Turning < 0 ? 1.0f : 0.0f;
         out[OBS_PITCH_SIN] = std::sin(view.Pitch);
         out[OBS_PITCH_COS] = std::cos(view.Pitch);
 
@@ -932,12 +996,12 @@ void Animus::Curriculum::MoveBlock::Observe(SeatView const& view, float* obs, ui
         {
             RefreshProbe(view, bot, facing);
             if (GroundProbe const* probe = view.Probe)
-                for (uint32 bearing = 0; bearing < BEARING_COUNT; ++bearing)
+                for (uint32 ray = 0; ray < RAY_COUNT; ++ray)
                 {
-                    out[OBS_GROUND_FIRST + bearing] = probe->Reach[bearing];
-                    out[OBS_STEP_FIRST + bearing] = probe->Step[bearing];
-                    out[OBS_SHORE_FIRST + bearing] = probe->Shore[bearing];
-                    out[OBS_BURNS_FIRST + bearing] = probe->Burns[bearing];
+                    out[OBS_GROUND_FIRST + ray] = probe->Reach[ray];
+                    out[OBS_STEP_FIRST + ray] = probe->Step[ray];
+                    out[OBS_SHORE_FIRST + ray] = probe->Shore[ray];
+                    out[OBS_BURNS_FIRST + ray] = probe->Burns[ray];
                 }
 
             if (GroundProbe const* probe = view.Probe)
@@ -949,17 +1013,26 @@ void Animus::Curriculum::MoveBlock::Observe(SeatView const& view, float* obs, ui
             }
         }
         else
-            for (uint32 bearing = 0; bearing < BEARING_COUNT; ++bearing)
+        {
+            // Off the ground there is nothing underfoot to walk onto or refuse: every way is open, the ground
+            // changes by nothing, and a seat that is swimming is surrounded by the water it is in. The march
+            // is dropped rather than kept, so the first one made after coming ashore is a fresh one -- and the
+            // clearance it held goes with it, because the travel encounter's clearance charge reads the probe
+            // too, and was charging a swimmer for the bank it stood beside before it got in.
+            for (uint32 ray = 0; ray < RAY_COUNT; ++ray)
             {
-                // Off the ground there is nothing underfoot to walk onto or refuse: every way is open, the ground
-                // changes by nothing, and a seat that is swimming is surrounded by the water it is in. The march
-                // is dropped rather than kept, so the first one made after coming ashore is a fresh one.
-                out[OBS_GROUND_FIRST + bearing] = 1.0f;
-                out[OBS_SHORE_FIRST + bearing] = bot->IsInWater() ? 0.0f : 1.0f;
-                out[OBS_CLEARANCE] = 1.0f;
-                if (view.Probe)
-                    view.Probe->Valid = false;
+                out[OBS_GROUND_FIRST + ray] = 1.0f;
+                out[OBS_SHORE_FIRST + ray] = bot->IsInWater() ? 0.0f : 1.0f;
             }
+            out[OBS_CLEARANCE] = 1.0f;
+            if (view.Probe)
+            {
+                view.Probe->Valid = false;
+                view.Probe->Clearance = 1.0f;
+                view.Probe->ClearanceSin = 0.0f;
+                view.Probe->ClearanceCos = 0.0f;
+            }
+        }
 
         out[OBS_IN_WATER] = bot->IsInWater() ? 1.0f : 0.0f;
         out[OBS_SUBMERGED] = bot->IsUnderWater() ? 1.0f : 0.0f;
@@ -973,12 +1046,17 @@ void Animus::Curriculum::MoveBlock::Observe(SeatView const& view, float* obs, ui
     // be seen from a probe of any length.
     // Which way it has told itself to look. The FACE_* actions are masked while they are the mode being held, so
     // without this the policy could only infer its own steering state from what it was forbidden to press.
-    out[OBS_FACING_MODE_FIRST + (view.FacingMode >= ACTION_FACE_TARGET && view.FacingMode <= ACTION_FACE_OBJECTIVE
+    out[OBS_FACING_MODE_FIRST + (view.FacingMode >= ACTION_FACE_TARGET && view.FacingMode <= ACTION_FACE_HOLD
         ? 1 + view.FacingMode - ACTION_FACE_TARGET : 0)] = 1.0f;
 
     out[OBS_DETOUR] = std::clamp(view.Detour / 4.0f, 0.0f, 1.0f);
     out[OBS_MOVE_RATE] = std::clamp(view.MoveRate, 0.0f, 1.0f);
     out[OBS_CLOSE_RATE] = std::clamp(view.CloseRate, -1.0f, 1.0f);
+
+    // Where it has been, in its own frame, sampled here once a second because this is the one place that runs
+    // for every seat every decision, in training and in play alike.
+    if (bot)
+        ObserveTrail(view, bot, out);
 
     if (!mask)
         return;
@@ -996,32 +1074,27 @@ void Animus::Curriculum::MoveBlock::Observe(SeatView const& view, float* obs, ui
     // Halting is only worth offering while something is being walked.
     allowed[ACTION_HALT] = canMove && view.HeldBearing < BEARING_COUNT ? 1 : 0;
 
-    // Where it looks is a choice it can always make, alive and able to turn. Facing the target needs one, and
-    // facing the objective needs somewhere to be going.
+    // Where it looks is a choice it can always make, alive and able to turn. Facing the target needs one.
     bool const canTurn = bot && bot->IsAlive() && !bot->HasUnitState(Encoding::STUN_STATES);
     allowed[ACTION_FACE_TARGET] = canTurn && view.Target && view.Target->IsAlive() ? 1 : 0;
     allowed[ACTION_FACE_HEADING] = canTurn ? 1 : 0;
     allowed[ACTION_FACE_HOLD] = canTurn ? 1 : 0;
-    allowed[ACTION_FACE_OBJECTIVE] = canTurn && view.HasObjective ? 1 : 0;
-    for (uint32 face = ACTION_FACE_TARGET; face <= ACTION_FACE_OBJECTIVE; ++face)
+    for (uint32 face = ACTION_FACE_TARGET; face <= ACTION_FACE_HOLD; ++face)
         if (view.FacingMode == face)
             allowed[face] = 0;              // already holding its head that way
 
     // Turning is the mouse-look, and it means nothing while the head is aimed at something in the world:
-    // FACE_TARGET and FACE_OBJECTIVE recompute the heading from the target's or the objective's position every
-    // decision, so a turn under either is overwritten before it can steer anything.
+    // FACE_TARGET recomputes the heading from the target's position every decision, so a turn under it is
+    // overwritten before it can steer anything. Masking says what is true: there is no heading to choose while
+    // something else is choosing it. To look elsewhere, take the head back with FACE_HOLD first.
     //
-    // It was worse than useless. A turn used to drop the seat out of the mode it was in, which is how an episode
-    // stopped tracking its objective: a seat holding FACE_OBJECTIVE walks a continuously corrected straight line
-    // and cannot drift, so the only way to come off that line was to press a turn. The traces show exactly that
-    // -- the episodes that fail press seven turns to an arrival's two, and in the worst of them a turn is
-    // followed immediately by face_objective 22 times out of 27, the seat re-aiming at what the turn had just
-    // knocked it off. Leaving the mode alone instead would make the turn silently do nothing, which teaches the
-    // policy nothing either. Masking says what is true: there is no heading to choose while something else is
-    // choosing it. To look elsewhere, take the head back with FACE_HOLD first.
-    bool const aimed = view.FacingMode == ACTION_FACE_TARGET || view.FacingMode == ACTION_FACE_OBJECTIVE;
-    allowed[ACTION_TURN_LEFT] = canTurn && !aimed && view.Turning >= 0 ? 1 : 0;
-    allowed[ACTION_TURN_RIGHT] = canTurn && !aimed && view.Turning <= 0 ? 1 : 0;
+    // FACE_OBJECTIVE was the other aimed mode, and it is gone: a heading the engine snapped to the objective every
+    // decision was a compass held for the policy, and the trained policy collapsed onto it -- the episodes that
+    // failed pressed seven turns to an arrival's two, and in the worst of them a turn was followed by
+    // face_objective 22 times out of 27 -- and learned nothing about the ground.
+    bool const aimed = view.FacingMode == ACTION_FACE_TARGET;
+    allowed[ACTION_TURN_LEFT] = canTurn && !aimed && view.Turning <= 0 ? 1 : 0;
+    allowed[ACTION_TURN_RIGHT] = canTurn && !aimed && view.Turning >= 0 ? 1 : 0;
 
     // A jump is legs, so it goes with the other movement: on the ground, not already in the air, and only
     // where the cached probe found somewhere to land. Apply checks the landing again before it commits.
@@ -1078,12 +1151,12 @@ void Animus::Curriculum::MoveBlock::Apply(SeatView& view, uint32 local, SeatActi
         return;
     }
 
-    if (local <= ACTION_FACE_OBJECTIVE)
+    if (local <= ACTION_FACE_HOLD)
     {
         view.FacingMode = uint8(local);
         // A turn already held would otherwise keep running under a mode that overwrites it, and the turn actions
         // are masked from here on, so nothing could stop it.
-        if (local == ACTION_FACE_TARGET || local == ACTION_FACE_OBJECTIVE)
+        if (local == ACTION_FACE_TARGET)
         {
             view.Turning = 0;
             view.Option->Stop(SeatOptionKind::MoveTurn);
@@ -1098,7 +1171,10 @@ void Animus::Curriculum::MoveBlock::Apply(SeatView& view, uint32 local, SeatActi
 
     if (local == ACTION_TURN_LEFT || local == ACTION_TURN_RIGHT)
     {
-        view.Turning = local == ACTION_TURN_LEFT ? -1 : 1;
+        // Left is counter-clockwise, which is the positive way round in WoW's orientation -- the same convention
+        // HeadingOf subtracts for a clockwise bearing. It was the other way round: turn_left turned right. A
+        // policy learns whichever it is, but a scripted baseline and a reader of the traces do not.
+        view.Turning = local == ACTION_TURN_LEFT ? 1 : -1;
         view.Option->Start(SeatOptionKind::MoveTurn, view.NowMs + view.Options.MoveTurnMs);
         // Turn now rather than a decision from now, so the first press of a key does something. Only the turn:
         // re-running the whole of BeforeApply would step the turn a second time in the same 250 ms.

@@ -163,6 +163,11 @@ namespace Animus::Curriculum
     /// guards its own group and a few named others, never 39 people, and a slot is 36 features and three actions.
     constexpr uint32 PARTY_MEMBERS = GROUP_MEMBERS + SPOTLIGHT_SLOTS;
     constexpr uint32 PACK_SLOTS = 4;        // enemies observed
+    /// Rays the movement block senses the ground along: twice the bearings it can walk, because a gap between
+    /// two 45-degree bearings is visible at 22.5 degrees and not at 45 (GroundProbe, MoveBlock::RAY_COUNT).
+    constexpr uint32 SENSE_RAYS = 16;
+    /// Positions the movement block remembers of where the seat has been (MovementTrail), one a second.
+    constexpr uint32 TRAIL_SAMPLES = 8;
     constexpr uint32 STABLE_SLOTS = 4;      // a hunter's stabled beasts
     /// Friends a seat heals, shields and buffs (SupportBlock): itself, the owner, the teammate slots.
     constexpr uint32 FRIEND_SLOTS = 2 + PARTY_MEMBERS;
@@ -254,9 +259,10 @@ namespace Animus::Curriculum
         /// rather than RepeatMs: steering has to be re-issued more often than a spell or an order.
         [[nodiscard]] virtual bool IsMovement(uint32 /*local*/) const { return false; }
 
-        /// For a movement order, which way it goes relative to the target: +1 in (move to it, behind it), -1 away
-        /// (back off, break line of sight), 0 neither (to casting range, stop, follow).
-        [[nodiscard]] virtual int8 MoveDirection(uint32 /*local*/) const { return 0; }
+        /// Whether action `local` aims the seat rather than moving its feet: a held turn or pitch (MoveBlock). Aiming
+        /// is movement for pacing, and it is the one kind of movement that does not take the feet over -- a player
+        /// looks round while walking -- so SeatEncoder::Apply asks this before it ends a held bearing.
+        [[nodiscard]] virtual bool IsAiming(uint32 /*local*/) const { return false; }
 
         /// The kind of standing choice action `local` makes, if any (ModeGroup).
         [[nodiscard]] virtual ModeGroup ModeGroupOf(Layout const& /*layout*/, uint32 /*local*/) const

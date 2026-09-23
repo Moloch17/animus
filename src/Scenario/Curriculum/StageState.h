@@ -183,7 +183,23 @@ namespace Animus::Curriculum
         /// Mutable because it is a cache and nothing else: observing a seat does not change it, but it does
         /// refresh what the seat has already looked at, and ViewSeat reads a const seat.
         mutable GroundProbe Probe;
-        int8 Turning = 0;                       // -1 left, +1 right, 0 not turning
+        /// Where it has been (MovementTrail), a cache like the probe: the move block samples it in place.
+        mutable MovementTrail Trail;
+        /// Whether its legs are getting anywhere, measured for every seat in every arena
+        /// (StageScenario::TrackMotion): where it was at the last observation and how far it has covered since
+        /// the episode began, the marks the two rates are taken between about once a second, and the rates
+        /// (SeatView::MoveRate and CloseRate -- the second toward its target; the travel encounter replaces it
+        /// with the one toward the objective).
+        float MotionLastX = 0.0f;
+        float MotionLastY = 0.0f;
+        bool MotionHasLast = false;
+        float MotionTravelled = 0.0f;
+        uint32 MotionMarkMs = 0;
+        float MotionMarkTravelled = 0.0f;
+        float MotionMarkRange = -1.0f;
+        float MoveRate = 0.0f;
+        float CloseRate = 0.0f;
+        int8 Turning = 0;                       // +1 left, -1 right, 0 not turning (counter-clockwise is positive)
         int8 PitchTurning = 0;                  // the pitch key held: -1 down, +1 up, 0 none
         float Pitch = 0.0f;                     // radians above (+) or below (-) level; only used off the ground
         /// The clock its head went under water, or 0 while it is up. Kept as an instant rather than a total so it
@@ -304,6 +320,14 @@ namespace Animus::Curriculum
             Pitch = 0.0f;
             Facing = 0.0f;
             Probe = GroundProbe();
+            Trail.Clear();
+            MotionHasLast = false;
+            MotionTravelled = 0.0f;
+            MotionMarkMs = 0;
+            MotionMarkTravelled = 0.0f;
+            MotionMarkRange = -1.0f;
+            MoveRate = 0.0f;
+            CloseRate = 0.0f;
             OptionPresses = 0;
             OptionMs = 0;
             ItemUses = 0;

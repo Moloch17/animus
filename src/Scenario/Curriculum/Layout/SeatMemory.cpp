@@ -110,12 +110,7 @@ bool Animus::Curriculum::SeatMemory::Paced(Layout const& layout, uint32 action, 
         && nowMs < _castStartMs + tuning.StopCastMinMs)
         return true;
 
-    // Running in and backing off by turns is not a plan: a movement order back the way the last one went waits.
-    int8 const direction = action < layout.MoveDirections.size() ? layout.MoveDirections[action] : 0;
-    if (direction && _lastMoveDirection == -direction && nowMs < _lastMoveMs + tuning.ReverseMoveMs)
-        return true;
-
-    // Nor is dancing between stances, aspects or pet stances: a change of one kind holds for ModeLockMs.
+    // Dancing between stances, aspects or pet stances is not a plan: a change of one kind holds for ModeLockMs.
     uint8 const group = action < layout.ModeGroups.size() ? layout.ModeGroups[action] : 0;
     return group && _modeChangeMs[group] && nowMs < _modeChangeMs[group] + tuning.ModeLockMs;
 }
@@ -132,12 +127,7 @@ void Animus::Curriculum::SeatMemory::Press(Layout const& layout, uint32 action, 
     _readyMs[action] = nowMs + (movement ? tuning.MoveRepeatMs : tuning.RepeatMs);
     _pressedMs[action] = std::max<uint64>(1, nowMs);
 
-    if (int8 const direction = action < layout.MoveDirections.size() ? layout.MoveDirections[action] : 0)
-    {
-        _lastMoveDirection = direction;
-        _lastMoveMs = std::max<uint64>(1, nowMs);
-    }
-    else if (movement)
+    if (movement)
         _lastMoveMs = std::max<uint64>(1, nowMs);
 
     if (uint8 const group = action < layout.ModeGroups.size() ? layout.ModeGroups[action] : 0)

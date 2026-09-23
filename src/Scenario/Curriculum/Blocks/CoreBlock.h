@@ -81,19 +81,18 @@ namespace Animus::Curriculum
             /// What the seat has been doing (SeatMemory): one observation says nothing of it, so a policy re-decided
             /// from scratch every decision, running in and backing off by turns and dancing between stances.
             OBS_SINCE_MOVE              = 85,   // time since its last movement order / 5 s; 1 = none yet
-            OBS_LAST_MOVE_DIRECTION     = 86,   // +1 in toward the target, -1 away, 0 neither
-            OBS_SINCE_MODE_CHANGE       = 87,   // time since its last stance, form, aspect, aura, seal, armor or pet
+            OBS_SINCE_MODE_CHANGE       = 86,   // time since its last stance, form, aspect, aura, seal, armor or pet
                                                 // stance change / 10 s; 1 = none yet
-            OBS_HEALTH_TREND            = 88,   // its health now - its average over the last few seconds
-            OBS_TARGET_HEALTH_TREND     = 89,   // the same for its target
+            OBS_HEALTH_TREND            = 87,   // its health now - its average over the last few seconds
+            OBS_TARGET_HEALTH_TREND     = 88,   // the same for its target
             /// Per durative action (SeatOptionKind without None): how much of its clock is left / 30 s, 0 when it is
             /// not running. Without them a running option is hidden state: the policy could not tell that it is
-            /// already resting, holding an interrupt or keeping range -- and the seat runs two at once (a
-            /// positioning option and a standby), so one slot with one clock could not say which. Seven now: the
-            /// held turn and the held pitch are durative too, and they run alongside the feet rather than instead
-            /// of them, so they have slots and clocks of their own.
-            OBS_OPTION_FIRST            = 90,
-            OBS_GLOBAL_COUNT            = 97
+            /// already resting, holding an interrupt or walking a bearing -- and the seat runs several at once (a
+            /// positioning option, a standby, a turn and a pitch), so one slot with one clock could not say which.
+            /// Five: rest, the held interrupt, the held bearing, the held turn and the held pitch. The direction of
+            /// the last target-relative move used to sit before these; there are no target-relative moves now.
+            OBS_OPTION_FIRST            = 89,
+            OBS_GLOBAL_COUNT            = 94
 
             // Then, per catalog action: ACTION_FEATURES features (known, cooldown, aura on target, aura on self,
             // stacks, time since the seat pressed it / 10 s). Then per talent of the class: rank / max rank. Then

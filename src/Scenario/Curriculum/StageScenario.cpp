@@ -1991,6 +1991,11 @@ Animus::Curriculum::SeatView Animus::Curriculum::StageScenario::ViewSeat(Env con
     view.Pitch = seat.Pitch;
     view.Facing = seat.Facing;
     view.Probe = &seat.Probe;
+    view.Trail = &seat.Trail;
+    // Whether its legs are getting anywhere, measured for every seat (TrackMotion). The travel encounter's View
+    // replaces the closing rate with the one toward the objective where there is one.
+    view.MoveRate = seat.MoveRate;
+    view.CloseRate = seat.CloseRate;
     view.SubmergedTime = seat.SubmergedSinceMs && env.EpisodeElapsedMs > seat.SubmergedSinceMs
         ? float(env.EpisodeElapsedMs - seat.SubmergedSinceMs) / 1000.0f : 0.0f;
     view.Build = &seat.Build;
@@ -2295,10 +2300,19 @@ void Animus::Curriculum::StageScenario::ObserveSeat(Env& env, uint32 seatIndex, 
     {
         LiquidData const liquid = bot->GetMap()->GetLiquidData(bot->GetPhaseMask(), bot->GetPositionX(),
             bot->GetPositionY(), bot->GetPositionZ(), bot->GetCollisionHeight(), {});
-        bot->SetInWater((liquid.Status & MAP_LIQUID_STATUS_SWIMMING) != 0);
+        bool const swimming = (liquid.Status & MAP_LIQUID_STATUS_SWIMMING) != 0;
+        bot->SetInWater(swimming);
+        // And the movement flag that goes with it, which is what the spline's speed is read from:
+        // MoveSplineInit::Launch asks MovementInfo::GetSpeedType, which answers MOVE_SWIM only under
+        // MOVEMENTFLAG_SWIMMING, and nothing ever set it for a bot -- the client does, and there is none. So every
+        // swim was launched at run speed: OBS_SWIM_SPEED reported a speed that was never used, and the water
+        // arena's crossings, placed so that swimming at 4.7 yd/s is a real choice against walking round at 7, were
+        // all won by swimming at 7. The same shape as TravelBlock::AllowFlight, for the same reason.
+        bot->SetSwim(swimming);
     }
 
     TrackTarget(env, seat, bot, target);
+    TrackMotion(env, seat, bot, target);
     if (seat.Memory.Actions() != seat.L->NumActions)
         seat.Memory.Reset(seat.L->NumActions);
     seat.Memory.Observe(bot, target, env.EpisodeElapsedMs);
@@ -2413,6 +2427,58 @@ void Animus::Curriculum::StageScenario::TrackHazards(Env const& env, SeatState& 
     // move block reports, and bot->GetOrientation() is the direction of travel while a spline is running.
     nearest.Bearing = bot->GetAngle(nearest.Centre.GetPositionX(), nearest.Centre.GetPositionY())
         - seat.Facing;
+}
+
+/// Whether the seat's legs are getting anywhere, for every arena: how far it moved over about the last second
+/// against how far running would have carried it, and how much of the distance to its target that closed. The
+/// travel encounter used to be the only source, so every other arena read 0 and a seat wedged against a rock in a
+/// fight looked, from the inside, exactly like one walking freely. Where there is an objective the encounter's
+/// View still replaces the closing rate with the one toward it.
+void Animus::Curriculum::StageScenario::TrackMotion(Env const& env, SeatState& seat, Player const* bot,
+    Unit const* target)
+{
+    constexpr uint32 MARK_MS = 1000;        // the rates are taken over about a second, as the encounter's were
+    constexpr float RUN_SPEED = 7.0f;       // yards a second unmounted and unhasted (TravelBlock::BASE_RUN_SPEED)
+
+    if (!bot || !bot->IsAlive())
+    {
+        seat.MotionHasLast = false;
+        seat.MoveRate = 0.0f;
+        seat.CloseRate = 0.0f;
+        return;
+    }
+
+    float const x = bot->GetPositionX();
+    float const y = bot->GetPositionY();
+    if (seat.MotionHasLast)
+    {
+        float const dx = x - seat.MotionLastX;
+        float const dy = y - seat.MotionLastY;
+        seat.MotionTravelled += std::sqrt(dx * dx + dy * dy);
+    }
+    seat.MotionLastX = x;
+    seat.MotionLastY = y;
+    seat.MotionHasLast = true;
+
+    float const range = target ? bot->GetExactDist2d(target) : -1.0f;
+    if (!seat.MotionMarkMs || env.EpisodeElapsedMs < seat.MotionMarkMs)
+    {
+        seat.MotionMarkMs = std::max<uint32>(1, env.EpisodeElapsedMs);
+        seat.MotionMarkTravelled = seat.MotionTravelled;
+        seat.MotionMarkRange = range;
+        return;
+    }
+
+    if (env.EpisodeElapsedMs - seat.MotionMarkMs < MARK_MS)
+        return;
+
+    float const seconds = float(env.EpisodeElapsedMs - seat.MotionMarkMs) / 1000.0f;
+    seat.MoveRate = (seat.MotionTravelled - seat.MotionMarkTravelled) / (seconds * RUN_SPEED);
+    seat.CloseRate = seat.MotionMarkRange >= 0.0f && range >= 0.0f
+        ? (seat.MotionMarkRange - range) / (seconds * RUN_SPEED) : 0.0f;
+    seat.MotionMarkMs = env.EpisodeElapsedMs;
+    seat.MotionMarkTravelled = seat.MotionTravelled;
+    seat.MotionMarkRange = range;
 }
 
 /// Count an enemy cast the seat could have interrupted, once per cast. The press-to-interrupt ratio alone cannot

@@ -149,15 +149,16 @@ namespace Animus::Curriculum
         /// So an interior arena probes from the seat's own height, keeps the objective on a floor it could stand
         /// on, and adds a storey's worth of vertical tolerance to arriving. None of it touches an arena that
         /// leaves this false.
-        /// The seats may ask the pathfinder to walk the next leg of their route (TravelBlock's
-        /// ACTION_FOLLOW_ROUTE). Off everywhere by default, and deliberately.
-        ///
-        /// This is the action MOVE_TO_OBJECTIVE was retired as: an order the policy issues and then watches.
-        /// It earns its place on a trip measured in thousands of yards, where steering every eight yards for
-        /// ten minutes teaches nothing that the first hundred yards did not. It does not earn it on an arena
-        /// whose lesson is the steering itself, so stage1_move leaves it off and keeps what it has learned.
-        bool Routes = false;
         bool Indoors = false;
+        /// Travel, flying: the place can only be reached by air. FindPlace refuses a candidate the ground route
+        /// reaches within Travel.AirDetour of the straight line, the ground mount is masked, and arriving means
+        /// standing within Travel.AirArriveRise yards of the objective's own height.
+        ///
+        /// Without this a flying arena never needs its wings. A flight objective is placed anywhere on dry
+        /// ground the height probe finds, which in Nagrand is nearly always walkable, and 700 yards at run speed
+        /// is 100 s of a 180 s clock: a ground ride arrives often enough that flying stays optional, and nine of
+        /// ten class heads never found the flying mount. Only a Flying arena may set this.
+        bool AirOnly = false;
         std::vector<Position> SpawnPoints{};
         /// Ground kept back for evaluation: training never stands here. Empty means the arena has no control of
         /// its own, and evaluation runs on the same ground training does -- which measures nothing about whether

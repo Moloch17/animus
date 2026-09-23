@@ -154,6 +154,13 @@ namespace Animus::Curriculum::Encoding
         return bot->IsNonMeleeSpellCast(false, true, true);
     }
 
+    bool MountCastInProgress(Player const* bot)
+    {
+        Spell const* spell = bot->GetCurrentSpell(CURRENT_GENERIC_SPELL);
+        SpellInfo const* info = spell ? spell->GetSpellInfo() : nullptr;
+        return info && info->HasAura(SPELL_AURA_MOUNTED);
+    }
+
     bool CanCast(Player* bot, SpellInfo const* info, Unit* target, Item* castItem, Unit* friendUnit)
     {
         return CheckCast(bot, info, TargetsFor(info, bot, target, friendUnit), castItem);

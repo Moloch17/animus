@@ -77,6 +77,14 @@ namespace Animus::Curriculum::Encoding
     /// meanwhile. The core only checks this for client casts, so actions check it here.
     [[nodiscard]] bool CastInProgress(Player const* bot);
 
+    /// Whether the cast in flight is a mount.
+    ///
+    /// Narrower than CastInProgress on purpose. A mount is the one cast in the curriculum that the seat must
+    /// stand still through and that any movement destroys, so it is the one worth protecting -- and protecting
+    /// casts in general would stop a seat walking out of fire mid-spell, which is a thing it must always be
+    /// able to do.
+    [[nodiscard]] bool MountCastInProgress(Player const* bot);
+
     /// The core's own cast validation (Spell::CheckCast), without casting. `target` may be null (self-cast spells).
     [[nodiscard]] bool CanCast(Player* bot, SpellInfo const* info, Unit* target, Item* castItem = nullptr,
         Unit* friendUnit = nullptr);
@@ -205,8 +213,8 @@ namespace Animus::Curriculum::Encoding
     ///
     /// `fromZ` is the height the probe drops from and `maxStep` how far the result may differ from it, which
     /// is what keeps a point from landing on a roof above or in a pit below. Shared by anything that picks a
-    /// spot to walk to out of thin air -- cover behind a pillar (DuelBlock::FindCover), a place a director
-    /// names -- because a point that is not snapped sends a bot into a wall or off a ledge.
+    /// spot to walk to out of thin air -- a step along a held bearing (MoveBlock), a place a director names --
+    /// because a point that is not snapped sends a bot into a wall or off a ledge.
     [[nodiscard]] bool SnapToGround(Map const* map, uint32 phaseMask, Position& at, float fromZ,
         float maxStep = 6.0f);
 
@@ -238,7 +246,6 @@ namespace Animus::Curriculum::Encoding
     void JumpTo(Player* bot, float x, float y, float z, float speedXY, float speedZ,
 
         float const* facing = nullptr);
-
 
     void FlyTo(Player* bot, float x, float y, float z, float const* facing = nullptr);
 

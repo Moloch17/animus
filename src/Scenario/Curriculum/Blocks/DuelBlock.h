@@ -21,18 +21,23 @@
 
 #include "Block.h"
 #include "IncomingSpell.h"
-#include "Position.h"
-#include <array>
 
 class Player;
 class Unit;
 
 namespace Animus::Curriculum
 {
-    /// Fighting something that fights back: where the target is and what it does, the bot's movement, casting, form
-    /// and pet, what it carries (potions, healthstones, bandages, a soulstone), death, and a hunter's stable. Actions:
-    /// movement, auto-attack, pet attack, stop casting, cancel form, the consumables, resurrecting itself when dead,
-    /// call a stabled beast.
+    /// Fighting something that fights back: where the target is and what it does, the bot's casting, form and pet,
+    /// what it carries (potions, healthstones, bandages, a soulstone), death, and a hunter's stable. Actions:
+    /// auto-attack, pet attack, stop casting, cancel form, the consumables, resurrecting itself when dead, call a
+    /// stabled beast.
+    ///
+    /// **No movement.** This block used to issue the pathfinder's orders -- move to the target, behind it, to
+    /// casting range, back off, stop, keep range, stay on the target, break line of sight -- positions the engine
+    /// chose and walked to on the policy's behalf. They are gone: the seat's feet are the move block's bearings,
+    /// chosen against the target's bearing and distance this block still reports, and where to stand in a fight is
+    /// learned rather than ordered. Facing the target while standing still stays, because a facing is aiming and
+    /// not a position, and a swing or a cast needs it.
     class DuelBlock final : public Block
     {
     public:
@@ -125,7 +130,8 @@ namespace Animus::Curriculum
             OBS_DEBUFF_LONGEST          = 78,   // the longest left to run / 30 s
             OBS_DEBUFF_MECHANIC_FIRST   = 79,   // which of Encoding::OBSERVED_MECHANICS are on it (6)
             OBS_TARGET_CAST_FIRST       = 85,
-            OBS_STABLE_FIRST            = OBS_TARGET_CAST_FIRST + IncomingSpell::FEATURE_COUNT,   // hunters: per slot STABLE_FEATURES
+            /// Hunters: per stable slot STABLE_FEATURES.
+            OBS_STABLE_FIRST            = OBS_TARGET_CAST_FIRST + IncomingSpell::FEATURE_COUNT,
             OBS_COUNT_WITHOUT_STABLE    = OBS_STABLE_FIRST
         };
 
@@ -134,43 +140,19 @@ namespace Animus::Curriculum
 
         enum Action : uint32
         {
-            ACTION_MOVE_TO_TARGET       = 0,    // run to melee reach, on the side the bot is on; to where a hidden
-                                                // target was last seen
-            ACTION_MOVE_BEHIND          = 1,    // run to melee reach behind the target
-            ACTION_MOVE_TO_RANGE        = 2,    // run to casting range (MOVE_TO_RANGE_DISTANCE)
-            ACTION_BACK_OFF             = 3,    // run BACK_OFF_DISTANCE further away
-            ACTION_STOP                 = 4,
-            ACTION_START_ATTACK         = 5,    // start auto-attack on the target
-            ACTION_PET_ATTACK           = 6,    // send pets and guardians at the target
-            ACTION_STOP_CASTING         = 7,    // cancel the current cast or channel
-            ACTION_CANCEL_FORM          = 8,    // leave the current shapeshift form, as right-clicking it does
-            ACTION_HEALTH_POTION        = 9,    // drink a healing potion
-            ACTION_MANA_POTION          = 10,
-            ACTION_HEALTHSTONE          = 11,
-            ACTION_BANDAGE              = 12,   // bandage itself (a channel, broken by damage)
-            ACTION_SOULSTONE_SELF       = 13,   // warlocks: soulstone itself
-            ACTION_SELF_RESURRECT       = 14,   // dead: use its Soulstone or Reincarnation (not in the PvP stages)
-            ACTION_BREAK_LINE_OF_SIGHT  = 15,   // run to the nearest place the target cannot see (a pillar, a hill)
-            /// A ranged spec: back to casting range whenever the target closes in, decision after decision, until
-            /// Options.KeepRangeMs runs out or the policy does something else (SeatOption).
-            ACTION_KEEP_RANGE           = 16,
-            /// A melee spec: back into melee reach whenever the target leaves it, decision after decision, until
-            /// Options.StayOnTargetMs runs out or the seat moves itself (SeatOption). One press instead of the
-            /// order re-issued every decision a fight leaves spare.
-            ACTION_STAY_ON_TARGET       = 17,
-            ACTION_CALL_BEAST_FIRST     = 18,   // hunters: call stable slot 0..STABLE_SLOTS-1
-            ACTION_COUNT_WITHOUT_STABLE = 18
+            ACTION_START_ATTACK         = 0,    // start auto-attack on the target
+            ACTION_PET_ATTACK           = 1,    // send pets and guardians at the target
+            ACTION_STOP_CASTING         = 2,    // cancel the current cast or channel
+            ACTION_CANCEL_FORM          = 3,    // leave the current shapeshift form, as right-clicking it does
+            ACTION_HEALTH_POTION        = 4,    // drink a healing potion
+            ACTION_MANA_POTION          = 5,
+            ACTION_HEALTHSTONE          = 6,
+            ACTION_BANDAGE              = 7,    // bandage itself (a channel, broken by damage)
+            ACTION_SOULSTONE_SELF       = 8,    // warlocks: soulstone itself
+            ACTION_SELF_RESURRECT       = 9,    // dead: use its Soulstone or Reincarnation (not in the PvP stages)
+            ACTION_CALL_BEAST_FIRST     = 10,   // hunters: call stable slot 0..STABLE_SLOTS-1
+            ACTION_COUNT_WITHOUT_STABLE = 10
         };
-
-        static constexpr float MOVE_TO_RANGE_DISTANCE = 24.0f;
-        static constexpr float BACK_OFF_DISTANCE = 10.0f;
-
-        /// Cover: where the bot looks for a place out of its target's sight.
-        static constexpr std::array<float, 3> COVER_DISTANCES = { 8.0f, 16.0f, 26.0f };
-        static constexpr uint32 COVER_BEARINGS = 12;
-
-        /// The nearest place around the bot, on walkable ground, its target cannot see; false if there is none.
-        [[nodiscard]] static bool FindCover(Player* bot, Unit* target, Position& cover);
 
         [[nodiscard]] BlockId Id() const override { return BlockId::Duel; }
         [[nodiscard]] BlockSize Size(Layout const& layout) const override;
@@ -179,18 +161,6 @@ namespace Animus::Curriculum
         void Observe(SeatView const& view, float* obs, uint8* mask) const override;
         void BeforeApply(SeatView& view, SeatActionResult& result) const override;
         void Apply(SeatView& view, uint32 local, SeatActionResult& result) const override;
-        [[nodiscard]] bool IsMovement(uint32 local) const override
-        {
-            return local <= ACTION_STOP || local == ACTION_BREAK_LINE_OF_SIGHT || local == ACTION_KEEP_RANGE
-                || local == ACTION_STAY_ON_TARGET;
-        }
-
-        [[nodiscard]] int8 MoveDirection(uint32 local) const override
-        {
-            return local == ACTION_MOVE_TO_TARGET || local == ACTION_MOVE_BEHIND ? 1
-                : local == ACTION_BACK_OFF || local == ACTION_BREAK_LINE_OF_SIGHT ? -1 : 0;
-        }
-
         [[nodiscard]] ModeGroup ModeGroupOf(Layout const& /*layout*/, uint32 local) const override
         {
             return local == ACTION_CANCEL_FORM ? ModeGroup::Form : ModeGroup::None;

@@ -526,6 +526,24 @@ namespace Animus::Curriculum
     /// A place to get to: on the ground a reachable spot 60-320 yd away by path, in a flying arena a spot 350-700 yd
     /// away. Reward: potential shaping on the distance left, arriving (on the ground; faster pays more), damage taken
     /// (falls), death. The episode ends on arriving or dying.
+    /// What TravelEncounter::FindPlace is asked for beyond the distance. At namespace scope rather than nested,
+    /// because a nested struct's default member initialisers are not usable in the enclosing class's default
+    /// arguments until the enclosing class is complete.
+    struct TravelPlaceRules
+    {
+        /// The detour band the trip should fall in, by the walking path over the straight line: -1 for any, 0
+        /// under DetourEasy, 1 from DetourEasy to DetourHard, 2 from DetourHard up to the generator's ceiling.
+        /// Insisted on for the first half of the attempts, then let go, so an arena whose ground offers no long
+        /// way round still builds an episode.
+        int32 Band = -1;
+        float DetourEasy = 1.15f;
+        float DetourHard = 1.4f;
+        /// The place must be reachable by air only: no complete ground route, or one longer than AirDetour times
+        /// the straight line (ArenaDefinition::AirOnly).
+        bool AirOnly = false;
+        float AirDetour = 2.5f;
+    };
+
     class TravelEncounter final : public Encounter
     {
     public:
@@ -560,9 +578,12 @@ namespace Animus::Curriculum
         /// distance as the crow flies. Tested for PATHFIND_NORMAL alone, as this function has always tested it,
         /// that reads as a clean route with a detour of exactly 1.0, and the feasibility budget it is measured
         /// against means nothing. Opponents::Walkable has always checked the flag; here it was missed.
+        ///
+        /// `rules` says what kind of trip is wanted beyond its length: the detour band it should fall in, and
+        /// whether it must be reachable by air alone (TravelPlaceRules).
         static bool FindPlace(Player* bot, Map* map, float nearest, float furthest, bool flying, Position& place,
             float budgetSeconds, float* walk = nullptr, bool across = false, float* dry = nullptr,
-            bool indoors = false, bool* shortcut = nullptr);
+            bool indoors = false, bool* shortcut = nullptr, TravelPlaceRules const& rules = TravelPlaceRules());
         /// Whether the straight line from `bot` to (x, y) passes through water.
         static bool CrossesWater(Player const* bot, Map* map, Position const& place, float x, float y);
 
@@ -570,6 +591,8 @@ namespace Animus::Curriculum
         struct EnvTravel
         {
             bool Indoors = false;           // the arena is inside a building: placement and arrival both change
+            bool AirOnly = false;           // the arena is air-only: placement, the ground mount and arrival change
+            int32 Band = -1;                // the detour band the trip was drawn for (TravelPlaceRules::Band); -1 none
             bool Crossing = false;          // the objective was placed across water (a water arena that found one)
             float DryDistance = 0.0f;       // yards of the way round on foot, water excluded; 0 = no dry route
             uint32 SwimMs = 0;              // how long the seat has been in the water this episode
@@ -613,19 +636,38 @@ namespace Animus::Curriculum
             float LastX = 0.0f;                 // where it was at the last reward, for the sum above
             float LastY = 0.0f;
             bool HasLastPos = false;            // ... or nothing yet, so the first decision adds no jump
-            /// The last second, for OBS_MOVE_RATE and OBS_CLOSE_RATE: where the marks were set, how far the seat
-            /// had travelled then and how far from the objective it was, and the two rates computed from them.
+            /// The last second, for OBS_CLOSE_RATE toward the objective: when the mark was set, how far from the
+            /// objective the seat was then, and the rate. OBS_MOVE_RATE is the scenario's now
+            /// (StageScenario::TrackMotion), measured for every seat in every arena.
             uint32 MarkMs = 0;
-            float MarkTravelled = 0.0f;
             float MarkDistance = -1.0f;
-            float MoveRate = 0.0f;
             float CloseRate = 0.0f;
+            /// The longest stretch without gaining on the objective, and how many such stretches there were
+            /// (stall_seconds, stalls). A stall is not a stop: a seat pacing a bank at full speed gains nothing
+            /// and is stalled, and a seat waiting out a mount cast gains nothing for two seconds and is not.
+            float StallBest = -1.0f;            // the least route distance yet; < 0 = none yet
+            uint32 StallSinceMs = 0;            // when it last improved
+            uint32 StallLongestMs = 0;
+            uint32 Stalls = 0;
+            bool Stalling = false;              // the current stretch has been counted
             bool Arrived = false;
             uint32 ArriveMs = 0;
             uint32 MountedMs = 0;               // episode time spent mounted
             uint32 FlyingMountMs = 0;           // ... of it on a flying mount, in the air or not
             uint32 FlyingMs = 0;                // ... on a flying mount in the air
-            bool KnowsFlyer = false;            // the seat knows a flying mount spell at all
+            bool KnowsFlyer = false;
+            /// Why the flying mount was refused at the start of the episode, as a SpellCastResult.
+            ///
+            /// could_mount_flying was reported for the whole life of the flight stage while CouldMountFlyer was
+            /// never once assigned, so the column read false whatever happened. stage4_flight then ran its full
+            /// thirty million steps with flew at exactly 0.0000 -- every character level 67 and knowing a flying
+            /// mount -- and the one number that would have said so was a constant.
+            uint32 FlyerRefusal = 0;
+            /// The zone and area the seat believed it was in when that was asked. SpellInfo::CheckLocation
+            /// tests the player's own cached ids, not its coordinates, so a stale or unresolved zone refuses a
+            /// flying mount in the middle of Outland.
+            uint32 FlyerZone = 0;
+            uint32 FlyerArea = 0;            // the seat knows a flying mount spell at all
             bool CouldMountFlyer = false;       // ... and the mask would have offered it at the start
             bool Flew = false;                  // the seat rode a flying mount at some point this episode
             float FlightSpeedSeen = 0.0f;       // the fastest MOVE_FLIGHT speed it had while on one

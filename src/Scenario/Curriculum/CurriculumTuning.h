@@ -313,10 +313,6 @@ namespace Animus::Curriculum
             uint32 MoveRepeatMs = 300;          // the same movement order again (steering stays responsive)
             uint32 StopCastMinMs = 500;         // a cast the bot is in cannot be stopped before it ran this long
             uint32 RecastAfterStopMs = 2000;    // a spell the bot stopped itself cannot be started again for this long
-            /// A movement order back the way the last one went (in toward the target, then away, or the reverse)
-            /// waits this long: stage1_duel's seats gave 60 to 140 movement orders a fight, running in and backing
-            /// off by turns. Movement is still free; only the reversal waits.
-            uint32 ReverseMoveMs = 1000;
             /// A stance, form, presence, aspect, aura, seal, armor or pet stance holds this long before another change
             /// of its kind: warrior tanks changed stance 22 times a fight, hunters their aspect 12.
             uint32 ModeLockMs = 5000;
@@ -496,10 +492,8 @@ namespace Animus::Curriculum
         {
             uint32 RestMaxMs = 30000;           // eat and drink until health and mana are back
             uint32 HoldInterruptMs = 10000;     // interrupt the target as soon as it casts
-            uint32 KeepRangeMs = 10000;         // a ranged spec: back to its range whenever the target closes in
-            uint32 StayOnTargetMs = 10000;      // a melee spec: back into melee reach whenever the target leaves it
-            /// How long a chosen bearing keeps being walked before it lapses (MoveBlock). Shorter than the others
-            /// on purpose: the positioning options are a standing instruction about a target that stays true while
+            /// How long a chosen bearing keeps being walked before it lapses (MoveBlock). Shorter than the two
+            /// above on purpose: resting and holding an interrupt are standing instructions that stay true while
             /// the fight does, where a direction chosen against the ground goes stale as soon as the seat has
             /// covered it. The policy re-presses to keep going, which is what a held key is.
             uint32 MoveBearingMs = 3000;
@@ -571,7 +565,28 @@ namespace Animus::Curriculum
             float FootMax = 160.0f;
             float FlyingMin = 350.0f;           // flying arenas: yards from the start
             float FlyingMax = 700.0f;
-            float Progress = 1.0f;              // potential shaping: per 100 yd closed (taken back for leaving)
+            /// Which trips the ground arenas ask for, by how much longer the walking way round is than the
+            /// straight line. Drawn uniformly, real detours were the tail -- 51% of stage1_move's trips and 82%
+            /// of stage3_travel's had a dry detour under 1.15 -- and a policy taught on straight lines learns to
+            /// hold forward. Each episode draws a band first (DetourEasyShare of them under DetourEasy,
+            /// DetourMidShare between DetourEasy and DetourHard, the rest from DetourHard up to the generator's
+            /// ceiling of 1.8) and looks for an objective in it, settling for any band only once half its
+            /// attempts have found nothing. Water, indoor and flying arenas draw no band: each asks for its own
+            /// kind of trip.
+            float DetourEasy = 1.15f;
+            float DetourHard = 1.4f;
+            float DetourEasyShare = 0.4f;
+            float DetourMidShare = 0.35f;
+            /// Air-only arenas (ArenaDefinition::AirOnly): a place is accepted only when the ground route to it
+            /// is missing or longer than AirDetour times the straight line, so the wings are the way and not a
+            /// slower option; and arriving there means standing within AirArriveRise yards of the objective's
+            /// own height, or the foot of the cliff six yards under a plateau's edge would count.
+            float AirDetour = 2.5f;
+            float AirArriveRise = 10.0f;
+            /// Potential shaping: what closing the whole trip pays, spread over its length (per 100 yd on a trip
+            /// shorter than that). It used to be per 100 yd whatever the trip, so a 700 yd flight paid 4.3 for
+            /// progress against 3.0 for arriving, and rewards.py's own audit said so every twenty-five updates.
+            float Progress = 1.0f;
             float Arrive = 3.0f;
             float FastArrive = 6.0f;            // times the fraction of the walk the trip saved (mounting)
             float DamageTaken = 1.0f;           // fraction of the bot's health (falls, what it rode past)
@@ -586,17 +601,6 @@ namespace Animus::Curriculum
             /// the ground probe refreshes on movement first. RouteCorner is how near counts as having reached
             /// one, and wants to be wider than a decision's travel (1.75 yd at run speed) so a corner cannot be
             /// stepped over and walked back to.
-            /// Where the pathfinder hands the trip back. ACTION_FOLLOW_ROUTE is offered while more than this
-            /// many yards of route remain and masked inside it, so the long haul can be delegated and the
-            /// approach cannot.
-            ///
-            /// The split is where the failures are. At four million steps the episodes that timed out had
-            /// routes of 135 yards against arrivals' 105, with detour ratios of 1.24 and 1.21 -- identical.
-            /// It was never the rough ground or the things in the way; it was the length, and the drift that
-            /// a long trip leaves room for. The last forty yards are the part where clearance, arriving on the
-            /// mark and getting out of the way of what is underfoot actually live, and no pathfinder does
-            /// those.
-            float RouteHandoff = 40.0f;
             float RouteStray = 25.0f;
             float RouteRefresh = 5.0f;
             float RouteCorner = 5.0f;
@@ -717,7 +721,6 @@ namespace Animus::Curriculum
             f("Actions.MoveRepeatMs", tuning.Actions.MoveRepeatMs);
             f("Actions.StopCastMinMs", tuning.Actions.StopCastMinMs);
             f("Actions.RecastAfterStopMs", tuning.Actions.RecastAfterStopMs);
-            f("Actions.ReverseMoveMs", tuning.Actions.ReverseMoveMs);
             f("Actions.ModeLockMs", tuning.Actions.ModeLockMs);
             f("Actions.Repeat", tuning.Actions.Repeat);
             f("Actions.RepeatWindowMs", tuning.Actions.RepeatWindowMs);
@@ -822,8 +825,6 @@ namespace Animus::Curriculum
             f("Hazards.Damage", tuning.Hazards.Damage);
             f("Hazards.Standing", tuning.Hazards.Standing);
             f("Hazards.Max", tuning.Hazards.Max);
-            f("Options.KeepRangeMs", tuning.Options.KeepRangeMs);
-            f("Options.StayOnTargetMs", tuning.Options.StayOnTargetMs);
             f("Options.MoveBearingMs", tuning.Options.MoveBearingMs);
             f("Options.MoveTurnMs", tuning.Options.MoveTurnMs);
             f("Options.MovePitchMs", tuning.Options.MovePitchMs);
@@ -866,13 +867,18 @@ namespace Animus::Curriculum
             f("Travel.FootMax", tuning.Travel.FootMax);
             f("Travel.FlyingMin", tuning.Travel.FlyingMin);
             f("Travel.FlyingMax", tuning.Travel.FlyingMax);
+            f("Travel.DetourEasy", tuning.Travel.DetourEasy);
+            f("Travel.DetourHard", tuning.Travel.DetourHard);
+            f("Travel.DetourEasyShare", tuning.Travel.DetourEasyShare);
+            f("Travel.DetourMidShare", tuning.Travel.DetourMidShare);
+            f("Travel.AirDetour", tuning.Travel.AirDetour);
+            f("Travel.AirArriveRise", tuning.Travel.AirArriveRise);
             f("Travel.Progress", tuning.Travel.Progress);
             f("Travel.Arrive", tuning.Travel.Arrive);
             f("Travel.FastArrive", tuning.Travel.FastArrive);
             f("Travel.DamageTaken", tuning.Travel.DamageTaken);
             f("Travel.Death", tuning.Travel.Death);
             f("Travel.StepCost", tuning.Travel.StepCost);
-            f("Travel.RouteHandoff", tuning.Travel.RouteHandoff);
             f("Travel.RouteStray", tuning.Travel.RouteStray);
             f("Travel.RouteRefresh", tuning.Travel.RouteRefresh);
             f("Travel.RouteCorner", tuning.Travel.RouteCorner);

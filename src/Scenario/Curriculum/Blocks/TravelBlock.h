@@ -51,21 +51,14 @@ namespace Animus::Curriculum
             OBS_HEIGHT                  = 6,    // yards above the ground / 50
             OBS_OBJECTIVE               = 7,    // there is an objective
             OBS_OBJECTIVE_DISTANCE      = 8,    // yards on the ground / 500
-            OBS_OBJECTIVE_BEARING_SIN   = 9,    // relative to the bot's facing
+            OBS_OBJECTIVE_BEARING_SIN   = 9,    // relative to the seat's own heading (SeatView::Facing)
             OBS_OBJECTIVE_BEARING_COS   = 10,
             OBS_OBJECTIVE_HEIGHT        = 11,   // its height minus the bot's / 50, clamped to [-1, 1]
             OBS_AT_OBJECTIVE            = 12,   // within ARRIVE_DISTANCE on the ground
             OBS_IN_COMBAT               = 13,
             OBS_SPEED                   = 14,   // current movement speed / 7 yd/s / 4
             OBS_MOVING                  = 15,
-            /// The route, in the least a policy needs to time ACTION_FOLLOW_ROUTE: that there is one, how much
-            /// of it is left, and which way it goes next. The same argument as OBS_CAN_JUMP -- an action whose
-            /// mask the policy cannot see is one it cannot learn to press.
-            OBS_ROUTE_OK                = 16,
-            OBS_ROUTE_REMAIN            = 17,   // yards left along the way / 500, as OBS_OBJECTIVE_DISTANCE
-            OBS_ROUTE_SIN               = 18,   // the next corner's direction, in the seat's own frame
-            OBS_ROUTE_COS               = 19,
-            OBS_COUNT                   = 20
+            OBS_COUNT                   = 16
         };
 
         enum Action : uint32
@@ -73,15 +66,11 @@ namespace Animus::Curriculum
             ACTION_MOUNT_GROUND         = 0,    // the fastest ground mount it has
             ACTION_MOUNT_FLYING         = 1,    // the fastest flying mount it has
             ACTION_DISMOUNT             = 2,
-            /// Walk the next leg of the planned route, and keep walking it.
-            ///
-            /// The one action in this block that is a journey rather than a state change, and the one the
-            /// curriculum retired once already as MOVE_TO_OBJECTIVE. It is back because a trip of thousands of
-            /// yards is not the same problem as a trip of a hundred: steering every eight yards for ten minutes
-            /// rehearses nothing the first hundred yards did not teach. Masked unless the arena says Routes,
-            /// which no arena does by default -- so the stages whose lesson is the steering keep it.
-            ACTION_FOLLOW_ROUTE         = 3,
-            ACTION_COUNT                = 4
+            /// ACTION_FOLLOW_ROUTE followed here twice and is gone for good: a pathfound leg of the route, walked
+            /// by the engine one corner at a time, is the engine navigating -- the next corner's bearing is "go
+            /// this way" one layer down -- and the policy pressed it in most of its episodes. The route still
+            /// exists, for the reward's progress shaping and the episode's measurements; the actor never sees it.
+            ACTION_COUNT                = 3
         };
 
         static constexpr float ARRIVE_DISTANCE = 6.0f;
@@ -89,6 +78,18 @@ namespace Animus::Curriculum
         static constexpr float ARRIVE_ANY_RISE = 1000.0f;
         /// What an interior arena uses instead -- under a storey, so a floor above or below is not "arrived".
         static constexpr float ARRIVE_SAME_FLOOR = 4.0f;
+
+        /// How near counts as arrived inside a building.
+        ///
+        /// ARRIVE_DISTANCE is six yards, which is calibrated for a hundred-yard trip across open country and is
+        /// most of a room. Measured on the first evaluation this stage ever ran: the objective sat a median 8.3
+        /// yards away in a straight line, so the seat had to close 2.3 of them, and it was done in 0.8 seconds.
+        /// The scripted policy arrived in 1.0000 of 2048 episodes without ever rounding a table or threading a
+        /// doorway, and reward_clearance read -0.0015 because nothing moved far enough to scrape anything.
+        ///
+        /// Two yards instead, indoors only. A seat must actually reach the spot, which is what makes the walls
+        /// between it and the spot matter.
+        static constexpr float ARRIVE_INDOORS = 2.0f;
         static constexpr float BASE_RUN_SPEED = 7.0f;   // yards a second, unmounted and unhasted
         /// How high a seat may climb above the ground. MoveBlock's pitch reads it: the ceiling is a fact about the
         /// air, which is this block's subject, not about steering.
@@ -108,7 +109,9 @@ namespace Animus::Curriculum
         [[nodiscard]] static SpellInfo const* GroundMount(Player const* bot);
         [[nodiscard]] static SpellInfo const* FlyingMount(Player const* bot);
         /// Whether ACTION_MOUNT_FLYING would be offered right now: the same check the mask makes.
-        [[nodiscard]] static bool CanSummonFlying(Player* bot);
+        /// `reason` takes the SpellCastResult when the cast is what refused it -- the only way to tell a
+        /// flying mount that is merely on cooldown from one the seat may never use where it is standing.
+        [[nodiscard]] static bool CanSummonFlying(Player* bot, uint32* reason = nullptr);
         /// Keep MOVEMENTFLAG_CAN_FLY with the seat's flying aura: nothing else sets it without a client.
         static void AllowFlight(Player* bot);
         /// Yards between `bot` and the ground below it (0 when the ground cannot be found).
@@ -121,7 +124,7 @@ namespace Animus::Curriculum
         /// an inn is six yards from an objective on the floor above and has arrived at nothing. The default is
         /// wide enough to change nothing outdoors; an interior arena passes a storey's worth instead.
         [[nodiscard]] static bool AtObjective(Player const* bot, Position const& objective,
-            float maxRise = ARRIVE_ANY_RISE);
+            float maxRise = ARRIVE_ANY_RISE, float within = ARRIVE_DISTANCE);
         /// Without flight in the air (a dismount, a cast that took the mount away): fall to the ground and take a
         /// player's fall damage.
         static void FallIfAirborne(Player* bot);

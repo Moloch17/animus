@@ -42,8 +42,11 @@ namespace
     constexpr float HEAL_BELOW = 0.6f;          // the most hurt living friend below this is healed
     constexpr float DEFENSIVE_BELOW = 0.3f;     // the bot below this uses a defensive
     constexpr float CLOSE_IN_BEYOND_YARDS = 4.0f;
-    constexpr float HOLD_RANGE_BEYOND_YARDS = 28.0f;    // ranged specs close to DuelBlock::MOVE_TO_RANGE_DISTANCE
+    constexpr float HOLD_RANGE_BEYOND_YARDS = 28.0f;    // ranged specs close in from beyond this ...
+    constexpr float HOLD_RANGE_WITHIN_YARDS = 24.0f;    // ... and stop once inside this
     constexpr float MOUNT_BEYOND_YARDS = 80.0f;
+    /// Nearer than half a bearing to straight ahead, a bearing does the aiming; further off, the held turn does.
+    constexpr float TURN_WITHIN_RADIANS = 0.3926991f;
     constexpr float CRUISE_HEIGHT_YARDS = 20.0f;
     /// How much walkable ground is worth against pointing the right way, when choosing a bearing. At 1.0 a
     /// bearing onto ground the seat can cross beats one aimed straight at the objective and into a cliff, and a
@@ -505,7 +508,8 @@ namespace
         for (uint32 bearing = 0; bearing < MoveBlock::BEARING_COUNT; ++bearing)
         {
             float const aim = std::cos(heading + float(bearing) * float(M_PI) / 4.0f);
-            float const reach = row.Obs(BlockId::Move, MoveBlock::OBS_GROUND_FIRST + bearing);
+            // Ray 2 * b lies along bearing b: the block senses twice as many rays as it can walk bearings.
+            float const reach = row.Obs(BlockId::Move, MoveBlock::OBS_GROUND_FIRST + 2 * bearing);
             float const score = aim + GROUND_OVER_AIM * reach;
             if (best == MoveBlock::BEARING_COUNT || score > bestScore)
             {
@@ -523,6 +527,32 @@ namespace
             return std::nullopt;
 
         return row.Allowed(BlockId::Move, MoveBlock::ACTION_BEARING_FIRST + best);
+    }
+
+    /// Stop the feet, if they are walking: the bearing one-hot is the sign that they are.
+    std::optional<int32> Halt(Row const& row)
+    {
+        if (!row.Has(BlockId::Move) || row.Obs(BlockId::Move, MoveBlock::OBS_BEARING_NONE) > 0.0f)
+            return std::nullopt;
+
+        return row.Allowed(BlockId::Move, MoveBlock::ACTION_HALT);
+    }
+
+    /// Turn towards `heading` (sin, cos in the seat's own frame), as a held key, when it lies more than half a
+    /// bearing off straight ahead: the mouse-look, where FACE_OBJECTIVE used to snap the head in one press. Left
+    /// is counter-clockwise, the positive way round in WoW's orientation. The key is masked while it is held,
+    /// so this falls through to the feet on the decisions in between.
+    std::optional<int32> TurnToward(Row const& row, float headingSin, float headingCos)
+    {
+        if (!row.Has(BlockId::Move))
+            return std::nullopt;
+
+        float const heading = std::atan2(headingSin, headingCos);
+        if (std::fabs(heading) <= TURN_WITHIN_RADIANS)
+            return std::nullopt;
+
+        return row.Allowed(BlockId::Move,
+            heading > 0.0f ? MoveBlock::ACTION_TURN_LEFT : MoveBlock::ACTION_TURN_RIGHT);
     }
 
     std::optional<int32> Fight(Row const& row, Layout const& layout)
@@ -569,10 +599,13 @@ namespace
                 && row.Obs(BlockId::Core, CoreBlock::OBS_CASTING) > 0.0f)
                 return 0;
 
-            // Look at it first. Once the head is held that way the action masks itself, so this falls through on
-            // every later decision without needing to be asked whether it already did.
-            if (std::optional<int32> face = row.Allowed(BlockId::Move, MoveBlock::ACTION_FACE_OBJECTIVE))
-                return face;
+            // Turn towards it, as a held key, while the feet keep walking: the objective's heading in the seat's
+            // own frame comes from the move block's pair. FACE_OBJECTIVE used to do this in one press, and the
+            // engine snapping the heading every decision was the compass the trained policy collapsed onto.
+            if (std::optional<int32> turn = TurnToward(row,
+                row.Obs(BlockId::Move, MoveBlock::OBS_OBJECTIVE_BEARING_SIN),
+                row.Obs(BlockId::Move, MoveBlock::OBS_OBJECTIVE_BEARING_COS)))
+                return turn;
 
             // In the air, climb to cruising height for the crossing and nose down for the arrival. Pitch is held,
             // so these mask themselves once the angle is reached, the same way the facing does.
@@ -622,29 +655,37 @@ namespace
             return pet;
 
         float const yards = row.Obs(BlockId::Duel, DuelBlock::OBS_DISTANCE) * 60.0f;
-        bool const moving = row.Obs(BlockId::Duel, DuelBlock::OBS_BOT_MOVING) > 0.0f;
         bool const inMelee = yards <= CLOSE_IN_BEYOND_YARDS;
+        // The target's heading in the seat's own frame, from the block that owns getting there. The duel block
+        // used to run to it, to range and back off for the seat; those are bearings now, and a bearing is held,
+        // so the feet also have to be told when to stop.
+        float const toTargetSin = row.Obs(BlockId::Move, MoveBlock::OBS_TARGET_BEARING_SIN);
+        float const toTargetCos = row.Obs(BlockId::Move, MoveBlock::OBS_TARGET_BEARING_COS);
 
         if (FightsFromRange(row, layout))
         {
-            if (hasTarget && !moving)
+            if (hasTarget)
             {
-                // To casting range from afar, and closer only when something is in the way.
-                if (yards > HOLD_RANGE_BEYOND_YARDS)
-                    if (std::optional<int32> move = row.Allowed(BlockId::Duel, DuelBlock::ACTION_MOVE_TO_RANGE))
-                        return move;
-
-                if (row.Obs(BlockId::Duel, DuelBlock::OBS_TARGET_IN_LINE_OF_SIGHT) == 0.0f)
-                    if (std::optional<int32> move = row.Allowed(BlockId::Duel, DuelBlock::ACTION_MOVE_TO_TARGET))
-                        return move;
+                // To casting range from afar, and closer only when something is in the way; once there, stop, or
+                // a caster that keeps walking walks into melee reach.
+                bool const closing = yards > HOLD_RANGE_BEYOND_YARDS
+                    || row.Obs(BlockId::Duel, DuelBlock::OBS_TARGET_IN_LINE_OF_SIGHT) == 0.0f;
+                if (closing)
+                    if (std::optional<int32> go = Steer(row, toTargetSin, toTargetCos))
+                        return go;
 
                 // A hunter cannot shoot inside melee reach: with its pet on the target, it steps back out and lets
                 // the pet hold it. A caster casts where it stands.
-                if (layout.Profile->Class == CLASS_HUNTER && inMelee
+                bool const backing = layout.Profile->Class == CLASS_HUNTER && inMelee
                     && row.Obs(BlockId::Duel, DuelBlock::OBS_TARGET_ATTACKS_BOT) > 0.0f
-                    && row.Obs(BlockId::Duel, DuelBlock::OBS_PET_ATTACKING) > 0.0f)
-                    if (std::optional<int32> back = row.Allowed(BlockId::Duel, DuelBlock::ACTION_BACK_OFF))
+                    && row.Obs(BlockId::Duel, DuelBlock::OBS_PET_ATTACKING) > 0.0f;
+                if (backing)
+                    if (std::optional<int32> back = Steer(row, -toTargetSin, -toTargetCos))
                         return back;
+
+                if (!closing && !backing && yards <= HOLD_RANGE_WITHIN_YARDS)
+                    if (std::optional<int32> halt = Halt(row))
+                        return halt;
             }
 
             // Melee only as the fallback once the target is on it: a hunter with no pet yet, or one still held.
@@ -658,9 +699,13 @@ namespace
         if (std::optional<int32> attack = row.Allowed(BlockId::Duel, DuelBlock::ACTION_START_ATTACK))
             return attack;
 
-        if (hasTarget && !inMelee && !moving)
-            if (std::optional<int32> move = row.Allowed(BlockId::Duel, DuelBlock::ACTION_MOVE_TO_TARGET))
-                return move;
+        // Close in on a held bearing, and stop once in reach.
+        if (hasTarget && !inMelee)
+            if (std::optional<int32> go = Steer(row, toTargetSin, toTargetCos))
+                return go;
+        if (hasTarget && inMelee)
+            if (std::optional<int32> halt = Halt(row))
+                return halt;
 
         return std::nullopt;
     }
