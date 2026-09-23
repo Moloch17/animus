@@ -27,6 +27,7 @@
  * badly is now only about fighting.
  *
  *   move ─ dodge ─ travel ─ flight        the feet: ground, fire underfoot, the mount, the air
+ *      ├─ indoor, jump ─ glide            drills off the feet, trained by name: rooms, ledges, Slow Fall
  *        ─ duel ─ pack ─ gauntlet ─ endurance        alone, against things that fight back
  *        ─ pvp ─ evade ─ hide ─ stealth ─ arena      against people
  *        ─ companion ─ party ─ tanking ─ triage      beside others, still nobody commanding
@@ -279,7 +280,7 @@ namespace
 
         // Inside, where the walls are close enough to matter.
         //
-        // Named 1b rather than renumbering twenty-two scenarios behind it: stage numbers are cosmetic here --
+        // Named 1b rather than renumbering the scenarios behind it: stage numbers are cosmetic here --
         // nothing parses them and training order comes from AnimusForge.Queue -- and the name says where it
         // belongs without the churn.
         //
@@ -351,6 +352,83 @@ namespace
                 { -1596.2f, 3145.3f, 62.53f, 0.0f },   // Desolace, clearance 0.71
                 { -3615.5f, -4467.3f, 21.10f, 0.0f },  // Theramore Isle, 3.43
                 { -7162.1f, -3845.9f, 9.51f, 0.0f },   // Tanaris, 5.91
+            },
+        });
+
+        // Down, where the way round is long and the way down is a fall.
+        //
+        // The first format-6 run of stage1_move lost fifty of its eighty held-out failures at one cliff foot, under
+        // an objective forty yards up: the mirror of that is a seat above a ledge with the objective below, and
+        // the jump is the move that makes the difference. Until format 7 it could not: the landing test raycast
+        // along the navmesh and clipped at every lip. Now a jump drops, the fall after it is the core's own with
+        // the core's own damage -- nothing to fourteen yards, lethal past about seventy for a full-health
+        // character -- and the seat is told how far down the landing is (OBS_JUMP_DROP) and nothing else. What
+        // a fall costs is the seat's to learn, and it differs by class.
+        //
+        // So two drills, both by name. This one masks Slow Fall and Levitate (FeatherFallMasked): every class
+        // learns the bare price of a drop, including the price of taking one that is worth it. The one after it
+        // gives the classes that have one the button back. The objective always has a way round on foot, at
+        // least LedgeDetour times the straight line, so a class that will not drop still arrives.
+        stages.push_back({
+            .Name = "stage1c_jump",
+            .Suffix = "_jump",
+            .Extends = "stage1_move",
+            .Summary = "a place 20-120 yd away below a ledge: drop off it with a jump, or take the long way round",
+            .FeatherFallMasked = true,
+            .Blocks = { Core, Move, Travel, Duel },
+            .Arenas = {
+                { .Name = "ledges", .Against = Opposition::Travel, .EpisodeSeconds = 120,
+                    .OnFoot = true, .Ledges = true },
+            },
+            .InDefaultQueue = false,
+            .MapId = MAP_KALIMDOR,
+            // Plateau tops above the ground the broken arena trains its cliff feet on, found from the relief in
+            // the creature spawns and stood on with `forge rays` facing the edge; the foot below each was routed
+            // to with `forge route`. Whether a spawn point offers a ledge trip is what the `ledge` column reports,
+            // and a top that never does is a top to replace.
+            .SpawnPoints = {
+                { -2063.9f, -3645.5f, 66.1f, 0.0f },   // southern Barrens, above (-2032, -3618)
+                { -2094.8f, -3644.6f, 72.4f, 0.0f },
+                { -2522.7f, -3736.9f, 55.7f, 0.0f },   // Barrens/Dustwallow edge, above (-2564, -3799)
+                { -2565.2f, -3715.6f, 47.8f, 0.0f },
+                { 124.5f, -4582.7f, 63.7f, 0.0f },     // Durotar canyon, above (191, -4517)
+                { 107.2f, -4552.6f, 56.8f, 0.0f },
+                { 394.1f, -4599.2f, 76.2f, 0.0f },     // Durotar canyon, above (480, -4659)
+                { 384.7f, -4600.1f, 76.2f, 0.0f },
+            },
+            // The southern Barrens escarpment's top, the same ground stage1_move holds out at its foot.
+            .HeldOutSpawnPoints = {
+                { -405.9f, -3207.1f, 186.5f, 0.0f },
+                { -441.9f, -3162.0f, 210.3f, 0.0f },
+                { -515.9f, -3149.0f, 161.5f, 0.0f },
+            },
+        });
+
+        // The same drops, for the classes that can make a fall free: a mage with Slow Fall, a priest with
+        // Levitate. Seeded from the drill above, so the seat already knows what a drop costs bare; what it learns
+        // here is that a cast beforehand makes the deadly one free, and when that is worth the cast.
+        stages.push_back({
+            .Name = "stage1d_glide",
+            .Suffix = "_glide",
+            .Extends = "stage1c_jump",
+            .Summary = "the same ledges, with Slow Fall or Levitate: make the drop free before taking it",
+            .NeedsFeatherFall = true,
+            .Blocks = { Core, Move, Travel, Duel },
+            .Arenas = {
+                { .Name = "ledges", .Against = Opposition::Travel, .EpisodeSeconds = 120,
+                    .OnFoot = true, .Ledges = true },
+            },
+            .InDefaultQueue = false,
+            .MapId = MAP_KALIMDOR,
+            .SpawnPoints = {
+                { -2063.9f, -3645.5f, 66.1f, 0.0f },   { -2094.8f, -3644.6f, 72.4f, 0.0f },
+                { -2522.7f, -3736.9f, 55.7f, 0.0f },   { -2565.2f, -3715.6f, 47.8f, 0.0f },
+                { 124.5f, -4582.7f, 63.7f, 0.0f },     { 107.2f, -4552.6f, 56.8f, 0.0f },
+                { 394.1f, -4599.2f, 76.2f, 0.0f },     { 384.7f, -4600.1f, 76.2f, 0.0f },
+            },
+            .HeldOutSpawnPoints = {
+                { -405.9f, -3207.1f, 186.5f, 0.0f },   { -441.9f, -3162.0f, 210.3f, 0.0f },
+                { -515.9f, -3149.0f, 161.5f, 0.0f },
             },
         });
 
@@ -931,6 +1009,11 @@ namespace
             return "an arena is indoors or it flies, not both";
         if (arena.Indoors && arena.Water)
             return "an interior arena has no crossing to offer: water wants an objective across a lake";
+        if (arena.Ledges && !travel)
+            return "only a travel arena has ledges: an objective below a drop is a place to get to";
+        if (arena.Ledges && (arena.Flying || arena.Indoors || arena.Water))
+            return "a ledge arena is on foot outdoors: the drop is the shortcut and the ramp is the way round, which "
+                "wings, a roof or a lake would each make a different question";
         if (flag && (!stage.Has(BlockId::Travel) || !stage.Has(BlockId::Flag)))
             return "a flag match needs the travel and flag blocks";
 

@@ -84,6 +84,10 @@ namespace Animus::Curriculum
             bool Dispel = false;
             bool DispelFriendly = false;    // ... from an ally (a cleanse) rather than from an enemy (a purge)
             uint32 DispelMask = 0;          // what it can remove: SpellInfo::GetDispelMask bits, DISPEL_ALL expanded
+            /// It makes a fall free: Slow Fall (feather fall) or Levitate (hover). A stage that wants every class to
+            /// learn the bare price of a drop masks these (StageDefinition::FeatherFallMasked); the one after it
+            /// lets the classes that have one spend a cast to make a deadly drop harmless.
+            bool FeatherFall = false;
         };
 
         ActionCatalog(uint8 playerClass, ClassKit const& kit, TalentBuilder const& talents);

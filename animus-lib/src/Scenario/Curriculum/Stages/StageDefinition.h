@@ -184,6 +184,13 @@ namespace Animus::Curriculum
         /// building when the arena is Indoors. A room too tight to hold one keeps the spawn point and still
         /// takes the facing: the scatter is an improvement where it fits, never a reason to lose an episode.
         float SpawnScatter = 0.0f;
+        /// Travel, on foot: the objective is below a ledge. FindPlace puts it Travel.LedgeDropMin to LedgeDropMax
+        /// yards under the seat, where the ground route round is complete but at least Travel.LedgeDetour times
+        /// the straight line and the straight line itself crosses one edge the seat can drop off, so the jump is
+        /// the shortcut and the ramp is the safe way (TravelEncounter::LedgeOnLine). A spawn point with no such
+        /// place in reach builds an ordinary trip and reports `ledge` 0, as a water arena reports `crossing` 0.
+        /// Arriving means the objective's own floor (ARRIVE_SAME_FLOOR), or the lip above it would count.
+        bool Ledges = false;
 
         [[nodiscard]] uint32 SeatCount() const;
     };
@@ -213,6 +220,14 @@ namespace Animus::Curriculum
         /// (animus.bootstrap), which refuses loudly rather than fresh-initialising in silence, so a stage like
         /// this can sit in the middle of a chain when the run it is in allows it.
         bool NeedsStealth = false;
+        /// The feather-fall spells (Slow Fall, Levitate: ActionCatalog::Action::FeatherFall) are masked, so every
+        /// class learns the bare price of a drop before the classes that can make one free learn to. A drill's
+        /// setting: nothing else masks a spell a character knows.
+        bool FeatherFallMasked = false;
+        /// Played only by the classes whose kit has a feather-fall spell (StageScenario's CanFeatherFall), the way
+        /// NeedsStealth restricts the stealth drill. The same caveat applies: a checkpoint of a restricted stage
+        /// holds only the layouts it played, and animus.bootstrap refuses to seed the rest from it in silence.
+        bool NeedsFeatherFall = false;
         std::vector<BlockId> Blocks;    // in layout order: every block any of its arenas needs
         std::vector<ArenaDefinition> Arenas;
         bool InDefaultQueue = true;     // trained by an empty AnimusForge.Queue (false: only when named)

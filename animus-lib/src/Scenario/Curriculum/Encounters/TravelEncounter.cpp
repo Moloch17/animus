@@ -58,6 +58,11 @@ namespace
     // before swimming it actually saves time. Reported, never required: the arena wants trips on both sides of it.
     constexpr float SWIM_PAYS_ABOVE = 7.0f / 4.7f;
     constexpr uint32 WATER_SAMPLES = 12;            // points along the straight line, looking for water
+    /// Ledge trips: the straight line is walked a yard at a time to find the edge, and a seat that has dropped
+    /// off one is this many yards above or below the corner it was walking towards, which the way's own
+    /// two-dimensional Advance cannot see -- so the way is planned again from the foot at once.
+    constexpr float LEDGE_SAMPLE = 1.0f;
+    constexpr float LEDGE_STRAY_Z = 6.0f;
     constexpr float HEIGHT_SEARCH = 120.0f;
     /// What an interior arena probes with instead: a step up from the seat's feet, searching down far enough to
     /// find a cellar stair but never far enough up to find the storey above.
@@ -273,6 +278,10 @@ void Animus::Curriculum::TravelEncounter::AddEpisodeInfo(EpisodeInfoTable& table
     // only be reached by air.
     table.Add("detour_band", [this](Env const& env, uint32) { return float(_envs[env.Index].Band); });
     table.Add("air_only", [this](Env const& env, uint32) { return _envs[env.Index].AirOnly ? 1.0f : 0.0f; });
+    // And whether the objective was placed below a ledge on the straight line, with the height of that edge: the
+    // jump is the shortcut, the ramp the way round. What was achieved, like `crossing`.
+    table.Add("ledge", [this](Env const& env, uint32) { return _envs[env.Index].Ledge ? 1.0f : 0.0f; });
+    table.Add("ledge_drop", [this](Env const& env, uint32) { return _envs[env.Index].LedgeDrop; });
 }
 
 float Animus::Curriculum::TravelEncounter::Saved(EnvTravel const& travel)
@@ -292,7 +301,8 @@ void Animus::Curriculum::TravelEncounter::ResetEpisode(Env& env)
 
 bool Animus::Curriculum::TravelEncounter::FindPlace(Player* bot, Map* map, float nearest, float furthest, bool flying,
     Position& place, float budgetSeconds, float* walk, bool across, float* dry, bool indoors, bool* shortcut,
-    TravelPlaceRules const& rules)
+    TravelPlaceRules const& rules,
+    float* ledgeDrop)
 {
     // What the seat can actually cover in the time it has. Reachability was the only test until now -- a path of
     // type PATHFIND_NORMAL, no longer than MAX_PATH_DETOUR times the straight line -- and reachable is not the
@@ -306,7 +316,7 @@ bool Animus::Curriculum::TravelEncounter::FindPlace(Player* bot, Map* map, float
     // way round at least MIN_DETOUR_ACROSS longer -- so it gets more tries before it gives up and the arena falls
     // back to an ordinary trip. At 32 it found one in 0.65 of its episodes; the ones it missed were not bad ground
     // but too few throws at it. An air-only place is as narrow: a plateau or an island, not any dry ground.
-    uint32 const attempts = across || rules.AirOnly ? OBJECTIVE_ATTEMPTS * 4 : OBJECTIVE_ATTEMPTS;
+    uint32 const attempts = across || rules.AirOnly || rules.Ledge ? OBJECTIVE_ATTEMPTS * 4 : OBJECTIVE_ATTEMPTS;
     for (uint32 attempt = 0; attempt < attempts; ++attempt)
     {
         // Later attempts settle for shorter trips rather than failing the episode.
@@ -323,13 +333,19 @@ bool Animus::Curriculum::TravelEncounter::FindPlace(Player* bot, Map* map, float
         // interior arena looks from a step above its own feet instead, and finds the floor it is standing on.
         // An air-only place may sit on a plateau or an island far above the seat, so that probe starts from as
         // high as the seat may fly and searches the same relief downwards.
+        // A ledge place is below the seat, never above: the probe starts a step over its feet and searches the
+        // deepest drop the arena offers.
         float const from = indoors ? bot->GetPositionZ() + INDOOR_RISE
             : rules.AirOnly ? bot->GetPositionZ() + TravelBlock::MAX_ALTITUDE
+            : rules.Ledge ? bot->GetPositionZ() + MoveBlock::MAX_STEP
             : bot->GetPositionZ() + HEIGHT_SEARCH * 0.5f;
         float const search = indoors ? INDOOR_SEARCH
-            : rules.AirOnly ? TravelBlock::MAX_ALTITUDE + HEIGHT_SEARCH * 0.5f : HEIGHT_SEARCH;
+            : rules.AirOnly ? TravelBlock::MAX_ALTITUDE + HEIGHT_SEARCH * 0.5f
+            : rules.Ledge ? rules.DropMax + 2.0f * MoveBlock::MAX_STEP : HEIGHT_SEARCH;
         float const z = map->GetHeight(bot->GetPhaseMask(), x, y, from, true, search);
         if (z <= INVALID_HEIGHT)
+            continue;
+        if (rules.Ledge && (bot->GetPositionZ() - z < rules.DropMin || bot->GetPositionZ() - z > rules.DropMax))
             continue;
 
         // A place inside has to actually be inside. The probe can still land in a courtyard or on a roof edge
@@ -361,7 +377,33 @@ bool Animus::Curriculum::TravelEncounter::FindPlace(Player* bot, Map* map, float
         // On the ground it has to be reachable on foot, by a path not much longer than the straight line.
         float walked = distance;
         float dryWalk = 0.0f;
-        if (!flying)
+        float edgeDrop = 0.0f;
+        if (rules.Ledge)
+        {
+            // Below a ledge: the way round on foot has to exist -- a class without Slow Fall must still be able
+            // to arrive, or the floor of 1.0 is unwinnable -- and be far enough longer than the straight line that
+            // the drop is the shortcut, and the straight line has to cross an edge the seat can actually drop
+            // off. RoutePlanner for the way round, as the air-only branch, with the grids along the line loaded
+            // first.
+            for (uint32 step = 1; step < WATER_SAMPLES; ++step)
+            {
+                float const along = float(step) / float(WATER_SAMPLES);
+                map->LoadGrid(bot->GetPositionX() + (x - bot->GetPositionX()) * along,
+                    bot->GetPositionY() + (y - bot->GetPositionY()) * along);
+            }
+
+            Route ground;
+            Position const from(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(), 0.0f);
+            Position const to(placeX, placeY, placeZ, 0.0f);
+            if (!RoutePlanner::Instance().Plan(map, from, to, ground) || !ground.Complete
+                || ground.Length < distance * rules.LedgeDetour)
+                continue;
+            if (!LedgeOnLine(bot, map, placeX, placeY, placeZ, rules, edgeDrop))
+                continue;
+
+            walked = ground.Length;
+        }
+        else if (!flying)
         {
             PathGenerator path(bot);
             if (!path.CalculatePath(x, y, z) || !(path.GetPathType() & PATHFIND_NORMAL))
@@ -465,6 +507,8 @@ bool Animus::Curriculum::TravelEncounter::FindPlace(Player* bot, Map* map, float
             *walk = walked;
         if (dry)
             *dry = dryWalk;
+        if (ledgeDrop)
+            *ledgeDrop = edgeDrop;
         if (shortcut)
             *shortcut = false;      // nothing that got here was one; the column stays as the regression alarm
         return true;
@@ -496,6 +540,65 @@ bool Animus::Curriculum::TravelEncounter::CrossesWater(Player const* bot, Map* m
     return false;
 }
 
+bool Animus::Curriculum::TravelEncounter::LedgeOnLine(Player const* bot, Map* map, float x, float y, float z,
+    TravelPlaceRules const& rules, float& drop)
+{
+    // Walk the straight line a yard at a time. Before the edge every sample has to be walkable from the one
+    // before it -- the same step-plus-slope allowance the sixteen rays use -- so the seat can reach the edge on
+    // foot; the edge is the first sample whose ground is more than a step below the last, or not found within a
+    // step at all. The ground under that sample, searched the arena's deepest drop down, is the landing: it has
+    // to be there, within DropMax, and the way on from it to the place has to be an ordinary walk (RoutePlanner,
+    // complete, at most MAX_PATH_DETOUR), which also says the landing is on the mesh.
+    drop = 0.0f;
+    uint32 const phase = bot->GetPhaseMask();
+    float const fromX = bot->GetPositionX();
+    float const fromY = bot->GetPositionY();
+    float const dx = x - fromX;
+    float const dy = y - fromY;
+    float const length = std::sqrt(dx * dx + dy * dy);
+    if (length < 2.0f * LEDGE_SAMPLE)
+        return false;
+
+    float const allowance = MoveBlock::MAX_STEP + LEDGE_SAMPLE * MoveBlock::MARCH_SLOPE;
+    float previousZ = bot->GetPositionZ();
+    for (float along = LEDGE_SAMPLE; along < length; along += LEDGE_SAMPLE)
+    {
+        float const sampleX = fromX + dx * along / length;
+        float const sampleY = fromY + dy * along / length;
+        float const shallow = map->GetHeight(phase, sampleX, sampleY, previousZ + MoveBlock::MAX_STEP, true,
+            allowance + MoveBlock::MAX_STEP);
+        if (shallow > INVALID_HEIGHT && previousZ - shallow <= allowance)
+        {
+            if (shallow - previousZ > allowance)
+                return false;               // a wall on the approach: the edge cannot be reached on foot
+            previousZ = shallow;
+            continue;
+        }
+
+        // The edge. The landing is the deep ground under this sample.
+        float const landing = map->GetHeight(phase, sampleX, sampleY, previousZ + MoveBlock::MAX_STEP, true,
+            rules.DropMax + 2.0f * MoveBlock::MAX_STEP);
+        if (landing <= INVALID_HEIGHT)
+            return false;
+        float const fall = previousZ - landing;
+        if (fall <= MoveBlock::MAX_STEP || fall > rules.DropMax)
+            return false;
+
+        Route rest;
+        Position const foot(sampleX, sampleY, landing, 0.0f);
+        Position const to(x, y, z, 0.0f);
+        float const straight = foot.GetExactDist2d(&to);
+        if (!RoutePlanner::Instance().Plan(map, foot, to, rest) || !rest.Complete
+            || rest.Length > std::max(straight, LEDGE_SAMPLE) * MAX_PATH_DETOUR)
+            return false;
+
+        drop = fall;
+        return true;
+    }
+
+    return false;                           // no edge on the line: the place is walkable straight to
+}
+
 bool Animus::Curriculum::TravelEncounter::Build(Env& env, Map* map, uint8 /*level*/)
 {
     EnvState& data = _scenario.Data(env);
@@ -511,8 +614,10 @@ bool Animus::Curriculum::TravelEncounter::Build(Env& env, Map* map, uint8 /*leve
     // On foot the trip is shorter: the lesson is how well the seat covers ground with what it has, not
     // whether a ride is worth summoning.
     float const least = arena.Indoors ? tuning.IndoorMin
+        : arena.Ledges ? tuning.LedgeMin
         : flying ? tuning.FlyingMin : arena.OnFoot ? tuning.FootMin : tuning.ObjectiveMin;
     float const most = arena.Indoors ? tuning.IndoorMax
+        : arena.Ledges ? tuning.LedgeMax
         : flying ? tuning.FlyingMax : arena.OnFoot ? tuning.FootMax : tuning.ObjectiveMax;
     // A water arena asks for a crossing: an objective whose way round is much longer than the way through, with
     // water in between. Where the ground offers none within reach, fall back to an ordinary trip rather than
@@ -525,6 +630,8 @@ bool Animus::Curriculum::TravelEncounter::Build(Env& env, Map* map, uint8 /*leve
     // whose spawn points have no water in reach fails that gate and says so.
     travel.Indoors = arena.Indoors;
     travel.AirOnly = false;
+    travel.Ledge = false;
+    travel.LedgeDrop = 0.0f;
     travel.Crossing = false;
     travel.DryDistance = 0.0f;
     travel.Travelled = 0.0f;
@@ -543,7 +650,11 @@ bool Animus::Curriculum::TravelEncounter::Build(Env& env, Map* map, uint8 /*leve
     rules.DetourHard = tuning.DetourHard;
     rules.AirOnly = arena.AirOnly;
     rules.AirDetour = tuning.AirDetour;
-    if (!flying && !arena.Water && !arena.Indoors)
+    rules.Ledge = arena.Ledges;
+    rules.LedgeDetour = tuning.LedgeDetour;
+    rules.DropMin = tuning.LedgeDropMin;
+    rules.DropMax = tuning.LedgeDropMax;
+    if (!flying && !arena.Water && !arena.Indoors && !arena.Ledges)
     {
         float const roll = frand(0.0f, 1.0f);
         rules.Band = roll < tuning.DetourEasyShare ? 0
@@ -567,10 +678,15 @@ bool Animus::Curriculum::TravelEncounter::Build(Env& env, Map* map, uint8 /*leve
         && FindPlace(bot, map, least, most, flying, travel.Objective, budget, &walk, false, nullptr, false,
             &travel.Shortcut, rules))
         travel.AirOnly = true;
+    else if (arena.Ledges
+        && FindPlace(bot, map, least, most, flying, travel.Objective, budget, &walk, false, nullptr, false,
+            &travel.Shortcut, rules, &travel.LedgeDrop))
+        travel.Ledge = true;
     else
     {
         TravelPlaceRules plain = rules;
         plain.AirOnly = false;
+        plain.Ledge = false;
         if (!FindPlace(bot, map, least, most, flying, travel.Objective, budget, &walk, false, nullptr,
             arena.Indoors, &travel.Shortcut, plain))
             return false;
@@ -631,7 +747,8 @@ bool Animus::Curriculum::TravelEncounter::RefreshWay(EnvTravel& travel, Player* 
         travel.Way.Advance(x, y, z, corner);
 
         bool const moved = travel.Way.Next < travel.Way.Count
-            && bot->GetExactDist2d(travel.Way.X[travel.Way.Next], travel.Way.Y[travel.Way.Next]) > stray;
+            && (bot->GetExactDist2d(travel.Way.X[travel.Way.Next], travel.Way.Y[travel.Way.Next]) > stray
+                || std::fabs(z - travel.Way.Z[travel.Way.Next]) > LEDGE_STRAY_Z);
         bool const elapsed = nowMs > travel.WayMs
             && float(nowMs - travel.WayMs) / 1000.0f >= refreshSeconds;
         bool const elsewhere = travel.Way.To.GetExactDist2d(&travel.Objective) > 1.0f;
@@ -870,7 +987,9 @@ void Animus::Curriculum::TravelEncounter::Reward(Env& env, uint32 seatIndex, Pla
     // Indoors, arriving has to mean the right floor: two-dimensional arrival puts a seat under a staircase six
     // yards from an objective it has not reached. Air-only, it has to mean the plateau and not the cliff foot six
     // yards under its edge (Travel.AirArriveRise).
-    float const maxRise = travel.Indoors ? TravelBlock::ARRIVE_SAME_FLOOR
+    // Below a ledge, the objective's own floor: the lip six yards above it is not there yet, and a seat that
+    // arrived from the lip would never have to choose the drop.
+    float const maxRise = travel.Indoors || travel.Ledge ? TravelBlock::ARRIVE_SAME_FLOOR
         : travel.AirOnly ? tuning.AirArriveRise : TravelBlock::ARRIVE_ANY_RISE;
     float const within = travel.Indoors ? TravelBlock::ARRIVE_INDOORS : TravelBlock::ARRIVE_DISTANCE;
     if (!travel.Arrived && bot->IsAlive() && TravelBlock::AtObjective(bot, travel.Objective, maxRise, within))

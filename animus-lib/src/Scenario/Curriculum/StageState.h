@@ -159,6 +159,16 @@ namespace Animus::Curriculum
         float LastStepDamageTaken = 0.0f;
         uint32 SpellCasts = 0;
         uint32 TrinketUses = 0;
+        /// Leaving the ground: jumps launched and refused, drops (a landing more than MAX_STEP below), the deepest,
+        /// drops made under a feather-fall aura, and the falls that followed with what they cost.
+        uint32 Jumps = 0;
+        uint32 JumpsRefused = 0;
+        uint32 Drops = 0;
+        float DropYards = 0.0f;
+        uint32 FeatherFalls = 0;
+        uint32 Falls = 0;
+        float FallDamage = 0.0f;
+        uint32 FallDeaths = 0;
         /// The durative actions the seat is running (SeatOptionSet: a positioning one and a standby), how many it
         /// started and how long any of them ran: one press that stands for many decisions of resting, holding an
         /// interrupt or keeping range.
@@ -308,6 +318,14 @@ namespace Animus::Curriculum
             LastStepDamageTaken = 0.0f;
             SpellCasts = 0;
             TrinketUses = 0;
+            Jumps = 0;
+            JumpsRefused = 0;
+            Drops = 0;
+            DropYards = 0.0f;
+            FeatherFalls = 0;
+            Falls = 0;
+            FallDamage = 0.0f;
+            FallDeaths = 0;
             Option = SeatOptionSet();
             // Steering is state, and it used to be the only state that outlived its episode. A FACE_* is masked
             // once chosen, so a mode picked in one episode latched for the rest of the run and could never be

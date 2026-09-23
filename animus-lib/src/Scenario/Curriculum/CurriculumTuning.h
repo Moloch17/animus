@@ -324,6 +324,11 @@ namespace Animus::Curriculum
             float Repeat = 0.02f;
             uint32 RepeatWindowMs = 10000;
             uint32 RepeatFree = 3;              // presses of one action within the window that cost nothing
+            /// How far below where a jump would come down the ground is looked for before the jump is refused.
+            /// The only limit on a drop: a landing this deep is a fall the seat can choose, and what it costs --
+            /// nothing with Slow Fall, health past fourteen yards, death past about seventy -- is the seat's to
+            /// learn from OBS_JUMP_DROP and from what happens. Only the void is masked.
+            float JumpDropSearch = 200.0f;
         } Actions;
 
         /// Packs and the gauntlet's pull after pull.
@@ -607,6 +612,15 @@ namespace Animus::Curriculum
             float Clearance = 0.08f;            // per second hard against the wall
             float ClearanceMargin = 1.5f;       // yards; closer than this is charged
             float ClearanceMax = 0.6f;          // most an episode may lose to it
+            /// Ledge arenas (ArenaDefinition::Ledges): how far the objective is, how far below the seat it sits,
+            /// and how much longer the way round on foot has to be than the straight line for the drop to be the
+            /// shortcut. LedgeDropMax runs past the lethal fall on purpose: with Slow Fall or Levitate it is free,
+            /// without them the seat learns what it costs.
+            float LedgeMin = 20.0f;
+            float LedgeMax = 120.0f;
+            float LedgeDetour = 2.0f;
+            float LedgeDropMin = 5.0f;
+            float LedgeDropMax = 80.0f;
         } Travel;
 
         /// The flag match (Warsong Gulch's rules between two seats).
@@ -725,6 +739,7 @@ namespace Animus::Curriculum
             f("Actions.Repeat", tuning.Actions.Repeat);
             f("Actions.RepeatWindowMs", tuning.Actions.RepeatWindowMs);
             f("Actions.RepeatFree", tuning.Actions.RepeatFree);
+            f("Actions.JumpDropSearch", tuning.Actions.JumpDropSearch);
 
             f("Goals.Match", tuning.Goals.Match);
 
@@ -885,6 +900,11 @@ namespace Animus::Curriculum
             f("Travel.Clearance", tuning.Travel.Clearance);
             f("Travel.ClearanceMargin", tuning.Travel.ClearanceMargin);
             f("Travel.ClearanceMax", tuning.Travel.ClearanceMax);
+            f("Travel.LedgeMin", tuning.Travel.LedgeMin);
+            f("Travel.LedgeMax", tuning.Travel.LedgeMax);
+            f("Travel.LedgeDetour", tuning.Travel.LedgeDetour);
+            f("Travel.LedgeDropMin", tuning.Travel.LedgeDropMin);
+            f("Travel.LedgeDropMax", tuning.Travel.LedgeDropMax);
 
             f("Flag.BaseMin", tuning.Flag.BaseMin);
             f("Flag.BaseMax", tuning.Flag.BaseMax);

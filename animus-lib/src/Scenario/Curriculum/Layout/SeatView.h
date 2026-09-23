@@ -107,6 +107,9 @@ namespace Animus::Curriculum
         float Shore[SENSE_RAYS] = {};           // how far dry ground runs that way / MARCH_MAX
         float Burns[SENSE_RAYS] = {};           // how near the magma or slime is, 1 at the feet, 0 for none
         bool CanJump = false;                   // a jump along Facing had somewhere to land when measured
+        Position JumpLanding;                   // where, when it had: the ground under the end of the arc
+        float JumpDrop = 0.0f;                  // and how far below the seat that ground is (negative: a step up)
+        bool JumpDropPending = false;           // the arc has been launched over a drop; the fall is still to come
         uint64 JumpUntilMs = 0;                 // a jump launched from here is still in the air until this clock
         float Clearance = 1.0f;                 // yards to the nearest edge of walkable space / CLEARANCE_RANGE
         float ClearanceSin = 0.0f;              // and which way is out, in the seat's frame when it was measured
@@ -222,6 +225,7 @@ namespace Animus::Curriculum
         SeatOptionSet* Option = nullptr;
         /// How long each durative action may run (CurriculumTuning::OptionTuning).
         CurriculumTuning::OptionTuning Options;
+        float JumpDropSearch = 200.0f;      // Actions.JumpDropSearch: how deep a landing is looked for
         /// What the actions aim at: the opponent, the selected enemy. May be null (between pulls).
         Unit* Target = nullptr;
         /// The target when the bot can neither see nor detect it (stealth, invisibility). Target is null then, so no
@@ -456,6 +460,16 @@ namespace Animus::Curriculum
         uint32 PetAbilities = 0;                    // pet bar abilities the pet started
         uint32 PetOrders = 0;                       // pet stances, follow and stay, and sending the pet in
         PetOrder PetOrderGiven = PetOrder::None;    // which of them, when one was given
+        /// The feet leaving the ground (MoveBlock): jumps launched, jumps pressed with nowhere to land, how far
+        /// below the seat the landing was, whether a feather-fall aura was on at the launch; and the falls that
+        /// followed (Encoding::FallToGround), how far and what they cost in health.
+        uint32 Jumps = 0;
+        uint32 JumpsRefused = 0;
+        float JumpDrop = 0.0f;
+        bool JumpFeatherFall = false;
+        uint32 Falls = 0;
+        float FallYards = 0.0f;
+        float FallDamage = 0.0f;                    // fraction of maximum health
     };
 }
 

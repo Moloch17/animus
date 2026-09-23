@@ -249,6 +249,15 @@ namespace Animus::Curriculum::Encoding
 
     void FlyTo(Player* bot, float x, float y, float z, float const* facing = nullptr);
 
+    /// A seat in the air without flight (the end of a drop jump, a dismount, a cast that took the mount away)
+    /// falls to the ground the way a player does: MotionMaster::MoveFall, then Player::HandleFall for the
+    /// damage, which is nothing under a feather-fall or hover aura and lethal past about seventy yards. True
+    /// when a fall was started; `yards` and `healthFraction` (of maximum health) say what it cost. Nothing
+    /// happens while a spline is still running, so a jump's own arc is never cut short, and the falling flag
+    /// the core leaves on a player is taken off again -- EffectMovementGenerator::Finalize clears it for
+    /// creatures only, and with it stuck the jump stayed masked for the rest of the episode.
+    bool FallToGround(Player* bot, float* yards = nullptr, float* healthFraction = nullptr);
+
     /// Send the bot's pets and guardians at `target`, as the pet bar's Attack does. True if any was ordered.
     bool PetAttack(Player* bot, Unit* target);
 

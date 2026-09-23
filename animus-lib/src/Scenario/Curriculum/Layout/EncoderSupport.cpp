@@ -59,6 +59,11 @@ namespace
 
 namespace Animus::Curriculum::Encoding
 {
+    /// How far below a seat the ground is looked for when it may be falling, and how high above it a seat has to
+    /// be before it is: the same two the travel block uses (MAX_GROUND_SEARCH, AIRBORNE_ABOVE).
+    constexpr float FALL_GROUND_SEARCH = 200.0f;
+    constexpr float FALL_ABOVE = 2.0f;
+
     using SpellChecks::CheckCast;
     using SpellChecks::CooldownFraction;
 
@@ -797,6 +802,38 @@ namespace Animus::Curriculum::Encoding
             init.SetFacing(*facing);
         }
         init.Launch();
+    }
+
+    bool FallToGround(Player* bot, float* yards, float* healthFraction)
+    {
+        if (yards)
+            *yards = 0.0f;
+        if (healthFraction)
+            *healthFraction = 0.0f;
+        if (!bot->IsAlive() || bot->CanFly() || !bot->movespline->Finalized())
+            return false;
+
+        float const ground = bot->GetMapHeight(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(), true,
+            FALL_GROUND_SEARCH);
+        if (ground <= INVALID_HEIGHT || bot->GetPositionZ() - ground <= FALL_ABOVE)
+            return false;
+
+        // MoveFall remembers where the fall started (SetFallInformation); landing is Player::HandleFall, as for a
+        // client. The health before and after is the cost, as a fraction of the most the character can have.
+        uint32 const before = bot->GetHealth();
+        bot->GetMotionMaster()->Clear();
+        bot->GetMotionMaster()->MoveFall();
+
+        MovementInfo landing = bot->m_movementInfo;
+        landing.pos.Relocate(bot->GetPositionX(), bot->GetPositionY(), ground);
+        bot->HandleFall(landing);
+        bot->RemoveUnitMovementFlag(MOVEMENTFLAG_FALLING);
+
+        if (yards)
+            *yards = bot->GetPositionZ() - ground;
+        if (healthFraction && bot->GetMaxHealth())
+            *healthFraction = float(before - std::min(before, bot->GetHealth())) / float(bot->GetMaxHealth());
+        return true;
     }
 
     void FlyTo(Player* bot, float x, float y, float z, float const* facing)

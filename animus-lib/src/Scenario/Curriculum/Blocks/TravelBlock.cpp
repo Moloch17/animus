@@ -150,19 +150,9 @@ bool Animus::Curriculum::TravelBlock::AtObjective(Player const* bot, Position co
 
 void Animus::Curriculum::TravelBlock::FallIfAirborne(Player* bot)
 {
-    if (!bot->IsAlive() || bot->CanFly() || !bot->movespline->Finalized() || HeightAboveGround(bot) <= AIRBORNE_ABOVE)
-        return;
-
-    float const ground = bot->GetMapHeight(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(), true,
-        MAX_GROUND_SEARCH);
-
-    // MoveFall remembers where the fall started (SetFallInformation); landing is Player::HandleFall, as for a client.
-    bot->GetMotionMaster()->Clear();
-    bot->GetMotionMaster()->MoveFall();
-
-    MovementInfo landing = bot->m_movementInfo;
-    landing.pos.Relocate(bot->GetPositionX(), bot->GetPositionY(), ground);
-    bot->HandleFall(landing);
+    // The fall itself is Encoding::FallToGround, shared with the move block's drop jump so that a fall is one
+    // thing wherever it starts. The guards are its own; this stays as the name the mount code calls.
+    Encoding::FallToGround(bot);
 }
 
 void Animus::Curriculum::TravelBlock::LearnRiding(Player* bot)
