@@ -250,6 +250,14 @@ namespace Animus::Curriculum
             /// somewhere to land. A masked action the seat cannot see the reason for is state it cannot learn
             /// around.
             OBS_CAN_JUMP,
+            /// How far below the seat the landing is, over JUMP_DROP_SCALE and clamped: 0 for a hop on the flat
+            /// or a step up, 0.3 for a thirty yard drop, about 0.7 at the fall that kills a full-health character
+            /// without Slow Fall. What a fall costs is not written here on purpose; the seat learns it from this
+            /// number and from what happens, and it differs by class.
+            OBS_JUMP_DROP,
+            /// In the air without wings: the arc of a jump or the fall after one is still running, so the feet are
+            /// masked and nothing the seat presses will move it until it lands.
+            OBS_FALLING,
             /// **Where it has been** (MovementTrail): its last TRAIL_SAMPLES positions, one a second, each as an
             /// offset from where it stands now in its own frame (ahead, left) over YARD_SCALE, oldest first with
             /// the newest in the last pair, then the share of them it is still within six yards of.
@@ -335,10 +343,20 @@ namespace Animus::Curriculum
         ///
         /// It is worth being plain about what that buys. The navmesh is built with walkableClimb 6 cells --
         /// about 1.60 yards -- so it already assumes the seat can step up everything a jump could clear, and
-        /// jumping gains almost nothing vertically. What it gains is horizontal: a gap the mesh does not bridge,
-        /// which no path will ever cross because off-mesh connections are the only thing that could and the
-        /// shipped config declares two in the whole world.
+        /// jumping gains almost nothing upwards. What it gains is a gap the mesh does not bridge, which no path
+        /// will ever cross because off-mesh connections are the only thing that could and the shipped config
+        /// declares two in the whole world -- and, since format 7, a drop: the arc carries the seat over an edge
+        /// the mesh stops at, and the fall after it is the core's own (Encoding::FallToGround), with the core's
+        /// own damage.
         static constexpr float JUMP_SPEED_Z = 7.955f;
+        /// The most a jump may rise: the mesh's walkableClimb, which a step already clears. Anything higher is a
+        /// wall, and a landing above it is not one.
+        static constexpr float JUMP_RISE_MAX = 1.6f;
+        /// A landing further below the seat than this is a drop: the arc ends at the launch height over the edge
+        /// and the fall takes it the rest of the way. The travel block's AIRBORNE_ABOVE, the same two yards.
+        static constexpr float DROP_ABOVE = 2.0f;
+        /// The yards OBS_JUMP_DROP is measured over.
+        static constexpr float JUMP_DROP_SCALE = 100.0f;
 
         /// How much further the ray that may cross magma must run than the ray that may not, before the gap
         /// between them is called a burning edge rather than float noise. Both rays start from one polygon and

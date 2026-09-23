@@ -27,6 +27,7 @@
 #include "SeatMemory.h"
 #include "SpellInfo.h"
 #include "SpellMgr.h"
+#include "StageDefinition.h"
 #include <algorithm>
 
 namespace
@@ -68,6 +69,11 @@ namespace
                     && Encoding::CanCast(bot, info, view.Target, item);
             }
             case ActionCatalog::Kind::Spell:
+                // A drill that wants every class to learn the bare price of a drop keeps Slow Fall and Levitate
+                // off the table (StageDefinition::FeatherFallMasked); the seat still sees them in its catalog,
+                // so the one after it has nothing to relearn about where the button is.
+                if (def.FeatherFall && view.L && view.L->Stage && view.L->Stage->FeatherFallMasked)
+                    return false;
                 break;
         }
 

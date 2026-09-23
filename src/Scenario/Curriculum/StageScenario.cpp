@@ -28,6 +28,7 @@
 #include "Creature.h"
 #include "DBCStores.h"
 #include "DuelBlock.h"
+#include "MoveBlock.h"
 #include "EncoderSupport.h"
 #include "Encounters.h"
 #include "SpellMgr.h"
@@ -105,6 +106,21 @@ namespace
         for (Animus::Curriculum::ClassKit::KitSpell const& kitSpell : assets.Kit->Spells())
             if (SpellInfo const* spell = sSpellMgr->GetSpellInfo(kitSpell.SpellId);
                 spell && spell->HasAura(SPELL_AURA_MOD_STEALTH))
+                return true;
+
+        return false;
+    }
+
+    /// Whether the class can make a fall free: a kit spell with feather fall (Slow Fall) or hover (Levitate).
+    /// The glide drill (StageDefinition::NeedsFeatherFall) is played only by these.
+    bool CanFeatherFall(Animus::Curriculum::ClassAssets const& assets)
+    {
+        if (!assets.Kit)
+            return false;
+
+        for (Animus::Curriculum::ClassKit::KitSpell const& kitSpell : assets.Kit->Spells())
+            if (SpellInfo const* spell = sSpellMgr->GetSpellInfo(kitSpell.SpellId);
+                spell && (spell->HasAura(SPELL_AURA_FEATHER_FALL) || spell->HasAura(SPELL_AURA_HOVER)))
                 return true;
 
         return false;
@@ -287,8 +303,11 @@ Animus::Curriculum::StageScenario::StageScenario(StageSettings const& settings, 
         if (assets.Races.empty())
             continue;
 
-        // A stage about closing on someone unseen is played only by the classes that can actually do it.
+        // A stage about closing on someone unseen is played only by the classes that can actually do it, and a
+        // stage about gliding down only by the classes that have a spell for it.
         if (_stage.NeedsStealth && !CanStealth(assets))
+            continue;
+        if (_stage.NeedsFeatherFall && !CanFeatherFall(assets))
             continue;
 
         Layout layout = Layout::Build(profile, _stage);
@@ -659,6 +678,18 @@ void Animus::Curriculum::StageScenario::AddCoreEpisodeInfo()
     });
     _info.Add("equipped_items", [seat](Env const& env, uint32 index) { return float(seat(env, index).EquippedItems); });
     _info.Add("spell_casts", [seat](Env const& env, uint32 index) { return float(seat(env, index).SpellCasts); });
+    // Leaving the ground (MoveBlock's jump, Encoding::FallToGround): jumps launched, jumps pressed with nowhere to
+    // land, drops (a landing more than a step below the seat) and the deepest of them, drops made under Slow Fall
+    // or Levitate, and the falls that followed -- whether there was one, what they cost in health, and whether one
+    // killed the seat. A drill about ledges reads these; every other stage gets them for free.
+    _info.Add("jumps", [seat](Env const& env, uint32 index) { return float(seat(env, index).Jumps); });
+    _info.Add("jumps_refused", [seat](Env const& env, uint32 index) { return float(seat(env, index).JumpsRefused); });
+    _info.Add("drops", [seat](Env const& env, uint32 index) { return float(seat(env, index).Drops); });
+    _info.Add("drop_yards", [seat](Env const& env, uint32 index) { return seat(env, index).DropYards; });
+    _info.Add("feather_falls", [seat](Env const& env, uint32 index) { return float(seat(env, index).FeatherFalls); });
+    _info.Add("fell", [seat](Env const& env, uint32 index) { return seat(env, index).Falls ? 1.0f : 0.0f; });
+    _info.Add("fall_damage", [seat](Env const& env, uint32 index) { return seat(env, index).FallDamage; });
+    _info.Add("fall_deaths", [seat](Env const& env, uint32 index) { return float(seat(env, index).FallDeaths); });
     // Durative actions: how many the seat started and how long they ran.
     _info.Add("options_started", [seat](Env const& env, uint32 index)
     {
@@ -1357,8 +1388,10 @@ bool Animus::Curriculum::StageScenario::Setup(Env& env)
 {
     if (_layouts.empty())
     {
-        LOG_ERROR("module.animus", "{}: no class/role to play (check the host's class/role list{})", Name(),
-            _stage.NeedsStealth ? ", and this stage is played only by class/roles whose kit has stealth" : "");
+        LOG_ERROR("module.animus", "{}: no class/role to play (check the host's class/role list{}{})", Name(),
+            _stage.NeedsStealth ? ", and this stage is played only by class/roles whose kit has stealth" : "",
+            _stage.NeedsFeatherFall ? ", and this stage is played only by classes whose kit has Slow Fall or Levitate"
+                : "");
         return false;
     }
 
@@ -2052,6 +2085,7 @@ Animus::Curriculum::SeatView Animus::Curriculum::StageScenario::ViewSeat(Env con
     // Observing only reads the durative action; applying an action starts, runs and stops it (ApplySeatAction hands
     // the same seat's own).
     view.Options = _tuning.Options;
+    view.JumpDropSearch = _tuning.Actions.JumpDropSearch;
     view.NowMs = env.EpisodeElapsedMs;
     view.LastStepDamage = seat.LastStepDamage;
     view.LastStepPowerDelta = seat.LastStepPowerDelta;
@@ -2195,6 +2229,19 @@ void Animus::Curriculum::StageScenario::ApplySeatAction(Env& env, uint32 seatInd
     seat.StepHealingPowerSpent += result.HealingPowerSpent;
     seat.DownrankedCasts += result.DownrankedCasts;
     seat.SpellCasts += result.SpellCasts;
+    seat.Jumps += result.Jumps;
+    seat.JumpsRefused += result.JumpsRefused;
+    if (result.Jumps && result.JumpDrop > MoveBlock::MAX_STEP)
+    {
+        ++seat.Drops;
+        seat.DropYards = std::max(seat.DropYards, result.JumpDrop);
+        if (result.JumpFeatherFall)
+            ++seat.FeatherFalls;
+    }
+    seat.Falls += result.Falls;
+    seat.FallDamage += result.FallDamage;
+    if (result.Falls && bot && !bot->IsAlive())
+        ++seat.FallDeaths;
     seat.TrinketUses += result.TrinketUses;
     seat.ItemUses += result.ItemUses;
     seat.ConsumablesUsed += result.ConsumablesUsed;

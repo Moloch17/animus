@@ -542,6 +542,13 @@ namespace Animus::Curriculum
         /// the straight line (ArenaDefinition::AirOnly).
         bool AirOnly = false;
         float AirDetour = 2.5f;
+        /// The place must be below a ledge (ArenaDefinition::Ledges): DropMin to DropMax yards under the seat,
+        /// its ground route round complete but at least LedgeDetour times the straight line, and the straight
+        /// line crossing one edge the seat can drop off (TravelEncounter::LedgeOnLine).
+        bool Ledge = false;
+        float LedgeDetour = 2.0f;
+        float DropMin = 5.0f;
+        float DropMax = 80.0f;
     };
 
     class TravelEncounter final : public Encounter
@@ -583,15 +590,23 @@ namespace Animus::Curriculum
         /// whether it must be reachable by air alone (TravelPlaceRules).
         static bool FindPlace(Player* bot, Map* map, float nearest, float furthest, bool flying, Position& place,
             float budgetSeconds, float* walk = nullptr, bool across = false, float* dry = nullptr,
-            bool indoors = false, bool* shortcut = nullptr, TravelPlaceRules const& rules = TravelPlaceRules());
+            bool indoors = false, bool* shortcut = nullptr, TravelPlaceRules const& rules = TravelPlaceRules(),
+            float* ledgeDrop = nullptr);
         /// Whether the straight line from `bot` to (x, y) passes through water.
         static bool CrossesWater(Player const* bot, Map* map, Position const& place, float x, float y);
+        /// Whether the straight line from `bot` to the place crosses one edge the seat can drop off -- the
+        /// approach walkable, then a fall of at most `rules.DropMax` onto ground the way on from which reaches
+        /// the place at an ordinary detour. `drop` is the height of that edge.
+        static bool LedgeOnLine(Player const* bot, Map* map, float x, float y, float z, TravelPlaceRules const& rules,
+            float& drop);
 
     private:
         struct EnvTravel
         {
             bool Indoors = false;           // the arena is inside a building: placement and arrival both change
             bool AirOnly = false;           // the arena is air-only: placement, the ground mount and arrival change
+            bool Ledge = false;             // the objective is below a ledge on the straight line (a ledge arena that found one)
+            float LedgeDrop = 0.0f;         // and how high that edge is
             int32 Band = -1;                // the detour band the trip was drawn for (TravelPlaceRules::Band); -1 none
             bool Crossing = false;          // the objective was placed across water (a water arena that found one)
             float DryDistance = 0.0f;       // yards of the way round on foot, water excluded; 0 = no dry route

@@ -28,7 +28,9 @@
 #include "MapDefines.h"
 #include "MotionMaster.h"
 #include "MoveSplineInit.h"
+#include "MovementTypedefs.h"
 #include "Player.h"
+#include "SpellAuraDefines.h"
 #include "SeatView.h"
 #include "TravelBlock.h"
 #include <algorithm>
@@ -178,12 +180,6 @@ namespace
         return t >= 1.0f ? range : t * range;
     }
 
-    /// Where a jump along `heading` would land, and whether that is anywhere worth landing.
-    ///
-    /// CanReachPositionAndGetValidCoords is the core's own test -- a Detour raycast plus the static and dynamic
-    /// collision trees, then walkability and slope -- and it rewrites the coordinates to the first valid point
-    /// it finds. That is what stops a seat jumping off the world, which the core warns about in as many words
-    /// where it refuses to let a player use MoveJumpTo at all.
     /// How long a jump hangs in the air, and how far it carries.
     ///
     /// Rising and falling take the same time, so the whole arc is 2 * speedZ / gravity -- about 825 ms at the
@@ -199,66 +195,91 @@ namespace
         return 2.0f * (MoveBlock::JUMP_SPEED_Z / float(Movement::gravity)) * speedXY;
     }
 
-    /// Is there mesh where a jump along `heading` would come down? The cheap half of the landing test.
-    ///
-    /// One findNearestPoly at the landing point. If the navmesh has a polygon there the seat has somewhere to
-    /// come down; if it has not, the jump goes off the world and the action stays masked. The expensive half --
-    /// collision, walkability and slope, through CanReachPositionAndGetValidCoords -- runs in Apply, on the one
-    /// decision the jump is actually pressed, which is the only decision where it can change anything.
-    ///
-    /// The split is the whole point. The mask is consulted every decision for every seat whether the policy
-    /// ever jumps or not, and the full test builds a PathGenerator and casts two vmap rays to answer it. This
-    /// is one polygon lookup against a query object the refresh is holding open anyway.
-    bool JumpLandingNear(dtNavMeshQuery const* query, Player const* bot, float heading)
+    /// How high the arc rises above the launch: what JumpTo builds the parabola from.
+    float JumpApex()
     {
-        if (!query)
-            return false;
-
-        dtQueryFilterExt filter;
-        filter.setIncludeFlags(NAV_GROUND | NAV_WATER);
-        filter.setExcludeFlags(0);
-
-        float const range = JumpRange(bot);
-        // Detour's axes are {y, z, x}. Extents are the core's own from cs_mmaps: a landing further than this
-        // below where it was aimed is a fall rather than a landing, and should not answer the question yes.
-        float const at[3] = { bot->GetPositionY() + range * std::sin(heading),
-            bot->GetPositionZ(),
-            bot->GetPositionX() + range * std::cos(heading) };
-        float const extents[3] = { 3.0f, 5.0f, 3.0f };
-
-        dtPolyRef ref = 0;
-        if (dtStatusFailed(query->findNearestPoly(at, extents, &filter, &ref, nullptr)))
-            return false;
-
-        return ref != 0;
+        float const halfTime = MoveBlock::JUMP_SPEED_Z / float(Movement::gravity);
+        return -Movement::computeFallElevation(halfTime, false, -MoveBlock::JUMP_SPEED_Z);
     }
 
-    bool JumpLanding(Player* bot, float heading, Position& landing)
+    /// Where a jump along `heading` would come down, and how far below the seat that is.
+    struct JumpAim
     {
-        Map* map = bot->GetMap();
-        if (!map)
-            return false;
+        Position Landing;
+        float Drop = 0.0f;      // launch height minus the landing's; negative is a step up
+        bool Ok = false;
+    };
+
+    /// The landing test, one function for the mask and the press so the two cannot disagree.
+    ///
+    /// It used to be the core's CanReachPositionAndGetValidCoords, which is a Detour raycast *along the
+    /// navmesh*: at a lip it clipped the landing back to the near edge, and its slope test refused anything
+    /// more than the mesh's 1.6 yd climb below the start. So a jump could never drop off a ledge, and the header
+    /// comment about gaps described a thing the code did not do. This looks at the landing point itself:
+    ///
+    ///   - the ground under the end of the arc, searched `search` yards down (Actions.JumpDropSearch). No ground
+    ///     that deep is the void, and the one thing a jump is refused for. There is no upper bound on the drop
+    ///     on purpose: what a fall costs is the seat's to learn (OBS_JUMP_DROP, and what happens), and with Slow
+    ///     Fall or Levitate it costs nothing;
+    ///   - up to JUMP_RISE_MAX above the launch, which a step clears anyway; higher is a wall;
+    ///   - on the navmesh, within a step of the ground found (a landing the mesh does not cover is a fall onto
+    ///     something the seat cannot walk on), water allowed only for a hop -- a deep fall into a lake is
+    ///     measured to the lakebed, as Player::HandleFall measures it;
+    ///   - clear of collision in two legs: across at the apex, for a wall in the way, and straight down over
+    ///     the landing, for a lip that overhangs it. One diagonal ray would cut every cliff face and refuse
+    ///     every drop.
+    ///
+    /// A gap works the same way once the mesh resumes on the far side: the landing is there, the drop is small,
+    /// and the arc is clear. Nothing here needs to change for it.
+    JumpAim JumpLandingTest(Map* map, dtNavMeshQuery const* query, Player const* bot, float heading, float search)
+    {
+        JumpAim aim;
+        if (!map || !query)
+            return aim;
 
         float const range = JumpRange(bot);
+        float const bx = bot->GetPositionX();
+        float const by = bot->GetPositionY();
+        float const bz = bot->GetPositionZ();
+        float const ax = bx + range * std::cos(heading);
+        float const ay = by + range * std::sin(heading);
+        if (range < MoveBlock::JUMP_MIN_YARDS)
+            return aim;
 
-        float x = bot->GetPositionX() + range * std::cos(heading);
-        float y = bot->GetPositionY() + range * std::sin(heading);
-        float z = bot->GetPositionZ();
-        if (!map->CanReachPositionAndGetValidCoords(bot, x, y, z, true, true))
-            return false;
+        uint32 const phase = bot->GetPhaseMask();
+        float const groundZ = map->GetHeight(phase, ax, ay, bz + MoveBlock::MAX_STEP, true,
+            std::max(search, MoveBlock::MAX_STEP) + MoveBlock::MAX_STEP);
+        if (groundZ <= INVALID_HEIGHT)
+            return aim;
 
-        // CanReachPositionAndGetValidCoords does not only answer, it rewrites the coordinates to the last point
-        // it found valid -- so a jump into a wall comes back "true" with the landing moved onto the seat's own
-        // feet. That is not a jump, and worse than not being one: the spline built from it has no length, and a
-        // spline with no length has no duration to divide by. Refuse anything that has not actually gone
-        // anywhere, and let the seat keep its feet.
-        float const dx = x - bot->GetPositionX();
-        float const dy = y - bot->GetPositionY();
-        if (dx * dx + dy * dy < MoveBlock::JUMP_MIN_YARDS * MoveBlock::JUMP_MIN_YARDS)
-            return false;
+        float const drop = bz - groundZ;
+        if (drop < -MoveBlock::JUMP_RISE_MAX)
+            return aim;
 
-        landing.Relocate(x, y, z);
-        return true;
+        // Detour's axes are {y, z, x}.
+        dtQueryFilterExt filter;
+        filter.setIncludeFlags(drop <= MoveBlock::DROP_ABOVE ? NAV_GROUND | NAV_WATER : NAV_GROUND);
+        filter.setExcludeFlags(0);
+        float const at[3] = { ay, groundZ, ax };
+        float const extents[3] = { 1.5f, MoveBlock::MAX_STEP, 1.5f };
+        float nearest[3] = { 0.0f, 0.0f, 0.0f };
+        dtPolyRef ref = 0;
+        if (dtStatusFailed(query->findNearestPoly(at, extents, &filter, &ref, nearest)) || !ref
+            || std::fabs(nearest[1] - groundZ) > MoveBlock::MAX_STEP)
+            return aim;
+
+        float const apex = bz + JumpApex();
+        float const collision = bot->GetCollisionHeight();
+        if (!map->isInLineOfSight(bx, by, apex, ax, ay, apex, phase, LINEOFSIGHT_ALL_CHECKS,
+                VMAP::ModelIgnoreFlags::Nothing)
+            || !map->isInLineOfSight(ax, ay, bz + collision, ax, ay, groundZ + collision, phase,
+                LINEOFSIGHT_ALL_CHECKS, VMAP::ModelIgnoreFlags::Nothing))
+            return aim;
+
+        aim.Landing.Relocate(ax, ay, groundZ);
+        aim.Drop = drop;
+        aim.Ok = true;
+        return aim;
     }
 
     /// March one bearing outward and say where it stops.
@@ -532,10 +553,12 @@ namespace
             }
         }
 
-        // Whether a jump would go anywhere, cached with the rest. The mask reads this; the press re-checks it
-        // properly, because the cache is up to half a bearing of turning out of date and a stale yes is a seat
-        // in the air over nothing.
-        probe->CanJump = !bot->IsFalling() && JumpLandingNear(query, bot, facing);
+        // Where a jump would come down, cached with the rest. The mask reads this; the press reads it too while
+        // the cache still describes where the seat stands, and measures again once it has moved or turned.
+        JumpAim const aim = JumpLandingTest(map, query, bot, facing, view.JumpDropSearch);
+        probe->CanJump = !bot->IsFalling() && aim.Ok;
+        probe->JumpLanding = aim.Landing;
+        probe->JumpDrop = aim.Ok ? aim.Drop : 0.0f;
 
         probe->From.Relocate(bot);
         probe->Facing = facing;
@@ -744,6 +767,8 @@ void Animus::Curriculum::MoveBlock::DescribeManifest(Layout const& /*layout*/, b
     block["march_max"] = double(MARCH_MAX);
     block["clearance_range"] = double(CLEARANCE_RANGE);
     block["jump_speed_z"] = double(JUMP_SPEED_Z);
+    block["jump_rise_max"] = double(JUMP_RISE_MAX);
+    block["jump_drop_scale"] = double(JUMP_DROP_SCALE);
 }
 
 std::string Animus::Curriculum::MoveBlock::ActionName(Layout const& /*layout*/, uint32 local) const
@@ -932,8 +957,11 @@ void Animus::Curriculum::MoveBlock::Observe(SeatView const& view, float* obs, ui
     // Only a mount. Protecting casts in general would stop a seat walking out of fire mid-spell, and that is a
     // thing it must always be able to do.
     bool const mounting = bot && Encoding::MountCastInProgress(bot);
+    // And a fall: a bearing pressed on the way down would Clear() the fall spline from mid-air and start a second
+    // fall from there, with a second HandleFall at the bottom.
+    bool const falling = bot && (bot->IsFalling() || (view.Probe && view.Probe->JumpDropPending));
     bool const canMove = bot && bot->IsAlive() && !bot->HasUnitState(Encoding::IMMOBILE_STATES)
-        && !inFlight && !mounting;
+        && !inFlight && !mounting && !falling;
     bool const airborne = Airborne(bot);
 
     if (bot)
@@ -1010,6 +1038,8 @@ void Animus::Curriculum::MoveBlock::Observe(SeatView const& view, float* obs, ui
                 out[OBS_CLEARANCE_SIN] = probe->ClearanceSin;
                 out[OBS_CLEARANCE_COS] = probe->ClearanceCos;
                 out[OBS_CAN_JUMP] = probe->CanJump ? 1.0f : 0.0f;
+                out[OBS_JUMP_DROP] = probe->CanJump
+                    ? std::clamp(probe->JumpDrop / JUMP_DROP_SCALE, 0.0f, 1.0f) : 0.0f;
             }
         }
         else
@@ -1034,6 +1064,7 @@ void Animus::Curriculum::MoveBlock::Observe(SeatView const& view, float* obs, ui
             }
         }
 
+        out[OBS_FALLING] = (view.Probe && view.Probe->JumpDropPending) || bot->IsFalling() ? 1.0f : 0.0f;
         out[OBS_IN_WATER] = bot->IsInWater() ? 1.0f : 0.0f;
         out[OBS_SUBMERGED] = bot->IsUnderWater() ? 1.0f : 0.0f;
         out[OBS_SUBMERGED_TIME] = std::min(1.0f, view.SubmergedTime / BREATH_SECONDS);
@@ -1109,10 +1140,27 @@ void Animus::Curriculum::MoveBlock::Observe(SeatView const& view, float* obs, ui
     allowed[ACTION_PITCH_LEVEL] = canPitch && std::fabs(view.Pitch) > 0.01f ? 1 : 0;
 }
 
-void Animus::Curriculum::MoveBlock::BeforeApply(SeatView& view, SeatActionResult& /*result*/) const
+void Animus::Curriculum::MoveBlock::BeforeApply(SeatView& view, SeatActionResult& result) const
 {
     if (!view.Bot || !view.Option)
         return;
+
+    // The end of a drop jump: the arc ran out at the launch height over the edge, and what happens next is the
+    // core's own fall with the core's own damage. Here rather than only in the travel block, which does the same
+    // for a dismount, because this block is in every stage and a drop in a pack stage must not leave the seat
+    // standing on air. Idempotent with the travel block's call: the second sees the fall spline running.
+    if (view.Probe && view.Probe->JumpDropPending && view.Bot->movespline->Finalized())
+    {
+        view.Probe->JumpDropPending = false;
+        float fell = 0.0f;
+        float cost = 0.0f;
+        if (Encoding::FallToGround(view.Bot, &fell, &cost))
+        {
+            ++result.Falls;
+            result.FallYards += fell;
+            result.FallDamage += cost;
+        }
+    }
 
     // The held keys come up on their own when their clocks run out, and what they turned to is kept.
     if (!view.Option->Running(SeatOptionKind::MoveTurn, view.NowMs))
@@ -1128,7 +1176,7 @@ void Animus::Curriculum::MoveBlock::BeforeApply(SeatView& view, SeatActionResult
     Steer(view);
 }
 
-void Animus::Curriculum::MoveBlock::Apply(SeatView& view, uint32 local, SeatActionResult& /*result*/) const
+void Animus::Curriculum::MoveBlock::Apply(SeatView& view, uint32 local, SeatActionResult& result) const
 {
     Player* bot = view.Bot;
     if (!bot || !view.Option)
@@ -1202,20 +1250,55 @@ void Animus::Curriculum::MoveBlock::Apply(SeatView& view, uint32 local, SeatActi
 
     if (local == ACTION_JUMP)
     {
-        // Checked again here rather than trusted from the mask: the probe is refreshed every few yards, and a
-        // landing that was there when it was measured may not be there now. A jump with nowhere to land is not
-        // worth the one failure mode this action has.
-        Position landing;
-        if (bot->IsFalling() || !JumpLanding(bot, view.Facing, landing))
+        if (bot->IsFalling())
             return;
+
+        // The probe's landing while it still describes where the seat stands; measured again once the seat has
+        // moved or turned since, so the press never trusts a stale yes. A press with nowhere to land is counted
+        // (jumps_refused) rather than silently doing nothing: it is the one way the mask and the press can still
+        // disagree, and the number says how often.
+        JumpAim aim;
+        GroundProbe* probe = view.Probe;
+        bool const fresh = probe && probe->Valid && bot->GetExactDist(&probe->From) < 0.5f
+            && std::fabs(std::atan2(std::sin(view.Facing - probe->Facing), std::cos(view.Facing - probe->Facing)))
+                < 0.05f;
+        if (fresh && probe->CanJump)
+        {
+            aim.Landing = probe->JumpLanding;
+            aim.Drop = probe->JumpDrop;
+            aim.Ok = true;
+        }
+        else if (Map* map = bot->GetMap())
+            aim = JumpLandingTest(map, map->GetMapCollisionData().GetMMapData().GetNavMeshQuery(), bot,
+                view.Facing, view.JumpDropSearch);
+
+        if (!aim.Ok)
+        {
+            ++result.JumpsRefused;
+            return;
+        }
 
         // The feet stop doing whatever they were doing: a jump is the whole move for as long as it lasts, and
         // the clock that says so is what keeps the next decision from pressing a step and cancelling the arc.
+        // Over a drop the arc ends at the launch height above the edge and the fall does the rest
+        // (BeforeApply, Encoding::FallToGround): a spline aimed thirty yards down would glide there at run
+        // speed and never call HandleFall, so the damage would be nothing whatever the height. The clock is a
+        // floor for a drop -- computeFallTime for the plain fall, and Slow Fall is slower -- and BeforeApply ends
+        // the drop on the spline, not on the clock.
+        bool const dropping = aim.Drop > DROP_ABOVE;
+        float const landZ = dropping ? bot->GetPositionZ() : aim.Landing.GetPositionZ();
         view.HeldBearing = 0xFF;
         view.Option->Stop(SeatOptionKind::MoveBearing);
-        if (view.Probe)
-            view.Probe->JumpUntilMs = view.NowMs + JumpFlightMs();
-        Encoding::JumpTo(bot, landing.GetPositionX(), landing.GetPositionY(), landing.GetPositionZ(),
+        if (probe)
+        {
+            probe->JumpUntilMs = view.NowMs + JumpFlightMs()
+                + (dropping ? uint64(1000.0f * Movement::computeFallTime(aim.Drop, false)) : 0);
+            probe->JumpDropPending = dropping;
+        }
+        Encoding::JumpTo(bot, aim.Landing.GetPositionX(), aim.Landing.GetPositionY(), landZ,
             std::max(1.0f, bot->GetSpeed(MOVE_RUN)), JUMP_SPEED_Z, &view.Facing);
+        ++result.Jumps;
+        result.JumpDrop = std::max(result.JumpDrop, aim.Drop);
+        result.JumpFeatherFall = bot->HasAuraType(SPELL_AURA_FEATHER_FALL) || bot->HasAuraType(SPELL_AURA_HOVER);
     }
 }

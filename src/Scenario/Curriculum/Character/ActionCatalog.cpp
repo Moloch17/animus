@@ -85,8 +85,9 @@ namespace
             case SPELL_AURA_TRACK_STEALTHED:
             case SPELL_AURA_WATER_WALK:
             case SPELL_AURA_WATER_BREATHING:
-            case SPELL_AURA_FEATHER_FALL:
-            case SPELL_AURA_HOVER:
+            // Feather fall and hover used to be excluded here with the rest of the travel conveniences. They are
+            // survival auras now (IsSurvivalAura): a drop off a ledge is a move the seat may choose, and Slow Fall
+            // or Levitate is what decides whether it costs health, so the classes that have one need the button.
             case SPELL_AURA_FAR_SIGHT:
             case SPELL_AURA_BIND_SIGHT:
             case SPELL_AURA_MOD_POSSESS:
@@ -178,6 +179,8 @@ namespace
             case SPELL_AURA_SPLIT_DAMAGE_PCT:
             case SPELL_AURA_MOD_INCREASE_HEALTH:
             case SPELL_AURA_230:                // increases maximum health (Commanding Shout)
+            case SPELL_AURA_FEATHER_FALL:       // Slow Fall: a fall costs nothing (Player::HandleFall)
+            case SPELL_AURA_HOVER:              // Levitate: the same
                 return true;
             default:
                 return false;
@@ -390,6 +393,7 @@ Animus::Curriculum::ActionCatalog::ActionCatalog(uint8 playerClass, ClassKit con
         action.DispelMask = DispelMaskOf(info);
         action.Dispel = action.DispelMask != 0;
         action.DispelFriendly = action.Dispel && info->IsPositive();
+        action.FeatherFall = info->HasAura(SPELL_AURA_FEATHER_FALL) || info->HasAura(SPELL_AURA_HOVER);
         return action;
     };
 
