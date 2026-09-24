@@ -76,8 +76,8 @@ namespace Animus
         void OnOwnerDeleted(ObjectGuid owner);
 
         /// Every account and character the module ever made, gone: companions out of the world unsaved, every
-        /// `ANIMUS<guid>` account deleted with its characters (orphans of older runs included), the registry
-        /// emptied. Returns what it did, one line per account.
+        /// `ANIMUS<guid>` account deleted with its characters (orphans of older runs included), the module's table
+        /// dropped and made again empty. Returns what it did, one line per account.
         [[nodiscard]] std::vector<std::string> PurgeAll();
 
         /// The addon's inspect-window edits of the companion (CompanionParty::Talent, PetTalent, Equip, Pet).

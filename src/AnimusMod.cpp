@@ -545,6 +545,7 @@ std::vector<std::string> Animus::AnimusMod::PurgeAll()
     std::vector<std::string> lines;
     if (out)
         lines.push_back(Acore::StringFormat("{} companion{} sent away unsaved.", out, out == 1 ? "" : "s"));
+    lines.push_back("Table animus_companion dropped and made again, empty.");
 
     QueryResult accounts = LoginDatabase.Query("SELECT id, username FROM account WHERE username LIKE 'ANIMUS%'");
     if (!accounts)
