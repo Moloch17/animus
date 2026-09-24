@@ -61,7 +61,7 @@ namespace Animus::Curriculum
     };
 
     /// Most arenas a stage can mix (the critic state has one column per arena).
-    constexpr uint32 MAX_ARENAS = 8;
+    constexpr uint32 MAX_ARENAS = 12;
 
     /// Most ambushers an arena can have; they take enemy slots the pulls leave free.
     constexpr uint32 MAX_AMBUSHERS = 2;
