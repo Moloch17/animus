@@ -28,13 +28,14 @@ namespace Animus::Addon
     /// The addon message prefix the Animus addon whispers with, and the prefix of every reply.
     constexpr std::string_view PREFIX = "Animus";
 
-    /// How the Animus addon (animus_addon/Animus) talks to the module: addon whispers a player sends to themselves,
-    /// tab-separated, the first word a request (`hello`, `list`, `create <name> <race> <class>`, `summon`, `dismiss`,
-    /// `rename <name>`, `reroll <race> <class>`, `talent <name> learn|unlearn <id>`, `pettalent ...`, `pet <name>`,
-    /// `equip <name> <bag> <slot> <inv slot>`).
+    /// How the Animus addon (interface_addon/animus_addon/Animus) talks to the module: addon whispers a player sends
+    /// to themselves, tab-separated, the first word a request (`hello`, `list`, `create <name> <race> <class>`,
+    /// `summon`, `dismiss`, `rename <name>`, `reroll <race> <class>`, `talent <name> learn|unlearn <id>`,
+    /// `pettalent ...`, `pet <name>`, `equip <name> <bag> <slot> <inv slot>`).
     /// Replies are addon whispers from the player to themselves, tab-separated, the first word in capitals (HELLO,
     /// RACE, COMPANION, PET, PETTALENT, OK, ERR), so the addon can tell an answer from its own request
-    /// echoed back by a realm without the module. animus_addon/Animus/README.md describes every message.
+    /// echoed back by a realm without the module. interface_addon/animus_addon/Animus/README.md describes every
+    /// message.
     ///
     /// Handle `msg` (prefix and all) as one of those; false when it is not an Animus message, so the whisper goes
     /// where it was going. Player security: this is how players use the module, where the `.animus` commands

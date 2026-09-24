@@ -1,6 +1,6 @@
 # Animus (addon)
 
-The player's side of [mod-animus](../../README.md): the window your companion is created, summoned and managed
+The player's side of [mod-animus](../../../README.md): the window your companion is created, summoned and managed
 from, for the 3.3.5a client. Every player can use it; the `.animus` commands stay game master ones.
 
 ## Installing
