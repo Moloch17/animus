@@ -58,12 +58,48 @@ namespace
         { "mage", CLASS_MAGE }, { "warlock", CLASS_WARLOCK }, { "druid", CLASS_DRUID }, { "dk", CLASS_DEATH_KNIGHT },
     } };
 
-    constexpr std::array<NamedId, 6> ROLE_NAMES =
+    /// What `.animus summon`'s third word asks of the build.
+    ///
+    /// The curriculum has no roles: what a spec is for is read off the build it actually ends up with, as an
+    /// Aptitude, rather than written down beside it. So the word names a demand instead of a role, and the words
+    /// people already type keep working. "dps" is not a demand at all -- damage is what a build does when nothing
+    /// else is asked of it, and there is no one feature that means it -- so it asks for anything.
+    enum class Wants : uint8
+    {
+        Anything,
+        HoldsThePull,
+        KeepsThemUp,
+    };
+
+    constexpr std::array<NamedId, 7> WANT_NAMES =
     { {
-        { "dps", uint8(Animus::Curriculum::Role::Dps) }, { "tank", uint8(Animus::Curriculum::Role::Tank) },
-        { "heal", uint8(Animus::Curriculum::Role::Heal) }, { "damage", uint8(Animus::Curriculum::Role::Dps) },
-        { "healer", uint8(Animus::Curriculum::Role::Heal) }, { "dd", uint8(Animus::Curriculum::Role::Dps) },
+        { "dps", uint8(Wants::Anything) }, { "damage", uint8(Wants::Anything) }, { "dd", uint8(Wants::Anything) },
+        { "any", uint8(Wants::Anything) },
+        { "tank", uint8(Wants::HoldsThePull) },
+        { "heal", uint8(Wants::KeepsThemUp) }, { "healer", uint8(Wants::KeepsThemUp) },
     } };
+
+    Animus::Curriculum::AptitudeDemand DemandOf(Wants wants)
+    {
+        switch (wants)
+        {
+            case Wants::HoldsThePull:
+                return Animus::Curriculum::AptitudeDemand::HoldsThePull();
+            case Wants::KeepsThemUp:
+                return Animus::Curriculum::AptitudeDemand::KeepsThemUp();
+            case Wants::Anything:
+            default:
+                return Animus::Curriculum::AptitudeDemand::Anything();
+        }
+    }
+
+    /// Whether any build this class can have meets the demand. The floors in AptitudeDemand are deliberately low,
+    /// so a class with an unusual answer to "who heals" is not turned away for not looking like the usual one.
+    bool CanMeet(Animus::Curriculum::ClassAssets const& assets, Animus::Curriculum::AptitudeDemand demand)
+    {
+        return !demand.Any() || std::any_of(assets.SpecAptitudes.begin(), assets.SpecAptitudes.end(),
+            [&demand](Animus::Curriculum::Aptitude const& aptitude) { return demand.MetBy(aptitude); });
+    }
 
     std::string Normalize(std::string_view text)
     {
@@ -195,28 +231,41 @@ bool Animus::AnimusMod::Summon(Player* owner, std::string_view race, std::string
         return false;
     }
 
-    std::optional<uint8> const roleId = FindNamed(ROLE_NAMES, role);
-    if (!roleId)
+    std::optional<uint8> const wantId = FindNamed(WANT_NAMES, role);
+    if (!wantId)
     {
-        message = Acore::StringFormat("Unknown role {}. Roles: {}.", role, Names(ROLE_NAMES));
+        message = Acore::StringFormat("Unknown {}. Ask for one of: {}.", role, Names(WANT_NAMES));
         return false;
     }
 
     std::string const raceName = NameOf(RACE_NAMES, *raceId);
     std::string const className = NameOf(CLASS_NAMES, *classId);
-    Curriculum::Role const playRole = Curriculum::Role(*roleId);
+    Curriculum::AptitudeDemand const demand = DemandOf(Wants(*wantId));
 
     Curriculum::ClassProfile const* profile = Curriculum::ClassAssets::FindProfile(*classId);
-    if (!profile || !profile->Plays(playRole))
+    if (!profile)
     {
-        std::string roles;
-        if (profile)
-            for (uint32 role = 0; role < Curriculum::ROLE_COUNT; ++role)
-                if (profile->Plays(Curriculum::Role(role)))
-                    roles += (roles.empty() ? "" : ", ") + std::string(Curriculum::RoleName(Curriculum::Role(role)));
+        message = Acore::StringFormat("There is no class profile for {}.", className);
+        return false;
+    }
 
-        message = Acore::StringFormat("A {} cannot be a {}. A {} can be: {}.", className,
-            Curriculum::RoleName(playRole), className, roles);
+    Curriculum::ClassAssets const& assets = Curriculum::ClassAssets::For(*profile);
+    if (!CanMeet(assets, demand))
+    {
+        std::string able;
+        std::vector<uint8> seen;
+        for (NamedId const& entry : WANT_NAMES)
+        {
+            if (std::find(seen.begin(), seen.end(), entry.Id) != seen.end())
+                continue;
+
+            seen.push_back(entry.Id);
+            if (CanMeet(assets, DemandOf(Wants(entry.Id))))
+                able += (able.empty() ? "" : ", ") + std::string(entry.Name);
+        }
+
+        message = Acore::StringFormat("No {} build can {}. A {} can be asked for: {}.", className, demand.Name(),
+            className, able);
         return false;
     }
 
@@ -253,7 +302,7 @@ bool Animus::AnimusMod::Summon(Player* owner, std::string_view race, std::string
     if (!party)
         party = std::make_unique<CompanionParty>(owner->GetGUID());
 
-    if (!party->Add(owner, layout, playRole, *raceId, message))
+    if (!party->Add(owner, layout, demand, *raceId, message))
     {
         if (!party->Size())
             _parties.erase(owner->GetGUID());

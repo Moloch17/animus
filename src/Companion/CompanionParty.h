@@ -77,7 +77,7 @@ namespace Animus
         /// transport -- and add it to the owner's group (creating the group when the owner has none). It is
         /// the owner's level, or its class's first level when that is higher (death knights: 55), and levels up with
         /// the owner. The race must be one the class allows. False with `message` set when refused.
-        bool Add(Player* owner, Curriculum::Layout const& layout, Curriculum::Role role, uint8 race,
+        bool Add(Player* owner, Curriculum::Layout const& layout, Curriculum::AptitudeDemand demand, uint8 race,
             std::string& message);
 
         Status Update(uint32 diff, Settings const& settings, ModelLibrary& models);
@@ -111,7 +111,9 @@ namespace Animus
             uint8 Spec = 0;
             /// The role it was added as, and the role of the spec it drew. Its layout is its class and covers
             /// every role the class plays, so the layout cannot answer this any more.
-            Curriculum::Role PlayRole = Curriculum::Role::Dps;
+            /// What this companion can actually do, read off the build it ended up with once its talents were
+            /// spent and its gear was on (Aptitude::Of). Everything that used to ask for a role asks this.
+            Curriculum::Aptitude Apt;
             Curriculum::TalentBuilder::Build Build;
             Curriculum::BattleSupplies Supplies;
             uint32 FoodItem = 0;

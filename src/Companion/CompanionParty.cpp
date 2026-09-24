@@ -95,7 +95,7 @@ Animus::CompanionParty::CompanionParty(ObjectGuid owner) : _owner(owner)
 
 Animus::CompanionParty::~CompanionParty() = default;
 
-bool Animus::CompanionParty::Add(Player* owner, Layout const& layout, Role role, uint8 race,
+bool Animus::CompanionParty::Add(Player* owner, Layout const& layout, AptitudeDemand demand, uint8 race,
     std::string& message)
 {
     if (_members.size() >= MAX_COMPANIONS)
@@ -146,16 +146,19 @@ bool Animus::CompanionParty::Add(Player* owner, Layout const& layout, Role role,
     member->L = &layout;
     member->Race = race;
     member->Level = level;
-    // A spec that plays the role it was asked for, as the forge's character generator does when it builds a seat
-    // (StageScenario::BuildSeat). The model is told the role and its talents, never which spec it drew.
-    member->PlayRole = role;
-    member->Spec = DrawSpec(profile, role);
+    // A spec that can do what was asked of it, as the forge's character generator does when it builds a seat
+    // (StageScenario::BuildSeat). The model is told what the character can do and what talents it has, never which
+    // spec it drew.
+    member->Spec = DrawSpec(ClassAssets::For(profile), demand);
 
     // As the forge builds a seat (StageScenario::BuildSeat, Configure, PrepareFighter, StockSeats). Talent points
     // depend on the map for death knights; the bot is on the owner's map now.
     bot->InitTalentForLevel();
     member->Build = SeatCharacter::Configure(bot, layout, member->Spec, false).Build;
-    member->Stable = SeatCharacter::PrepareFighter(bot, layout, member->PlayRole);
+    // Read what it can do now that it is the character it is going to be -- talents spent, gear on, spellbook
+    // final -- exactly where StageScenario::Configure reads it, and before anything is asked of it.
+    member->Apt = Aptitude::Of(ClassAssets::For(profile), member->Build, bot);
+    member->Stable = SeatCharacter::PrepareFighter(bot, layout, member->Apt);
 
     member->Obs.resize(layout.ObsDim);
     member->Mask.resize(layout.NumActions);
@@ -566,7 +569,7 @@ Animus::Curriculum::SeatView Animus::CompanionParty::View(Member const& member, 
     view.Level = member.Level;
     view.Race = member.Race;
     view.Spec = member.Spec;
-    view.PlayRole = member.PlayRole;
+    view.Apt = member.Apt;
     view.Build = &member.Build;
     view.Memory = &member.Memory;
     view.Trail = &member.Trail;
@@ -623,13 +626,14 @@ Animus::Curriculum::SeatView Animus::CompanionParty::View(Member const& member, 
             teammate = nullptr;
 
         // The goal a teammate is pursuing, as a forge party seat sees it: what its own model last chose.
-        view.Teammates[slot++] = { teammate, other->Goal, other->PlayRole, other->L->Profile->Class };
+        view.Teammates[slot++] = { teammate, other->Goal, other->Apt, other->L->Profile->Class };
     }
 
     // As the forge's PartyTank: the first living tank of the party, the bot itself included.
     for (std::unique_ptr<Member> const& other : _members)
     {
-        if (other->PlayRole != Role::Tank)
+        // Whoever can hold a pull, which is the same question PartyEncounter asks of a forge party.
+        if (!AptitudeDemand::HoldsThePull().MetBy(other->Apt))
             continue;
 
         Player* tank = other.get() == &member ? bot : FindBot(other->Bot);
@@ -644,7 +648,10 @@ Animus::Curriculum::SeatView Animus::CompanionParty::View(Member const& member, 
     {
         view.Opponent = target->ToPlayer();
         view.OpponentClass = view.Opponent->getClass();
-        view.OpponentRole = Role::Dps;
+        // Left at nothing on purpose: the forge fills this from the opponent's own build, and a real player's
+        // build is not something this module can read. An all-zero aptitude says "nothing is known of it", which
+        // is true, rather than guessing at damage and being wrong about a healer.
+        view.OpponentApt = Curriculum::Aptitude();
     }
 
     return view;

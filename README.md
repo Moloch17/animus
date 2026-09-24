@@ -4,7 +4,7 @@ Characters for an ordinary AzerothCore realm whose combat decisions come from mo
 [Animus Forge](https://github.com/Moloch17/animus-forge). The module builds against a stock AzerothCore with no core
 changes, together with [animus-lib](https://github.com/Moloch17/animus-lib), the code it shares with the forge.
 
-- **Class/role companions.** Up to four characters of the race, class and role you choose join your party at your
+- **Class companions.** Up to four characters of the race and class you choose join your party at your
   level and level up with you. They follow you through loading screens, into instances and onto transports, and play
   their class model in every fight.
 They run the same encoding code as training, so a model sees and does exactly what it trained on.
@@ -45,7 +45,7 @@ Game master commands, not available from the console.
 
 | Command | Effect |
 |---|---|
-| `.animus summon <race> <class> <role>` | A companion of that race, class and role joins your party (`human priest heal`, `orc warrior tank`) |
+| `.animus summon <race> <class> <wants>` | A companion of that race and class joins your party, with a build that can do what `wants` asks: `tank`, `heal` (or `healer`), or `dps` (`damage`, `dd`, `any`) for no demand (`human priest heal`, `orc warrior tank`) |
 | `.animus list` | Your companions and whether their models are loaded |
 | `.animus dismiss` | Remove all your companions |
 | `.animus stage list` | Every curriculum stage and its arenas: the names `Animus.Curriculum.Stage` accepts |
@@ -55,9 +55,10 @@ animus-lib's training half, which needs a core patch this module deliberately do
 
 ## Models
 
-A companion plays `<class>_<role><stage suffix>.amdl` for `Animus.Curriculum.Stage` (`hunter_dps_duel.amdl` for
-the default `stage1_duel`). A model loads only if its manifest is exactly the one this server builds for that layout,
-so the realm needs the animus-lib revision the forge trained with, and the same world database and DBC data. A refused
+A companion plays `<class><stage suffix>.amdl` for `Animus.Curriculum.Stage` (`hunter_duel.amdl` for the default
+`stage1_duel`): one model per class, not per class and role -- the curriculum has no roles, and a model plays every
+build its class can have. A model loads only if its manifest is exactly the one this server builds for that layout,
+so the realm needs the curriculum revision the forge trained with, and the same world database and DBC data. A refused
 model is logged once and shown by `.animus list`, and its companion only follows you. Models load on first use and
 again after `.reload config`.
 
