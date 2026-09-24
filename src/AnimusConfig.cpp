@@ -120,4 +120,3 @@ void Animus::AnimusConfig::Load()
     CurriculumOptions = curriculum.Options;
 
 }
-

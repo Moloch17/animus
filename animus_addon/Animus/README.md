@@ -8,8 +8,7 @@ The player's side of [mod-animus](../../README.md): a window to summon and dismi
 1. Copy this `Animus` folder into the client's `Interface/AddOns/`, so `Interface/AddOns/Animus/Animus.toc` exists.
 2. The realm runs mod-animus, and `AddonChannel = 1` in its `worldserver.conf` (the default): the addon talks to the
    module over addon messages.
-3. `/animus` opens the window; the minimap button (left click) does the same. Right click on the button dismisses
-   every companion.
+3. `/animus` opens the window; the minimap button does the same.
 
 | Command | Effect |
 |---|---|
