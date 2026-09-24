@@ -278,11 +278,12 @@ bool Animus::AnimusMod::Create(Player* owner, std::string name, std::string_view
         return false;
     }
 
-    // Written now, as a login's character is: the row exists before anything else can ask for it.
+    // Written as a login's character is. The save's statements exist on the asynchronous connection only, so the
+    // transaction goes through the worker; a load that follows queues behind it there.
     Player* bot = ObjectAccessor::FindConnectedPlayer(party->GetBotGUIDs().front());
     CharacterDatabaseTransaction trans = CharacterDatabase.BeginTransaction();
     bot->SaveToDB(trans, true, false);
-    CharacterDatabase.DirectCommitTransaction(trans);
+    CharacterDatabase.CommitTransaction(trans);
 
     CompanionRegistry::Record& record = _registry.Insert(owner->GetGUID(), account, bot->GetGUID(), 0);
     party->Save(record);

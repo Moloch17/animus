@@ -105,8 +105,8 @@ namespace Animus
             CompanionRegistry::Record const& record, std::string& message);
         using Record = CompanionRegistry::Record;
 
-        /// Write every companion to the characters database now (the transaction committed on this thread, so a
-        /// summon that follows reads it), with its mail and achievements purged; `record` gets what the module
+        /// Write every companion to the characters database (through the worker, whose queue a summon's load
+        /// follows), with its mail and achievements purged; `record` gets what the module
         /// remembers of it. Dismissing, the owner's logout and shutdown all save first.
         void Save(CompanionRegistry::Record& record);
 

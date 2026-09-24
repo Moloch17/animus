@@ -257,9 +257,11 @@ void Animus::CompanionParty::Save(Record& record)
         if (!bot)
             continue;
 
+        // The save's statements exist on the asynchronous connection only (a direct commit asserts on the first
+        // of them), so it goes through the worker, whose single queue also carries a load that follows it.
         CharacterDatabaseTransaction trans = CharacterDatabase.BeginTransaction();
         bot->SaveToDB(trans, false, false);
-        CharacterDatabase.DirectCommitTransaction(trans);
+        CharacterDatabase.CommitTransaction(trans);
         CompanionRegistry::Purge(bot->GetGUID());
 
         record.Spec = member->Spec;
