@@ -121,17 +121,20 @@ Animus::AnimusMod* Animus::AnimusMod::Instance()
 
 void Animus::AnimusMod::LoadConfig()
 {
-    bool const first = !_loaded;
-    _loaded = true;
     _config.Load();
-    if (first)
-        _registry.Load();
 
     // Models load when a companion or a stage seat first needs them, from the (new) model directory.
     _models.Reset(_config.Enable ? _config.ModelDir : "");
 
     if (!_config.Enable)
         LOG_INFO("module.animus", "Animus is disabled (Animus.Enable = 0)");
+}
+
+void Animus::AnimusMod::OnStartup()
+{
+    // After the character cache (World::SetInitialWorldSettings loads it long after the config): a record whose
+    // character is gone is recognised as such, not every record.
+    _registry.Load();
 }
 
 void Animus::AnimusMod::OnUpdate(uint32 diff)

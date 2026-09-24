@@ -48,6 +48,8 @@ namespace Animus
         static AnimusMod* Instance();
 
         void LoadConfig();
+        /// The world is up: the companions on record are read (the character cache exists by then).
+        void OnStartup();
         void OnUpdate(uint32 diff);
         void OnShutdown();
 
@@ -149,7 +151,6 @@ namespace Animus
         /// The layout of a profile at the configured stage, built on first use and kept (companions point at it).
         Curriculum::Layout const& LayoutFor(Curriculum::ClassProfile const& profile);
 
-        bool _loaded = false;                   // LoadConfig ran once (the registry loads with the first)
         AnimusConfig _config;
         ModelLibrary _models;
         CompanionRegistry _registry;

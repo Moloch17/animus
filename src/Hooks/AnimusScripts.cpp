@@ -139,9 +139,10 @@ namespace
     {
     public:
         AnimusWorldScript() : WorldScript("AnimusWorldScript",
-            { WORLDHOOK_ON_AFTER_CONFIG_LOAD, WORLDHOOK_ON_UPDATE, WORLDHOOK_ON_SHUTDOWN }) { }
+            { WORLDHOOK_ON_AFTER_CONFIG_LOAD, WORLDHOOK_ON_STARTUP, WORLDHOOK_ON_UPDATE, WORLDHOOK_ON_SHUTDOWN }) { }
 
         void OnAfterConfigLoad(bool /*reload*/) override { sAnimusMod->LoadConfig(); }
+        void OnStartup() override { sAnimusMod->OnStartup(); }
         void OnUpdate(uint32 diff) override { sAnimusMod->OnUpdate(diff); }
         void OnShutdown() override { sAnimusMod->OnShutdown(); }
     };
