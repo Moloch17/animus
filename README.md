@@ -44,9 +44,13 @@ trained with, so update it together with the models.
 
 Players use the module through the Animus addon in `animus_addon/Animus`: copy that folder into the client's
 `Interface/AddOns/` and type `/animus` (or click the minimap button). It offers the races of your faction, the
-classes each can be and what to ask of the build, lists your companions with their models, and dismisses them. It
-talks to the module over addon whispers the player sends to themselves (prefix `Animus`), which need
-`AddonChannel = 1` in `worldserver.conf` (the default); no security is required. The messages are documented in
+classes each can be and what to ask of the build, lists your companions with their models, and dismisses them
+(the unit menu of a companion's party frame has "Dismiss companion" too). Inspecting a companion edits it: its
+Talents tab learns a rank on left click and unlearns one on right click, a Pet tab does the same for a hunter
+pet's tree, and an item dragged from your bags onto its character pane goes on it, with what it wore coming back
+to you. An edited companion keeps those choices through its level-ups. The addon talks to the module over addon
+whispers the player sends to themselves (prefix `Animus`), which need `AddonChannel = 1` in `worldserver.conf`
+(the default); no security is required. The messages are documented in
 [its README](animus_addon/Animus/README.md), for anyone writing another client.
 
 ## Commands

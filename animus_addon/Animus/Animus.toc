@@ -7,3 +7,4 @@
 
 Animus.lua
 AnimusUI.lua
+AnimusInspect.lua

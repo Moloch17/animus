@@ -213,6 +213,59 @@ bool Animus::AnimusMod::Dismiss(Player* owner, std::string& message)
     return true;
 }
 
+Animus::CompanionParty* Animus::AnimusMod::PartyOf(Player* owner, std::string& message)
+{
+    auto const party = _parties.find(owner->GetGUID());
+    if (party == _parties.end() || !party->second->Size())
+    {
+        message = "You have no companions.";
+        return nullptr;
+    }
+    return party->second.get();
+}
+
+bool Animus::AnimusMod::DismissOne(Player* owner, std::string_view name, std::string& message)
+{
+    CompanionParty* party = PartyOf(owner, message);
+    if (!party || !party->Remove(name, message))
+        return false;
+
+    if (!party->Size())
+        RemoveParty(owner->GetGUID());
+    else
+        std::erase_if(_partyByBot,
+            [party](auto const& entry) { return entry.second == party && !party->HasBot(entry.first); });
+    return true;
+}
+
+bool Animus::AnimusMod::Talent(Player* owner, std::string_view name, uint32 talentId, bool learn,
+    std::string& message)
+{
+    CompanionParty* party = PartyOf(owner, message);
+    return party && party->Talent(name, talentId, learn, message);
+}
+
+bool Animus::AnimusMod::PetTalent(Player* owner, std::string_view name, uint32 talentId, bool learn,
+    std::string& message)
+{
+    CompanionParty* party = PartyOf(owner, message);
+    return party && party->PetTalent(name, talentId, learn, message);
+}
+
+bool Animus::AnimusMod::Equip(Player* owner, std::string_view name, uint8 bag, uint8 slot, uint8 equipSlot,
+    std::string& message)
+{
+    CompanionParty* party = PartyOf(owner, message);
+    return party && party->Equip(owner, name, bag, slot, equipSlot, message);
+}
+
+bool Animus::AnimusMod::Pet(Player* owner, std::string_view name, CompanionParty::PetView& view,
+    std::string& message)
+{
+    CompanionParty* party = PartyOf(owner, message);
+    return party && party->Pet(name, view, message);
+}
+
 bool Animus::AnimusMod::Summon(Player* owner, std::string_view race, std::string_view playerClass,
     std::string_view role, std::string& message)
 {

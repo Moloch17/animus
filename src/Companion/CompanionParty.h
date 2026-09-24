@@ -19,6 +19,7 @@
 #ifndef ANIMUS_COMPANION_PARTY_H
 #define ANIMUS_COMPANION_PARTY_H
 
+#include "CompanionTalents.h"
 #include "Layout.h"
 #include "MlpPolicy.h"
 #include "ObjectGuid.h"
@@ -100,6 +101,29 @@ namespace Animus
         /// Take every companion out of the group and the world.
         void DestroyAll();
 
+        /// Take one companion, by name, out of the group and the world, giving the owner back the gear they put on
+        /// it. False with `message` set for a name that is not a companion's.
+        bool Remove(std::string_view name, std::string& message);
+
+        /// The owner edits a companion from the inspect window: one talent rank learned or unlearned, on the
+        /// companion or its pet, or an item of theirs put on it (CompanionGear::Give). An edited companion keeps its
+        /// talents and that gear through its level-ups. False with `message` set when refused.
+        bool Talent(std::string_view name, uint32 talentId, bool learn, std::string& message);
+        bool PetTalent(std::string_view name, uint32 talentId, bool learn, std::string& message);
+        bool Equip(Player* owner, std::string_view name, uint8 bag, uint8 slot, uint8 equipSlot,
+            std::string& message);
+
+        /// A companion's pet and its talent tree, for the addon's pet tab.
+        struct PetView
+        {
+            std::string PetName;
+            uint8 Level = 0;
+            uint32 FreePoints = 0;
+            std::vector<CompanionTalents::PetTalent> Talents;
+        };
+        /// False with `message` set for a companion without a hunter pet out.
+        bool Pet(std::string_view name, PetView& view, std::string& message) const;
+
         /// Map threads (UnitScript::DealDamage), counted as a forge seat's step damage: `damage` companion `bot` or its
         /// pet, guardian or totem dealt to `victim`, which counts only on an enemy of the current pull (a forge seat's
         /// env targets); `damage` companion `bot` took itself (its pets take their own). The pull is only changed on
@@ -163,7 +187,16 @@ namespace Animus
             int32 Goal = Curriculum::NO_GOAL;   // ... the goal of it, as its teammates see it
             bool ModelErrorLogged = false;
             bool Parked = false;                // out of the world while the owner flies or rides a vehicle
+            /// The owner edited its talents, its pet's or its gear: LevelUp keeps them (and only spends the new
+            /// points) instead of building the character again from scratch.
+            bool Edited = false;
+            std::vector<uint8> OwnerGear;       // equipment slots holding an item the owner gave it
         };
+
+        [[nodiscard]] Member* Find(std::string_view name) const;
+        /// A member's bot resolved and in the world, else null with `message` set.
+        [[nodiscard]] Player* BotOf(Member const& member, std::string& message) const;
+        void Destroy(Member& member, Player* owner);
 
         /// Refresh the pull: new enemies into free (or dead) slots, and the end of the pull.
         void UpdatePull(Player* owner, std::vector<Player*> const& bots);
@@ -182,6 +215,9 @@ namespace Animus
         [[nodiscard]] uint8 LevelFor(Member const& member, Player* owner) const;
         void StartEpisode(Player* owner);
         static void Destroy(Player* bot);
+        /// LevelUp for a companion the owner edited: talents and pet talents taken again at the new level, new
+        /// points spent along the standard build, the owner's gear kept.
+        void LevelUpEdited(Member& member, Player* bot, Player* owner) const;
 
         ObjectGuid _owner;
         std::vector<std::unique_ptr<Member>> _members;

@@ -23,6 +23,8 @@
 #include "SharedDefines.h"
 #include "StringFormat.h"
 #include "WorldPacket.h"
+#include <charconv>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -83,6 +85,42 @@ namespace
                 companion.Spec, companion.Level, companion.Parked ? 1 : 0, companion.ModelName, companion.Model));
     }
 
+    /// A number the addon sent, if it is one.
+    template <typename T>
+    std::optional<T> Number(std::string_view word)
+    {
+        T value{};
+        auto const [end, error] = std::from_chars(word.data(), word.data() + word.size(), value);
+        if (error != std::errc() || end != word.data() + word.size())
+            return std::nullopt;
+        return value;
+    }
+
+    /// PET <companion> <pet name> <level> <free points> <talent count>, then a PETTALENT line per talent of its
+    /// tree: talent id, row, column, max rank, rank, the ranks' spells (comma-separated), prerequisite talent id
+    /// (0 for none) and the rank it needs. ERR for a companion without a hunter pet out.
+    void SendPet(Player* player, std::string_view name)
+    {
+        Animus::CompanionParty::PetView view;
+        std::string message;
+        if (!sAnimusMod->Pet(player, name, view, message))
+        {
+            SendResult(player, false, message);
+            return;
+        }
+
+        Send(player, Acore::StringFormat("PET\t{}\t{}\t{}\t{}\t{}", name, view.PetName, view.Level, view.FreePoints,
+            view.Talents.size()));
+        for (Animus::CompanionTalents::PetTalent const& talent : view.Talents)
+        {
+            std::string spells;
+            for (uint32 spell : talent.Spells)
+                spells += (spells.empty() ? "" : ",") + std::to_string(spell);
+            Send(player, Acore::StringFormat("PETTALENT\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}", name, talent.TalentId,
+                talent.Row, talent.Col, talent.MaxRank, talent.Rank, spells, talent.DependsOn, talent.DependsOnRank));
+        }
+    }
+
     /// Everything the addon needs to open: HELLO <protocol> <enabled> <stage>, a RACE line per race of the
     /// player's faction with the classes it can be, WANTS, then the party.
     void SendHello(Player* player)
@@ -121,8 +159,40 @@ bool Animus::Addon::Handle(Player* player, std::string_view msg)
     }
     else if (request == "dismiss")
     {
-        SendResult(player, sAnimusMod->Dismiss(player, message), message);
+        SendResult(player, words.size() > 1 ? sAnimusMod->DismissOne(player, words[1], message)
+            : sAnimusMod->Dismiss(player, message), message);
         SendParty(player);
+    }
+    else if (request == "talent" || request == "pettalent")
+    {
+        // talent <companion> learn|unlearn <talent id>, and the same of its pet
+        std::optional<uint32> const talentId = words.size() == 4 ? Number<uint32>(words[3]) : std::nullopt;
+        if (!talentId || (words[2] != "learn" && words[2] != "unlearn"))
+            SendResult(player, false, "A talent edit names a companion, learn or unlearn, and a talent id.");
+        else if (request == "talent")
+            SendResult(player, sAnimusMod->Talent(player, words[1], *talentId, words[2] == "learn", message), message);
+        else if (sAnimusMod->PetTalent(player, words[1], *talentId, words[2] == "learn", message))
+            SendPet(player, words[1]);
+        else
+            SendResult(player, false, message);
+    }
+    else if (request == "pet")
+    {
+        if (words.size() != 2)
+            SendResult(player, false, "A pet request names a companion.");
+        else
+            SendPet(player, words[1]);
+    }
+    else if (request == "equip")
+    {
+        // equip <companion> <bag> <slot> <inventory slot>, in the client's numbering
+        std::optional<uint8> const bag = words.size() == 5 ? Number<uint8>(words[2]) : std::nullopt;
+        std::optional<uint8> const slot = words.size() == 5 ? Number<uint8>(words[3]) : std::nullopt;
+        std::optional<uint8> const equipSlot = words.size() == 5 ? Number<uint8>(words[4]) : std::nullopt;
+        if (!bag || !slot || !equipSlot)
+            SendResult(player, false, "An equip names a companion, a bag, a slot and an equipment slot.");
+        else
+            SendResult(player, sAnimusMod->Equip(player, words[1], *bag, *slot, *equipSlot, message), message);
     }
     else
         SendResult(player, false, Acore::StringFormat("Unknown request {}.", request));

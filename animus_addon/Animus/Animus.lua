@@ -39,7 +39,10 @@ A.state = {
     raceOrder = {},
     wants = {},             -- ordered list of want words
     companions = {},        -- { name, class, spec, level, parked, modelName, model }
+    pets = {},              -- companion name -> { name, level, free, talents = { {id, row, col, maxRank, rank,
+                            --   spells, dependsOn, dependsOnRank} } }
     max = 4,
+    lastRequest = nil,      -- the first word of the request the last answer was for
     message = nil,          -- the last OK/ERR text
     messageOk = true,
     waitingSince = nil,     -- GetTime() of the request still unanswered
@@ -72,6 +75,7 @@ end
 function A.Send(...)
     local message = strjoin("\t", ...)
     A.state.waitingSince = GetTime()
+    A.state.lastRequest = (...)
     SendAddonMessage(A.PREFIX, message, "WHISPER", UnitName("player"))
 end
 
@@ -94,6 +98,40 @@ end
 
 function A.Dismiss()
     A.Send("dismiss")
+end
+
+function A.DismissOne(name)
+    A.Send("dismiss", name)
+end
+
+-- One rank of a companion's talent learned (learn true) or unlearned, by talent id; the same of its pet.
+function A.Talent(name, learn, talentId)
+    A.Send("talent", name, learn and "learn" or "unlearn", talentId)
+end
+
+function A.PetTalent(name, learn, talentId)
+    A.Send("pettalent", name, learn and "learn" or "unlearn", talentId)
+end
+
+function A.RequestPet(name)
+    A.Send("pet", name)
+end
+
+-- The item in the owner's bag `bag` slot `slot` (client numbering) goes on the companion's inventory slot.
+function A.Equip(name, bag, slot, invSlot)
+    A.Send("equip", name, bag, slot, invSlot)
+end
+
+function A.IsCompanion(name)
+    if not name then
+        return false
+    end
+    for _, companion in ipairs(A.state.companions) do
+        if companion.name == name then
+            return true
+        end
+    end
+    return false
 end
 
 function A.SetMessage(ok, text)
@@ -150,6 +188,27 @@ function handlers.MEMBER(name, class, spec, level, parked, modelName, model)
     table.insert(A.state.companions, {
         name = name, class = class, spec = spec, level = tonumber(level) or 0, parked = parked == "1",
         modelName = modelName, model = model or "",
+    })
+end
+
+function handlers.PET(name, petName, level, free, count)
+    A.state.pets[name] = { name = petName, level = tonumber(level) or 0, free = tonumber(free) or 0,
+        expected = tonumber(count) or 0, talents = {} }
+end
+
+function handlers.PETTALENT(name, id, row, col, maxRank, rank, spells, dependsOn, dependsOnRank)
+    local pet = A.state.pets[name]
+    if not pet then
+        return
+    end
+    local list = {}
+    for spell in string.gmatch(spells or "", "%d+") do
+        table.insert(list, tonumber(spell))
+    end
+    table.insert(pet.talents, {
+        id = tonumber(id), row = tonumber(row) or 0, col = tonumber(col) or 0, maxRank = tonumber(maxRank) or 0,
+        rank = tonumber(rank) or 0, spells = list, dependsOn = tonumber(dependsOn) or 0,
+        dependsOnRank = tonumber(dependsOnRank) or 0,
     })
 end
 
@@ -223,26 +282,6 @@ end)
 -- /animus
 
 SLASH_ANIMUS1 = "/animus"
-SlashCmdList.ANIMUS = function(text)
-    local words = { strsplit(" ", strtrim(text or "")) }
-    local command = strlower(words[1] or "")
-    if command == "" or command == "show" then
-        A.ToggleWindow()
-    elseif command == "summon" then
-        A.Summon(strlower(words[2] or ""), strlower(words[3] or ""), strlower(words[4] or "dps"))
-    elseif command == "list" then
-        A.List()
-        A.ShowWindow()
-    elseif command == "dismiss" then
-        A.Dismiss()
-    elseif command == "hello" or command == "reconnect" then
-        A.Hello()
-    elseif command == "minimap" then
-        AnimusDB.minimapHidden = not AnimusDB.minimapHidden
-        A.UpdateMinimapButton()
-    else
-        A.Print("/animus -- open the window")
-        A.Print("/animus summon <race> <class> [tank|heal|dps] -- a companion joins your party")
-        A.Print("/animus list, /animus dismiss, /animus reconnect, /animus minimap")
-    end
+SlashCmdList.ANIMUS = function()
+    A.ToggleWindow()
 end

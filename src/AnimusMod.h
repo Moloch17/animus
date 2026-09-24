@@ -52,6 +52,16 @@ namespace Animus
 
         /// Command handlers. Return false with `message` set when the request is refused.
         bool Dismiss(Player* owner, std::string& message);
+        /// One companion of `owner`, by name.
+        bool DismissOne(Player* owner, std::string_view name, std::string& message);
+
+        /// The addon's inspect-window edits of one companion of `owner` (CompanionParty::Talent, PetTalent, Equip,
+        /// Pet).
+        bool Talent(Player* owner, std::string_view name, uint32 talentId, bool learn, std::string& message);
+        bool PetTalent(Player* owner, std::string_view name, uint32 talentId, bool learn, std::string& message);
+        bool Equip(Player* owner, std::string_view name, uint8 bag, uint8 slot, uint8 equipSlot,
+            std::string& message);
+        bool Pet(Player* owner, std::string_view name, CompanionParty::PetView& view, std::string& message);
 
         /// A companion of `race` (human, nightelf, ...), `playerClass` (priest, deathknight, ...) and `role` (dps, tank,
         /// heal) joins the owner's group and plays its class's model for Animus.Curriculum.Stage. Refused for a
@@ -96,6 +106,9 @@ namespace Animus
 
     private:
         AnimusMod() = default;
+
+        /// The party of `owner`, else null with `message` set.
+        CompanionParty* PartyOf(Player* owner, std::string& message);
 
         void RemoveParty(ObjectGuid owner);
         void RemoveAll();

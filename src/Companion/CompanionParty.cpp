@@ -20,10 +20,13 @@
 #include "BotFactory.h"
 #include "Chat.h"
 #include "ClassAssets.h"
+#include "CompanionGear.h"
+#include "CompanionTalents.h"
 #include "Creature.h"
 #include "EncoderSupport.h"
 #include "Group.h"
 #include "GroupMgr.h"
+#include "Item.h"
 #include "Log.h"
 #include "Map.h"
 #include "MlpPolicy.h"
@@ -31,14 +34,18 @@
 #include "MotionMaster.h"
 #include "MoveSpline.h"
 #include "ObjectAccessor.h"
+#include "Pet.h"
 #include "PetBlock.h"
+#include "PetTalents.h"
 #include "Player.h"
 #include "Random.h"
 #include "SeatCharacter.h"
 #include "SeatEncoder.h"
 #include "StringFormat.h"
 #include <algorithm>
+#include <cctype>
 #include <cmath>
+#include <numeric>
 
 namespace
 {
@@ -687,6 +694,12 @@ uint8 Animus::CompanionParty::LevelFor(Member const& member, Player* owner) cons
 
 void Animus::CompanionParty::LevelUp(Member& member, Player* bot, Player* owner) const
 {
+    if (member.Edited)
+    {
+        LevelUpEdited(member, bot, owner);
+        return;
+    }
+
     Layout const& layout = *member.L;
     uint8 const level = LevelFor(member, owner);
     bool const petOut = !bot->GetPetGUID().IsEmpty();
@@ -707,6 +720,64 @@ void Animus::CompanionParty::LevelUp(Member& member, Player* bot, Player* owner)
     member.LastPower = bot->GetPower(bot->getPowerType());
 
     LOG_INFO("module.animus", "Companion {} ({}) is now level {}", member.Name, layout.Profile->Name, level);
+    ChatHandler(owner->GetSession()).SendSysMessage(Acore::StringFormat("{} is now level {}.", member.Name, level));
+}
+
+void Animus::CompanionParty::LevelUpEdited(Member& member, Player* bot, Player* owner) const
+{
+    Layout const& layout = *member.L;
+    ClassAssets const& assets = *layout.Assets;
+    SpecProfile const& spec = layout.Profile->Specs[member.Spec];
+    uint8 const level = LevelFor(member, owner);
+
+    // What the owner chose, to take again at the new level: the talents, the pet's, and their gear. The talents are
+    // reset rather than kept because unlearning one rank at a time leaves the core's private count of spent points
+    // wrong (CompanionTalents::Unlearn), and resetting is the one thing that puts it right; it also puts the pet
+    // away, as the plain LevelUp does.
+    CompanionTalents::Snapshot const talents = CompanionTalents::Take(bot);
+    uint32 const oldPoints = uint32(std::accumulate(talents.begin(), talents.end(), 0u,
+        [](uint32 sum, auto const& entry) { return sum + entry.second; }));
+    ::Pet* pet = bot->GetPet();
+    bool const petOut = pet != nullptr;
+    CompanionTalents::Snapshot const petTalents = pet ? CompanionTalents::TakePet(pet) : CompanionTalents::Snapshot{};
+    std::vector<Item*> const ownerGear = CompanionGear::Detach(bot, member.OwnerGear);
+
+    bot->GiveLevel(level);
+    bot->resetTalents(true);
+    bot->InitTalentForLevel();
+    CompanionTalents::Replay(bot, talents);
+
+    // The new points go where the standard build would put them next; what the build spends first was already the
+    // owner's to keep or drop, so those steps are skipped. What the build cannot place stays for the owner.
+    TalentBuilder::Build const standard = assets.Talents->Standard(spec.Name, spec.TabPage,
+        bot->GetFreeTalentPoints() + oldPoints);
+    for (std::size_t i = oldPoints; i < standard.Order.size() && bot->GetFreeTalentPoints(); ++i)
+        bot->LearnTalent(assets.Talents->Talents()[standard.Order[i].Index].TalentId, standard.Order[i].Rank);
+
+    // Configure builds the rest (trainer spells, glyphs, gear of the level) and would spend every free point on a
+    // build of its own: it sees none, and gets them back after.
+    uint32 const free = bot->GetFreeTalentPoints();
+    bot->SetFreeTalentPoints(0);
+    member.Build = SeatCharacter::Configure(bot, layout, member.Spec, false).Build;
+    bot->SetFreeTalentPoints(free);
+    CompanionGear::Reattach(bot, owner, ownerGear, member.OwnerGear);
+
+    if (petOut && SeatCharacter::GivePet(bot, member.Stable))
+        if (::Pet* given = bot->GetPet())
+        {
+            // GivePet spends the pet's points on the standard build; the owner's choices replace it.
+            given->resetTalents();
+            CompanionTalents::ReplayPet(bot, given, petTalents);
+            PetTalents::Spend(bot, given);
+        }
+
+    member.Level = level;
+    member.LastPetGuid.Clear();
+    Restock(member, bot, owner);
+    member.LastPower = bot->GetPower(bot->getPowerType());
+
+    LOG_INFO("module.animus", "Companion {} ({}) is now level {}, keeping what its owner chose", member.Name,
+        layout.Profile->Name, level);
     ChatHandler(owner->GetSession()).SendSysMessage(Acore::StringFormat("{} is now level {}.", member.Name, level));
 }
 
@@ -752,9 +823,163 @@ void Animus::CompanionParty::DestroyAll()
     std::vector<std::unique_ptr<Member>> members = std::move(_members);
     _members.clear();
 
+    Player* owner = ObjectAccessor::FindPlayer(_owner);
     for (std::unique_ptr<Member> const& member : members)
-        if (Player* bot = FindBot(member->Bot))
-            Destroy(bot);
+        Destroy(*member, owner);
+}
+
+bool Animus::CompanionParty::Remove(std::string_view name, std::string& message)
+{
+    Member* member = Find(name);
+    if (!member)
+    {
+        message = Acore::StringFormat("{} is not one of your companions.", name);
+        return false;
+    }
+
+    auto const itr = std::find_if(_members.begin(), _members.end(),
+        [member](std::unique_ptr<Member> const& m) { return m.get() == member; });
+    std::unique_ptr<Member> const gone = std::move(*itr);
+    _members.erase(itr);
+    Destroy(*gone, ObjectAccessor::FindPlayer(_owner));
+    message = Acore::StringFormat("{} dismissed.", gone->Name);
+    return true;
+}
+
+void Animus::CompanionParty::Destroy(Member& member, Player* owner)
+{
+    Player* bot = FindBot(member.Bot);
+    if (!bot)
+        return;
+
+    // What the owner put on it goes back to them first, while both are here. (An owner logging out has already
+    // been saved when this runs, so gear on a companion is lost then.)
+    if (owner && !member.OwnerGear.empty())
+        CompanionGear::Return(bot, owner, member.OwnerGear);
+
+    Destroy(bot);
+}
+
+Animus::CompanionParty::Member* Animus::CompanionParty::Find(std::string_view name) const
+{
+    for (std::unique_ptr<Member> const& member : _members)
+        if (std::equal(name.begin(), name.end(), member->Name.begin(), member->Name.end(),
+            [](char a, char b) { return std::tolower(static_cast<unsigned char>(a))
+                == std::tolower(static_cast<unsigned char>(b)); }))
+            return member.get();
+    return nullptr;
+}
+
+Player* Animus::CompanionParty::BotOf(Member const& member, std::string& message) const
+{
+    Player* bot = FindBot(member.Bot);
+    if (!bot || !bot->IsInWorld() || member.Parked)
+    {
+        message = Acore::StringFormat("{} is not here right now.", member.Name);
+        return nullptr;
+    }
+    return bot;
+}
+
+bool Animus::CompanionParty::Talent(std::string_view name, uint32 talentId, bool learn, std::string& message)
+{
+    Member* member = Find(name);
+    if (!member)
+    {
+        message = Acore::StringFormat("{} is not one of your companions.", name);
+        return false;
+    }
+
+    Player* bot = BotOf(*member, message);
+    if (!bot)
+        return false;
+
+    if (!(learn ? CompanionTalents::Learn(bot, talentId, message) : CompanionTalents::Unlearn(bot, talentId, message)))
+        return false;
+
+    member->Edited = true;
+    bot->UpdateAllStats();
+    return true;
+}
+
+bool Animus::CompanionParty::PetTalent(std::string_view name, uint32 talentId, bool learn, std::string& message)
+{
+    Member* member = Find(name);
+    if (!member)
+    {
+        message = Acore::StringFormat("{} is not one of your companions.", name);
+        return false;
+    }
+
+    Player* bot = BotOf(*member, message);
+    if (!bot)
+        return false;
+
+    ::Pet* pet = bot->GetPet();
+    if (!pet)
+    {
+        message = Acore::StringFormat("{} has no pet out.", member->Name);
+        return false;
+    }
+
+    if (!(learn ? CompanionTalents::LearnPet(bot, pet, talentId, message)
+        : CompanionTalents::UnlearnPet(bot, pet, talentId, message)))
+        return false;
+
+    member->Edited = true;
+    return true;
+}
+
+bool Animus::CompanionParty::Equip(Player* owner, std::string_view name, uint8 bag, uint8 slot, uint8 equipSlot,
+    std::string& message)
+{
+    Member* member = Find(name);
+    if (!member)
+    {
+        message = Acore::StringFormat("{} is not one of your companions.", name);
+        return false;
+    }
+
+    Player* bot = BotOf(*member, message);
+    if (!bot)
+        return false;
+
+    uint8 equipped = 0;
+    if (!CompanionGear::Give(owner, bot, bag, slot, equipSlot, equipped, message))
+        return false;
+
+    member->Edited = true;
+    if (std::find(member->OwnerGear.begin(), member->OwnerGear.end(), equipped) == member->OwnerGear.end())
+        member->OwnerGear.push_back(equipped);
+    message = Acore::StringFormat("{} equips it.", member->Name);
+    return true;
+}
+
+bool Animus::CompanionParty::Pet(std::string_view name, PetView& view, std::string& message) const
+{
+    Member const* member = Find(name);
+    if (!member)
+    {
+        message = Acore::StringFormat("{} is not one of your companions.", name);
+        return false;
+    }
+
+    Player* bot = BotOf(*member, message);
+    if (!bot)
+        return false;
+
+    ::Pet const* pet = bot->GetPet();
+    if (!pet || pet->getPetType() != HUNTER_PET)
+    {
+        message = Acore::StringFormat("{} has no pet with talents out.", member->Name);
+        return false;
+    }
+
+    view.PetName = pet->GetName();
+    view.Level = uint8(pet->GetLevel());
+    view.FreePoints = const_cast<::Pet*>(pet)->GetFreeTalentPoints();
+    view.Talents = CompanionTalents::PetTree(pet);
+    return true;
 }
 
 void Animus::CompanionParty::Destroy(Player* bot)
