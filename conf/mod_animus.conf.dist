@@ -40,11 +40,11 @@ Animus.ModelDir = "animus"
 #        Description: Which curriculum stage's models class companions play. A companion summoned
 #                     before a ".reload config" keeps its stage. A name that is not a stage falls
 #                     back to the default.
-#        Default:     "stage14_companion" - the models this module ships (models/, one per class)
-#                     Any stage of ".animus stage list" (stage1_move ... stage23_crossroads), with that
+#        Default:     "stage16_companion" - the models this module ships (models/, one per class)
+#                     Any stage of ".animus stage list" (stage1_move ... stage25_raid_gauntlet), with that
 #                     stage's models in Animus.ModelDir
 
-Animus.Curriculum.Stage = "stage14_companion"
+Animus.Curriculum.Stage = "stage16_companion"
 
 #
 #    Animus.Curriculum.DecisionMs
@@ -73,10 +73,10 @@ Animus.Curriculum.DecisionMs = 250
 #
 #    Animus.Curriculum.Arena.<stage>.<arena>.MaxRung
 #        Description: Hold one arena's pack ladder at a rung instead of letting it climb, e.g.
-#                     Animus.Curriculum.Arena.stage3_hazards.hazards.MaxRung = 0 for the bottom rung.
+#                     Animus.Curriculum.Arena.stage5_dodge.hazards.MaxRung = 0 for the bottom rung.
 #                     Binds training and evaluation alike. A drill uses it so the thing being drilled is
 #                     the only thing that varies; -1 lets the ladder climb to Pulls.MaxTier as usual.
-#        Default:     the stage definition's (0 for stage3_hazards, -1 for every other arena)
+#        Default:     the stage definition's (-1 for every arena)
 
 #
 #    Animus.Curriculum.Characters.*
@@ -220,7 +220,7 @@ Animus.Curriculum.Casting.Cancel = 0.05
 Animus.Curriculum.Goals.Match = 0.02
 #   every arena with a director, per decision a seat spends fighting the enemy its director called, while one is
 #   called and alive. Compliance shaping: an order is meant to be followed because following it wins fights, but a
-#   channel that correlates with nothing cannot bootstrap into that. stage20_duo_led ran 30M steps with the order
+#   channel that correlates with nothing cannot bootstrap into that. stage22_duo_led ran 30M steps with the order
 #   paying nothing and order_focus_kept sat at chance the whole way, so the director's calls changed nothing in the
 #   world and it never left exploration. The same job Goals.Match does for the goal head; anneal towards 0 once
 #   order_focus_kept holds up without it. The director itself never earns this -- it is taken back out of its own
@@ -340,7 +340,7 @@ Animus.Curriculum.Pulls.Clear = 2.5
 Animus.Curriculum.Pulls.FastPull = 0.5
 Animus.Curriculum.Pulls.HealthKept = 0.5
 Animus.Curriculum.Pulls.GauntletDeath = 10.0
-#   A single pack (stage2_pack): the clear, the fast clear bonus (times the episode fraction left after engaging),
+#   A single pack (stage9_pack): the clear, the fast clear bonus (times the episode fraction left after engaging),
 #   health kept, death, running out of time (a lost fight), standing off once StallGraceMs are gone (per second),
 #   and a ranged spec hit in melee reach (per second). As mod_animus_forge.conf.dist.
 Animus.Curriculum.Pulls.PackClear = 10.0
@@ -529,7 +529,7 @@ Animus.Curriculum.Opponent.TankChance = 20
 
 #
 #    Animus.Curriculum.Evade.*
-#        Getting away from a fight that cannot be won (stage16_evade, stage17_hide). Time spent unseen is
+#        Getting away from a fight that cannot be won (stage13_evade, stage14_hide). Time spent unseen is
 #        counted and never paid -- paid seconds out of sight are earned by standing in the far corner. What is
 #        paid is the transition out of contact, once a break, with a cooldown.
 
@@ -542,7 +542,7 @@ Animus.Curriculum.Evade.EscapeMs = 8000
 
 #
 #    Animus.Curriculum.Stealth.*
-#        Stalking (stage18_stealth): closing on someone while stealthed and unseen, and holding there. The one
+#        Stalking (stage15_stealth): closing on someone while stealthed and unseen, and holding there. The one
 #        reward in the curriculum paid per decision rather than on a transition, and capped for it. Time unseen
 #        is still never paid -- the distance condition is what makes this a skill, since detection is a check
 #        the seat is losing the whole time it stands inside the band.
@@ -613,7 +613,7 @@ Animus.Curriculum.ScriptedPlayers.BreakBelow = 0.6
 #   Travel arenas. Ground: a place this many yards away by path
 Animus.Curriculum.Travel.ObjectiveMin = 60.0
 Animus.Curriculum.Travel.ObjectiveMax = 320.0
-#   travel arenas made on foot (stage6_run): yards from the start, by path. Shorter than the mounted range because
+#   travel arenas made on foot (stage1_move): yards from the start, by path. Shorter than the mounted range because
 #   the lesson is how well the seat covers ground with what it has -- Sprint, Dash, Travel Form, Aspect of the
 #   Cheetah, and not stopping -- rather than whether a ride is worth summoning. Long enough that a speed cooldown
 #   pays for itself, short enough that the trip is not simply a wait
@@ -644,7 +644,7 @@ Animus.Curriculum.Travel.ClearanceMargin = 1.5
 
 Animus.Curriculum.Travel.ClearanceMax = 0.6
 
-#   indoor arenas (stage1b_indoor): yards from the start, by path. Shorter than anything outdoors because it is
+#   indoor arenas (stage2_indoor): yards from the start, by path. Shorter than anything outdoors because it is
 #   a trip across a room -- the far end of an inn is nearer than the first march range of an open-country probe
 Animus.Curriculum.Travel.IndoorMin = 8.0
 

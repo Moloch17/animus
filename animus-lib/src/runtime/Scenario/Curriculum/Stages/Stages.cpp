@@ -284,7 +284,7 @@ namespace
         // nothing parses them and training order comes from AnimusForge.Queue -- and the name says where it
         // belongs without the churn.
         //
-        // Not in the default queue: a side branch off stage1_move, trained by name, and stage2_dodge extends
+        // Not in the default queue: a side branch off stage1_move, trained by name, and stage5_dodge extends
         // stage1_move directly. It is the stage that tests what the sixteen rays, the fifteen-degree turn, the
         // clearance term and the jump were built for -- a doorway off the objective's axis, which open country
         // never asks for -- and it joins the queue once two things hold: its rooms have been stood on again with
@@ -292,7 +292,7 @@ namespace
         // target halts `forge start` with it (AnimusForge.Queue), and this drill's config expects its first run
         // to fail its gate.
         stages.push_back({
-            .Name = "stage1b_indoor",
+            .Name = "stage2_indoor",
             .Suffix = "_indoor",
             .Extends = "stage1_move",
             .Summary = "a place 8-40 yd away inside a building: read the walls, keep off them, and find the door",
@@ -370,7 +370,7 @@ namespace
         // gives the classes that have one the button back. The objective always has a way round on foot, at
         // least LedgeDetour times the straight line, so a class that will not drop still arrives.
         stages.push_back({
-            .Name = "stage1c_jump",
+            .Name = "stage3_jump",
             .Suffix = "_jump",
             .Extends = "stage1_move",
             .Summary = "a place 20-120 yd away below a ledge: drop off it with a jump, or take the long way round",
@@ -416,7 +416,7 @@ namespace
         stages.push_back({
             .Name = "stage1d_glide",
             .Suffix = "_glide",
-            .Extends = "stage1c_jump",
+            .Extends = "stage3_jump",
             .Summary = "the same ledges, with Slow Fall or Levitate: make the drop free before taking it",
             .NeedsFeatherFall = true,
             .Blocks = { Core, Move, Travel, Duel },
@@ -445,7 +445,7 @@ namespace
         // episode is thin to learn from. Here every pull has one, at stage 2's difficulty, so walking out of it is
         // the thing being learned rather than a detail of a harder fight.
         stages.push_back({
-            .Name = "stage2_dodge",
+            .Name = "stage5_dodge",
             .Suffix = "_dodge",
             .Extends = "stage1_move",
             .Summary = "nothing to fight, only ground to get off: fire lands underfoot and stays",
@@ -470,9 +470,9 @@ namespace
         // ground outside it is 350 yd off and 50 yd up a hillside, past the objective search's reach, so no episode
         // could ever be built there. The envs share the continent, each in its own phase, spread over the flats.
         stages.push_back({
-            .Name = "stage3_travel",
+            .Name = "stage6_travel",
             .Suffix = "_travel",
-            .Extends = "stage2_dodge",
+            .Extends = "stage5_dodge",
             .Summary = "a place 60-320 yd away by path: mount when it pays, get there, arrive on foot",
             .Blocks = { Core, Move, Travel, Duel },
             // The lesson is the trip -- whether to mount, when a ride pays for its cast -- on top of the steering
@@ -490,9 +490,9 @@ namespace
         // Flight: Outland's Nagrand, where flying mounts fly (a battleground never allows them). The envs share the
         // continent, each in its own phase, spread over open ground.
         stages.push_back({
-            .Name = "stage4_flight",
+            .Name = "stage7_flight",
             .Suffix = "_flight",
-            .Extends = "stage3_travel",
+            .Extends = "stage6_travel",
             .Summary = "a place 350-700 yd away in Nagrand: take off, fly over what is in the way, land, dismount",
             .Blocks = { Core, Move, Travel, Duel },
             // Two arenas. `flight` places its objective anywhere the height probe finds dry ground, which in
@@ -545,9 +545,9 @@ namespace
         });
 
         stages.push_back({
-            .Name = "stage5_duel",
+            .Name = "stage8_duel",
             .Suffix = "_duel",
-            .Extends = "stage4_flight",
+            .Extends = "stage7_flight",
             .Summary = "a same-level creature out of aggro range: close in and kill it fast, taking little damage",
             // The main line runs through the whole movement block rather than beside it, so the combat root starts
             // with legs that already work. Travel stays for the same reason it did in Part I; the pet block is new
@@ -572,9 +572,9 @@ namespace
         });
 
         stages.push_back({
-            .Name = "stage6_pack",
+            .Name = "stage9_pack",
             .Suffix = "_pack",
-            .Extends = "stage5_duel",
+            .Extends = "stage8_duel",
             .Summary = "a pack of 2-4, casters included, usually linked: targets, interrupts, crowd control",
             .Blocks = { Core, Move, Duel, Pet, Pack },
             // 150 s: running out of time is a lost fight (Pulls.Timeout), and a pack is up to four of the duel's
@@ -585,9 +585,9 @@ namespace
         });
 
         stages.push_back({
-            .Name = "stage7_gauntlet",
+            .Name = "stage10_gauntlet",
             .Suffix = "_gauntlet",
-            .Extends = "stage6_pack",
+            .Extends = "stage9_pack",
             .Summary = "pull after pull with short breaks: heals, food and drink",
             .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Support },
             // 450 s: pull after pull is the point. At the host's 60 s a break of 8-20 s before each pull left two or
@@ -604,9 +604,9 @@ namespace
         // chance to get ahead. Won by clearing the last pull alive; the clock running out is a loss however far it
         // got. Trained by name, after stage 3.
         stages.push_back({
-            .Name = "stage8_endurance",
+            .Name = "stage11_endurance",
             .Suffix = "_endurance",
-            .Extends = "stage7_gauntlet",
+            .Extends = "stage10_gauntlet",
             .Summary = "a known run of eight pulls, won by finishing it",
             .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Support },
             .Arenas = { { .Name = "endurance", .Against = Opposition::Pulls, .Schedule = PullSchedule::Sequence,
@@ -617,7 +617,7 @@ namespace
         stages.push_back({
             .Name = "stage9_pvp",
             .Suffix = "_pvp",
-            .Extends = "stage8_endurance",
+            .Extends = "stage11_endurance",
             .Summary = "one-on-one against a scripted enemy player",
             .Blocks = { Core, Move, Duel, Pet, Pvp },
             .Arenas = { { .Name = "pvp_scripted", .Against = Opposition::ScriptedPlayer, .Pvp = true } },
@@ -628,7 +628,7 @@ namespace
         // paid to handle: it dies with its cooldowns up. Both sit on the trunk order but only the first is on the
         // trunk, and both are played by all eighteen class/roles.
         stages.push_back({
-            .Name = "stage10_evade",
+            .Name = "stage13_evade",
             .Suffix = "_evade",
             .Extends = "stage9_pvp",
             .Summary = "a fight it cannot win: break away, break line of sight, and live to the end of it",
@@ -661,9 +661,9 @@ namespace
         // Shadowmeld for any night elf. So this stage is played by all eighteen, graded on the outcome rather
         // than on which button produced it.
         stages.push_back({
-            .Name = "stage11_hide",
+            .Name = "stage14_hide",
             .Suffix = "_hide",
-            .Extends = "stage10_evade",
+            .Extends = "stage13_evade",
             .Summary = "get out of sight and stay there, and hide again after being found",
             .Blocks = { Core, Move, Duel, Pet, Pvp },
             // Six levels up rather than the evade drill's ten. The fight is winnable often enough that hiding
@@ -695,9 +695,9 @@ namespace
         // lives in animus.bootstrap, where the run's actual layouts are known. So the chain runs through it, and
         // a feral druid's Prowl reaches the arena and the flag instead of dying here.
         stages.push_back({
-            .Name = "stage12_stealth",
+            .Name = "stage15_stealth",
             .Suffix = "_stealth",
-            .Extends = "stage11_hide",
+            .Extends = "stage14_hide",
             .Summary = "close on a stronger enemy unseen, hold there in strike range, and open from it",
             .NeedsStealth = true,
             .Blocks = { Core, Move, Duel, Pet, Pvp },
@@ -713,9 +713,9 @@ namespace
         });
 
         stages.push_back({
-            .Name = "stage13_arena",
+            .Name = "stage12_pvp",
             .Suffix = "_arena",
-            .Extends = "stage12_stealth",
+            .Extends = "stage15_stealth",
             .Summary = "self-play one-on-one: two learned seats of any classes",
             .Blocks = { Core, Move, Duel, Pet, Pvp },
             .Arenas = { { .Name = "arena_1v1", .Seats = SeatPlan::Mirror, .Against = Opposition::MirrorSeat,
@@ -723,14 +723,14 @@ namespace
         });
 
         stages.push_back({
-            .Name = "stage14_companion",
+            .Name = "stage16_companion",
             .Suffix = "_companion",
-            .Extends = "stage13_arena",
+            .Extends = "stage12_pvp",
             // The pack, gauntlet and support blocks were trained across stages 6-8 and then dropped by the
             // PvP line this stage extends, so without this merge they would start from zero here and three
             // stages of training would be spent again. A merge seeds exactly the blocks the extended stage
             // does not have.
-            .Merges = { "stage8_endurance" },
+            .Merges = { "stage11_endurance" },
             .Summary = "the gauntlet beside a scripted owner: follow, assist, guard and heal it",
             .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Companion, Support },
             // 450 s, as the solo gauntlet: without its own length the arena took the host's 60 s, two or three pulls
@@ -740,9 +740,9 @@ namespace
         });
 
         stages.push_back({
-            .Name = "stage15_party",
+            .Name = "stage17_party",
             .Suffix = "_party",
-            .Extends = "stage14_companion",
+            .Extends = "stage16_companion",
             .Summary = "four learned seats and the scripted owner against elite-heavy pulls",
             .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Companion, Party, Support },
             .Arenas = { { .Name = "party", .Seats = SeatPlan::Party, .Against = Opposition::Pulls,
@@ -758,9 +758,9 @@ namespace
         // seat (stage19_arena: paladin_tank -0.834 an episode against priest_dps -0.198), because a tank cannot walk
         // out of what it is holding an enemy in. That is Hazards.Standing being tuned for a seat with a choice.
         stages.push_back({
-            .Name = "stage16_tanking",
+            .Name = "stage18_tanking",
             .Suffix = "_tanking",
-            .Extends = "stage15_party",
+            .Extends = "stage17_party",
             .Summary = "a fixed tank seat beside its group: hold what the pull brings, and keep it off the others",
             .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Companion, Party, Support },
             .Arenas = { { .Name = "tanking", .Weight = 1, .Seats = SeatPlan::Party, .Against = Opposition::Pulls,
@@ -777,9 +777,9 @@ namespace
         // episode, 88% of its return). A forced healer seat will find it faster than anything else in the
         // curriculum. Fix that before trusting a triage score.
         stages.push_back({
-            .Name = "stage17_triage",
+            .Name = "stage19_triage",
             .Suffix = "_triage",
-            .Extends = "stage16_tanking",
+            .Extends = "stage18_tanking",
             .Summary = "a fixed healer seat beside its group: keep the hurt one up, and spend mana to do it",
             .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Companion, Party, Support },
             .Arenas = { { .Name = "triage", .Weight = 1, .Seats = SeatPlan::Party, .Against = Opposition::Pulls,
@@ -794,13 +794,13 @@ namespace
         // The Barrens, for stage 9's reason: the second base is placed by the same objective search, 100-180 yd from
         // the first, and only open ground has room for it.
         stages.push_back({
-            .Name = "stage18_flag",
+            .Name = "stage20_flag",
             .Suffix = "_flag",
-            .Extends = "stage17_triage",
-            // stage3_travel for the travel block, stage13_arena for the pvp block: this stage extends the
+            .Extends = "stage19_triage",
+            // stage6_travel for the travel block, stage12_pvp for the pvp block: this stage extends the
             // party line, which has neither, and a flag match is a fight between two seats before it is
             // anything else.
-            .Merges = { "stage3_travel", "stage13_arena" },
+            .Merges = { "stage6_travel", "stage12_pvp" },
             .Summary = "capture the flag one-on-one: bases 100-180 yd apart, first to three captures",
             .Blocks = { Core, Move, Duel, Pet, Pvp, Travel, Flag },
             .Arenas = { { .Name = "flag", .Seats = SeatPlan::Mirror, .Against = Opposition::Flag, .Pvp = true,
@@ -812,12 +812,12 @@ namespace
         });
 
         stages.push_back({
-            .Name = "stage19_warsong",
+            .Name = "stage21_warsong",
             .Suffix = "_warsong",
-            .Extends = "stage18_flag",
+            .Extends = "stage20_flag",
             // Ten a side is a group: the party block was trained at stages 15-17 and the flag line it extends
             // does not carry it.
-            .Merges = { "stage17_triage" },
+            .Merges = { "stage19_triage" },
             .Summary = "ten against ten for the flag: escort the carrier, hold the base, stop theirs",
             .Blocks = { Core, Move, Duel, Pet, Pvp, Travel, Flag, Party },
             .Arenas = { { .Name = "warsong", .Seats = SeatPlan::Teams, .Against = Opposition::Flag, .Pvp = true,
@@ -843,9 +843,9 @@ namespace
         // AnimusForge.Envs has to come down roughly in proportion (a few dozen envs, not 128) before either of these
         // is started. Train by name: `forge start stage13_raid_single`.
         stages.push_back({
-            .Name = "stage20_raid_single",
+            .Name = "stage24_raid_single",
             .Suffix = "_raid",
-            .Extends = "stage17_triage",
+            .Extends = "stage19_triage",
             .Summary = "a raid of eight groups against one elite and its adds, won or lost as the single pack is",
             .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Companion, Party, Support },
             .Arenas = { { .Name = "raid_single", .Seats = SeatPlan::Raid, .Against = Opposition::Pulls,
@@ -855,9 +855,9 @@ namespace
         // The raid's endurance: pull after pull with recovery between, which is what a wing of a raid instance is
         // before the boss of it. Seeded from the single fight, as the gauntlet is from the pack.
         stages.push_back({
-            .Name = "stage21_raid_gauntlet",
+            .Name = "stage25_raid_gauntlet",
             .Suffix = "_raidrun",
-            .Extends = "stage20_raid_single",
+            .Extends = "stage24_raid_single",
             .Summary = "a raid clearing pull after pull, recovering between them",
             .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Companion, Party, Support },
             .Arenas = { { .Name = "raid_gauntlet", .Seats = SeatPlan::Raid, .Against = Opposition::Pulls,
@@ -876,9 +876,9 @@ namespace
         stages.push_back({
             .Name = "stage22_duo_led",
             .Suffix = "_duo",
-            .Extends = "stage19_warsong",
+            .Extends = "stage21_warsong",
             // The pack and support blocks, trained at stages 6-8; the flag line it extends dropped both.
-            .Merges = { "stage8_endurance" },
+            .Merges = { "stage11_endurance" },
             .Summary = "two against two, told who to kill and whose turn it is: follow the call",
             .Blocks = { Core, Move, Duel, Pack, Pet, Pvp, Context, Hostiles, Support, Order },
             .Arenas = { { .Name = "duo", .Seats = SeatPlan::Teams, .Against = Opposition::MirrorSeat,
@@ -895,12 +895,12 @@ namespace
         stages.push_back({
             .Name = "stage23_crossroads",
             .Suffix = "_crossroads",
-            .Extends = "stage17_triage",
+            .Extends = "stage19_triage",
             // The leaf of every other branch, so nothing trained in the queue is left behind: the PvP line
             // through warsong, the movement line through flight. The PvE line arrives by extension.
             .Merges = {
-                "stage22_duo_led", "stage19_warsong", "stage13_arena", "stage9_pvp", "stage4_flight",
-                "stage14_companion", "stage7_gauntlet", "stage5_duel",
+                "stage22_duo_led", "stage21_warsong", "stage12_pvp", "stage9_pvp", "stage7_flight",
+                "stage16_companion", "stage10_gauntlet", "stage8_duel",
             },
             .Summary = "PvE and PvP in one policy: every earlier situation, an ambush mid-gauntlet and a ganked owner",
             .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Companion, Party, Pvp, Context, Hostiles, Support },
@@ -930,7 +930,7 @@ namespace
             .Name = "mix_duel_pvp",
             .Suffix = "_mix",
             .Extends = "stage9_pvp",
-            .Merges = { "stage5_duel" },
+            .Merges = { "stage8_duel" },
             .Summary = "pilot arena mix: half the episodes a creature duel, half a scripted enemy player",
             .Blocks = { Core, Move, Duel, Pet, Pvp },
             .Arenas = {

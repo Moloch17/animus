@@ -734,7 +734,7 @@ void Animus::Curriculum::StageScenario::AddCoreEpisodeInfo()
     // Read them together. Equal, the first choice worked. Different, that point could not build an episode and
     // the reset moved on, and a point that is drawn often and never built from is one no episode can start at:
     // a control room that scores nothing while still being counted as control ground. That is not hypothetical
-    // -- it is how stage1b_indoor came to be scored on two of its three rooms without anything saying so.
+    // -- it is how stage2_indoor came to be scored on two of its three rooms without anything saying so.
     _info.Add("spawn_point", [this](Env const& env, uint32) { return float(Data(env).Spawn); });
     _info.Add("spawn_drawn", [this](Env const& env, uint32) { return float(Data(env).SpawnDrawn); });
     // The other side of a self-play episode: an evaluation against a scripted opponent leaves its row out.

@@ -671,7 +671,7 @@ bool Animus::Curriculum::TravelEncounter::Build(Env& env, Map* map, uint8 /*leve
     travel.CloseRate = 0.0f;
     // What kind of trip is wanted beyond its length (TravelPlaceRules). The ground arenas draw a detour band first and
     // then look for an objective in it -- drawn uniformly, real detours were the tail: 51% of stage1_move's trips
-    // and 82% of stage3_travel's had a dry detour under 1.15 -- while a crossing, a room and a flight each ask for
+    // and 82% of stage6_travel's had a dry detour under 1.15 -- while a crossing, a room and a flight each ask for
     // their own kind of trip and draw none. An air-only arena asks for a place the ground route does not reach.
     TravelPlaceRules rules;
     rules.DetourEasy = tuning.DetourEasy;

@@ -37,7 +37,7 @@ namespace Animus
 
         /// Animus.Curriculum.Stage and DecisionMs: the stage whose models companions play (always one that exists:
         /// Load falls back to the default, then to the first stage), and their decision interval.
-        std::string CurriculumStage = "stage14_companion";
+        std::string CurriculumStage = "stage16_companion";
         uint32 CurriculumDecisionMs = 250;
         /// Action pacing for companions (Animus.Curriculum.Actions.*), as the forge paces its seats.
         Curriculum::CurriculumTuning::ActionTuning CurriculumActions;

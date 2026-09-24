@@ -674,7 +674,7 @@ namespace Animus::Curriculum
             /// Why the flying mount was refused at the start of the episode, as a SpellCastResult.
             ///
             /// could_mount_flying was reported for the whole life of the flight stage while CouldMountFlyer was
-            /// never once assigned, so the column read false whatever happened. stage4_flight then ran its full
+            /// never once assigned, so the column read false whatever happened. stage7_flight then ran its full
             /// thirty million steps with flew at exactly 0.0000 -- every character level 67 and knowing a flying
             /// mount -- and the one number that would have said so was a constant.
             uint32 FlyerRefusal = 0;

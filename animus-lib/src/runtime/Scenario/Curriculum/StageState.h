@@ -418,7 +418,7 @@ namespace Animus::Curriculum
         uint32 Spawn = 0;
         /// The point this episode drew before anything was tried with it; Spawn is where it was finally built.
         /// The two differ exactly when a drawn point could not build an episode and the reset moved to another,
-        /// which used to leave no trace at all -- and silently dropped the tightest of stage1b_indoor's three
+        /// which used to leave no trace at all -- and silently dropped the tightest of stage2_indoor's three
         /// control rooms out of all 14336 evaluation episodes it ever ran, so its gate was measured on two rooms
         /// while reading as three. The episode columns `spawn_drawn` and `spawn_point` are these two fields.
         uint32 SpawnDrawn = 0;
