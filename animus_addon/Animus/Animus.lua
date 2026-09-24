@@ -135,6 +135,9 @@ function A.IsCompanion(name)
 end
 
 function A.SetMessage(ok, text)
+    if text == "" then
+        text = nil
+    end
     A.state.message = text
     A.state.messageOk = ok
     if text then

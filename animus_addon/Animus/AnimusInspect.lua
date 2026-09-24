@@ -5,6 +5,15 @@
 
 local A = Animus
 
+-- Add a handler after whatever the frame already runs on the script (HookScript needs one to hook).
+local function AddScript(frame, script, handler)
+    if frame:GetScript(script) then
+        frame:HookScript(script, handler)
+    else
+        frame:SetScript(script, handler)
+    end
+end
+
 local function InspectedCompanion()
     local unit = InspectFrame and InspectFrame.unit
     local name = unit and UnitName(unit)
@@ -29,7 +38,8 @@ end
 hooksecurefunc("UnitPopup_HideButtons", function()
     local dropdown = UIDROPDOWNMENU_INIT_MENU
     local menu = dropdown and UnitPopupMenus[dropdown.which]
-    if not menu then
+    -- Only the top level: a submenu's list is another one, and dropdown.which still names the top menu.
+    if not menu or UIDROPDOWNMENU_MENU_LEVEL ~= 1 then
         return
     end
     for index, value in ipairs(menu) do
@@ -134,7 +144,7 @@ local function DecorateTalents()
             local button = _G["InspectTalentFrameTalent" .. i]
             if button then
                 button:RegisterForClicks("LeftButtonUp", "RightButtonUp")
-                button:HookScript("OnClick", OnTalentClick)
+                AddScript(button, "OnClick", OnTalentClick)
             end
         end
     end
@@ -169,8 +179,8 @@ local function DecoratePaperDoll()
     for _, slot in ipairs(PAPERDOLL_SLOTS) do
         local button = _G["Inspect" .. slot]
         if button then
-            button:HookScript("OnClick", OnSlotDrop)
-            button:SetScript("OnReceiveDrag", OnSlotDrop)
+            AddScript(button, "OnClick", OnSlotDrop)
+            AddScript(button, "OnReceiveDrag", OnSlotDrop)
         end
     end
 end
@@ -344,7 +354,7 @@ local function SetUpInspect()
     tab:Hide()
 
     petFrame:SetScript("OnShow", RefreshPetFrame)
-    InspectFrame:HookScript("OnShow", OnInspectShown)
+    AddScript(InspectFrame, "OnShow", OnInspectShown)
     if InspectFrame_UpdateTabs then
         hooksecurefunc("InspectFrame_UpdateTabs", OnInspectShown)
     end

@@ -20,6 +20,7 @@
 #include "DatabaseEnv.h"
 #include "Item.h"
 #include "Log.h"
+#include "ObjectGuid.h"
 #include "Player.h"
 #include "StringFormat.h"
 #include <algorithm>
@@ -62,6 +63,20 @@ namespace
     {
         owner->MoveItemToInventory(dest, item, true, false);
     }
+
+    /// Whether `player` may take `item` (CanEquipItem or CanStoreItem), asked as its owner. Every soulbound item
+    /// is refused for anyone but its owner (Item::IsBindedNotWith), and everything here is bound: what the owner
+    /// wore, what the companion equipped. The item is the other's for the question only; the moves that follow
+    /// need the real owner back (RemoveFromUpdateQueueOf ignores an item that is not its player's).
+    template <typename Check>
+    InventoryResult AsOwner(Player* player, Item* item, Check check)
+    {
+        ObjectGuid const owner = item->GetOwnerGUID();
+        item->SetOwnerGUID(player->GetGUID());
+        InventoryResult const result = check();
+        item->SetOwnerGUID(owner);
+        return result;
+    }
 }
 
 bool Animus::CompanionGear::Give(Player* owner, Player* bot, uint8 bag, uint8 slot, uint8 equipSlot,
@@ -95,7 +110,7 @@ bool Animus::CompanionGear::Give(Player* owner, Player* bot, uint8 bag, uint8 sl
     // HandleAutoEquipItemOpcode's swap: the worn item's enchantments are lifted while the fit is checked.
     if (worn)
         bot->ApplyEnchantment(worn, false);
-    InventoryResult result = bot->CanEquipItem(eslot, dest, item, true);
+    InventoryResult result = AsOwner(bot, item, [&] { return bot->CanEquipItem(eslot, dest, item, true); });
     if (worn)
         bot->ApplyEnchantment(worn, true);
     if (result != EQUIP_ERR_OK)
@@ -117,9 +132,13 @@ bool Animus::CompanionGear::Give(Player* owner, Player* bot, uint8 bag, uint8 sl
         }
 
         // The slot the dragged item leaves is the first place its replacement goes.
-        result = owner->CanStoreItem(srcBag, srcSlot, back, worn, true);
-        if (result != EQUIP_ERR_OK)
-            result = owner->CanStoreItem(NULL_BAG, NULL_SLOT, back, worn, true);
+        result = AsOwner(owner, worn, [&]
+        {
+            InventoryResult fit = owner->CanStoreItem(srcBag, srcSlot, back, worn, true);
+            if (fit != EQUIP_ERR_OK)
+                fit = owner->CanStoreItem(NULL_BAG, NULL_SLOT, back, worn, true);
+            return fit;
+        });
         if (result != EQUIP_ERR_OK)
         {
             owner->SendEquipError(result, worn, item);
@@ -155,7 +174,8 @@ std::vector<uint8> Animus::CompanionGear::Return(Player* bot, Player* owner, std
             continue;
 
         ItemPosCountVec dest;
-        if (owner->CanStoreItem(NULL_BAG, NULL_SLOT, dest, item, false) != EQUIP_ERR_OK)
+        if (AsOwner(owner, item, [&] { return owner->CanStoreItem(NULL_BAG, NULL_SLOT, dest, item, false); })
+            != EQUIP_ERR_OK)
         {
             LOG_INFO("module.animus", "{} has no room for {} from companion {}; it is lost", owner->GetName(),
                 item->GetTemplate()->Name1, bot->GetName());
@@ -199,7 +219,8 @@ void Animus::CompanionGear::Reattach(Player* bot, Player* owner, std::vector<Ite
         }
 
         ItemPosCountVec back;
-        if (owner && owner->CanStoreItem(NULL_BAG, NULL_SLOT, back, item, false) == EQUIP_ERR_OK)
+        if (owner && AsOwner(owner, item, [&] { return owner->CanStoreItem(NULL_BAG, NULL_SLOT, back, item, false); })
+            == EQUIP_ERR_OK)
         {
             GiveTo(owner, item, back);
             LOG_INFO("module.animus", "Companion {} can no longer wear {}; returned to {}", bot->GetName(),

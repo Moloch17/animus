@@ -197,6 +197,9 @@ namespace Animus
         /// A member's bot resolved and in the world, else null with `message` set.
         [[nodiscard]] Player* BotOf(Member const& member, std::string& message) const;
         void Destroy(Member& member, Player* owner);
+        /// The member's build and aptitude read again off the character (its talents as they are now, its gear),
+        /// which is what the model is told about it (SeatView::Build, Apt).
+        void RefreshBuild(Member& member, Player* bot) const;
 
         /// Refresh the pull: new enemies into free (or dead) slots, and the end of the pull.
         void UpdatePull(Player* owner, std::vector<Player*> const& bots);

@@ -755,12 +755,14 @@ void Animus::CompanionParty::LevelUpEdited(Member& member, Player* bot, Player* 
         bot->LearnTalent(assets.Talents->Talents()[standard.Order[i].Index].TalentId, standard.Order[i].Rank);
 
     // Configure builds the rest (trainer spells, glyphs, gear of the level) and would spend every free point on a
-    // build of its own: it sees none, and gets them back after.
+    // build of its own: it sees none, and gets them back after. Its empty build is not the member's; that is read
+    // off the character once the gear is back on.
     uint32 const free = bot->GetFreeTalentPoints();
     bot->SetFreeTalentPoints(0);
-    member.Build = SeatCharacter::Configure(bot, layout, member.Spec, false).Build;
+    SeatCharacter::Configure(bot, layout, member.Spec, false);
     bot->SetFreeTalentPoints(free);
     CompanionGear::Reattach(bot, owner, ownerGear, member.OwnerGear);
+    RefreshBuild(member, bot);
 
     if (petOut && SeatCharacter::GivePet(bot, member.Stable))
         if (::Pet* given = bot->GetPet())
@@ -899,7 +901,34 @@ bool Animus::CompanionParty::Talent(std::string_view name, uint32 talentId, bool
 
     member->Edited = true;
     bot->UpdateAllStats();
+    RefreshBuild(*member, bot);
+    message = learn ? "Learned." : "Unlearned.";
     return true;
+}
+
+void Animus::CompanionParty::RefreshBuild(Member& member, Player* bot) const
+{
+    TalentBuilder const& talents = *member.L->Assets->Talents;
+    CompanionTalents::Snapshot const known = CompanionTalents::Take(bot);
+
+    TalentBuilder::Build build;
+    build.Ranks.assign(talents.Talents().size(), 0);
+    for (uint32 i = 0; i < talents.Talents().size(); ++i)
+    {
+        TalentBuilder::Talent const& talent = talents.Talents()[i];
+        auto const itr = known.find(talent.TalentId);
+        if (itr == known.end())
+            continue;
+
+        build.Ranks[i] = itr->second;
+        if (talent.Tab < build.TreePoints.size())
+            build.TreePoints[talent.Tab] += itr->second;
+        for (uint8 rank = 0; rank < itr->second; ++rank)
+            build.Order.push_back({ i, rank });
+    }
+
+    member.Build = std::move(build);
+    member.Apt = Aptitude::Of(*member.L->Assets, member.Build, bot);
 }
 
 bool Animus::CompanionParty::PetTalent(std::string_view name, uint32 talentId, bool learn, std::string& message)
@@ -927,6 +956,7 @@ bool Animus::CompanionParty::PetTalent(std::string_view name, uint32 talentId, b
         return false;
 
     member->Edited = true;
+    message = learn ? "Learned." : "Unlearned.";
     return true;
 }
 
@@ -951,6 +981,7 @@ bool Animus::CompanionParty::Equip(Player* owner, std::string_view name, uint8 b
     member->Edited = true;
     if (std::find(member->OwnerGear.begin(), member->OwnerGear.end(), equipped) == member->OwnerGear.end())
         member->OwnerGear.push_back(equipped);
+    RefreshBuild(*member, bot);
     message = Acore::StringFormat("{} equips it.", member->Name);
     return true;
 }
