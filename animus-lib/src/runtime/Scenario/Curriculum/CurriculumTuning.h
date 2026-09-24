@@ -577,7 +577,7 @@ namespace Animus::Curriculum
             float FlyingMax = 700.0f;
             /// Which trips the ground arenas ask for, by how much longer the walking way round is than the
             /// straight line. Drawn uniformly, real detours were the tail -- 51% of stage1_move's trips and 82%
-            /// of stage3_travel's had a dry detour under 1.15 -- and a policy taught on straight lines learns to
+            /// of stage6_travel's had a dry detour under 1.15 -- and a policy taught on straight lines learns to
             /// hold forward. Each episode draws a band first (DetourEasyShare of them under DetourEasy,
             /// DetourMidShare between DetourEasy and DetourHard, the rest from DetourHard up to the generator's
             /// ceiling of 1.8) and looks for an objective in it, settling for any band only once half its

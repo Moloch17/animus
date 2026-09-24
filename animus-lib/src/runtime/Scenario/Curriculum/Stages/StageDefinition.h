@@ -176,7 +176,7 @@ namespace Animus::Curriculum
         ///
         /// A spawn point is one pose, not one place. Drawing the objective at a uniform bearing varies the task
         /// but not the view the episode opens on, so a policy sees as many opening views as the stage has points
-        /// -- seven in stage1b_indoor's training, two in the evaluation that actually runs. "Read the walls from
+        /// -- seven in stage2_indoor's training, two in the evaluation that actually runs. "Read the walls from
         /// this spot" is a smaller thing to learn than "read the walls", and the gap between them is the whole
         /// claim an indoor drill makes.
         ///
