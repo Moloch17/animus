@@ -1,7 +1,7 @@
 # Animus (addon)
 
-The player's side of [mod-animus](../../README.md): a window to summon and dismiss class companions, for the
-3.3.5a client. Every player can use it; the `.animus` commands stay game master ones.
+The player's side of [mod-animus](../../README.md): the window your companion is created, summoned and managed
+from, for the 3.3.5a client. Every player can use it; the `.animus` commands stay game master ones.
 
 ## Installing
 
@@ -12,29 +12,39 @@ The player's side of [mod-animus](../../README.md): a window to summon and dismi
 
 ## What it does
 
-**The window** shows the stage whose models the realm's companions play, your companions (name, level, class and
-spec, whether the model loaded, and whether the companion is parked while you fly), and a summon panel: a race of
-your faction, a class that race can be, and what to ask of the build (tank, healer, or nothing in particular). A
-summon the module refuses (a class no build of which can do what was asked, a full group, a flight path) shows the
-module's reason under the button and in the chat frame. "Dismiss all" removes every companion.
+**One companion per character.** Until you have one, the window is a create panel: a name, a race of your faction
+and a class that race can be, and "Create bot". The realm makes an account for the companion, creates the
+character on it at your level and saves it; it joins your party. From then on the button is gone (a character has
+one companion) and the window shows it:
 
-**The unit menu.** Right click a companion's party frame (or its target frame) and the menu has "Dismiss
+- **Summon** brings it back to you from the database, **Dismiss** saves it and sends it away. It also leaves when
+  you log out, and comes back when you summon it. Only you can summon it; the account it lives on has a password
+  nobody is told.
+- **Rename** gives the character a new name and changes nothing else (a summoned companion goes and comes back
+  under it).
+- **Change race and class** resets it: the character is deleted and a new one of the same name, race and class
+  you picked, at your level with default talents and gear, takes its place. A confirmation says so.
+
+**The unit menu.** Right click the companion's party frame (or its target frame) and the menu has "Dismiss
 companion". 3.3.5 nameplates have no menu; this is the unit frame's.
 
-**The inspect window** edits a companion. Inspect it (within 28 yards, `TalentsInspecting = 1` on the realm, the
-default) and:
+**The inspect window** edits a summoned companion. Inspect it (within 28 yards, `TalentsInspecting = 1` on the
+realm, the default) and:
 
 - **Talents.** The Talents tab learns a rank on left click and unlearns one on right click, under the game's own
   rules (points in the rows above, prerequisites), refunding the point. The companion spends its points itself when
   it levels up, along its spec's standard build; once you have edited it, a level-up keeps your choices and spends
   only the new points, leaving what the build cannot place for you.
 - **Pet.** A fourth tab shows a hunter companion's pet tree (ferocity, tenacity or cunning), edited the same way. A
-  pet that dies and is replaced from the stable comes back with the standard build.
+  pet that dies and is replaced from the stable comes back with the standard build, and a pet's talents do not
+  survive a dismiss.
 - **Character.** Drag an item from your bags onto a slot of its character pane: the companion equips it and what it
   wore goes into your bags (the slot you dragged from, if it fits). The game's own rules apply (class, level,
-  proficiency), and the client's red error tells you why when they refuse. Gear you gave a companion comes back to
-  your bags when you dismiss it; it is lost if you log out or the server stops with the companion still out, and a
-  two-hander you give one puts its off-hand into its own bags, which are emptied at its next level-up.
+  proficiency), and the client's red error tells you why when they refuse. The companion keeps that gear, saved
+  with it, until you change its race and class. A two-hander you give one puts its off-hand into its own bags,
+  which are emptied at its next level-up.
+
+The companion gets no mail (players cannot send it any; the server's level rewards skip it) and no achievements.
 
 ## Protocol
 
@@ -46,10 +56,13 @@ Requests (lower case):
 
 | Request | Answer |
 |---|---|
-| `hello` | `HELLO`, one `RACE` per race, `WANTS`, then the party |
-| `list` | the party |
-| `summon <race> <class> <wants>` | `OK` or `ERR`, then the party |
-| `dismiss [name]` | `OK` or `ERR`, then the party; one companion by name, or all |
+| `hello` | `HELLO`, one `RACE` per race, then `COMPANION` |
+| `list` | `COMPANION` |
+| `create <name> <race> <class>` | `OK` or `ERR`, then `COMPANION` |
+| `summon` | `OK` (the character loads on the database thread; `OK` and `COMPANION` again when it stands there) or `ERR`, then `COMPANION` |
+| `dismiss` | `OK` or `ERR`, then `COMPANION` |
+| `rename <name>` | `OK` or `ERR`, then `COMPANION` |
+| `reroll <race> <class>` | `OK` or `ERR`, then `COMPANION` |
 | `talent <name> learn\|unlearn <talent id>` | `OK` or `ERR`; the addon inspects again to see the change |
 | `pettalent <name> learn\|unlearn <talent id>` | `ERR`, or the pet (below) |
 | `pet <name>` | `PET` and one `PETTALENT` per talent of its tree, or `ERR` for a companion without a hunter pet out |
@@ -60,16 +73,12 @@ module):
 
 | Reply | Fields |
 |---|---|
-| `HELLO` | protocol version (`1`), `1` when Animus is enabled else `0`, the stage name |
+| `HELLO` | protocol version (`2`), `1` when Animus is enabled else `0`, the stage name |
 | `RACE` | race word, comma-separated class words that race can be; races of the player's faction only |
-| `WANTS` | comma-separated words the summon's third argument takes (`tank,heal,dps`) |
-| `PARTY` | companion count, the most a party holds; `MEMBER` lines follow |
-| `MEMBER` | name, class, spec, level, `1` when parked else `0`, model name, `loaded` or why the model is not |
+| `COMPANION` | `0` for none; else `1`, name, race word, class word, level, spec, `1` when out, `1` while loading, `1` when parked, model name, `loaded` or why the model is not (the last two when out) |
 | `PET` | companion name, pet name, level, unspent points, talent count |
 | `PETTALENT` | companion name, talent id, row, column, max rank, rank, the ranks' spell ids comma-separated, prerequisite talent id (0 for none), the rank it needs |
 | `OK` / `ERR` | the module's message |
 
-Talent ids are Talent.dbc's, the ones in the client's talent hyperlinks (`|Htalent:1234:...`). The race, class and
-wants words are the ones `.animus summon` accepts (`nightelf`, `deathknight`, `heal`), first
-name of each. Which builds a class can be asked for is not in the catalog (a class's assets are built on first use,
-a few seconds each); a summon that asks too much is refused with the wants that class can be asked for.
+Talent ids are Talent.dbc's, the ones in the client's talent hyperlinks (`|Htalent:1234:...`). The race and class
+words are the ones `.animus create` accepts (`nightelf`, `deathknight`), first name of each.

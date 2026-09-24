@@ -21,7 +21,9 @@
 #include "Chat.h"
 #include "ClassAssets.h"
 #include "CompanionGear.h"
+#include "CompanionRegistry.h"
 #include "CompanionTalents.h"
+#include "DatabaseEnv.h"
 #include "Creature.h"
 #include "EncoderSupport.h"
 #include "Group.h"
@@ -42,6 +44,7 @@
 #include "SeatCharacter.h"
 #include "SeatEncoder.h"
 #include "StringFormat.h"
+#include "World.h"
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -51,11 +54,8 @@ namespace
 {
     using namespace Animus::Curriculum;
 
-    /// Companion accounts: below the library's scenario bots (BotAccounts::BASE) and far above any real realm's.
-    constexpr uint32 COMPANION_ACCOUNT_BASE = 0x7E000000;
-
-    /// A party holds the owner and up to four companions, like the party stage's four seats.
-    constexpr std::size_t MAX_COMPANIONS = PARTY_MEMBERS + 1;
+    /// A player character owns one companion. (The party keeps its seats: the model was trained with up to four.)
+    constexpr std::size_t MAX_COMPANIONS = 1;
 
     /// Quiet this long between pulls and the next pull starts a new episode (the gauntlet's longest break).
     constexpr uint64 NEW_EPISODE_QUIET_MS = 20000;
@@ -72,10 +72,6 @@ namespace
 
     /// A dead companion stands up again this long after the party is out of combat.
     constexpr uint32 RESURRECT_DELAY_MS = 10000;
-
-    /// Companions created this run. Names carry the number: real character names cannot contain digits, so a
-    /// companion never collides with a player in ObjectAccessor's name map.
-    uint32 CompanionCounter = 0;
 
     void MoveBehind(Player* bot, Player* owner)
     {
@@ -101,12 +97,12 @@ Animus::CompanionParty::CompanionParty(ObjectGuid owner) : _owner(owner)
 
 Animus::CompanionParty::~CompanionParty() = default;
 
-bool Animus::CompanionParty::Add(Player* owner, Layout const& layout, AptitudeDemand demand, uint8 race,
-    std::string& message)
+bool Animus::CompanionParty::Add(Player* owner, Layout const& layout, uint8 race, std::string const& name,
+    uint32 account, std::string& message)
 {
     if (_members.size() >= MAX_COMPANIONS)
     {
-        message = Acore::StringFormat("You already have {} companions.", MAX_COMPANIONS);
+        message = "You already have a companion.";
         return false;
     }
 
@@ -116,28 +112,13 @@ bool Animus::CompanionParty::Add(Player* owner, Layout const& layout, AptitudeDe
     // A class that starts above level 1 (death knights) starts there, whatever the owner's level.
     uint8 const level = std::max<uint8>(owner->GetLevel(), assets.Kit->MinLevel());
 
-    Group* group = owner->GetGroup();
-    if (group && !group->IsLeader(owner->GetGUID()))
-    {
-        message = "Only your group's leader can add companions to it.";
-        return false;
-    }
-
-    if (group && group->IsFull())
-    {
-        message = "Your group is full.";
-        return false;
-    }
-
-    uint32 const number = ++CompanionCounter;
-
     BotFactory::BotSpec spec;
-    spec.Name = Acore::StringFormat("Animus{}", number);
+    spec.Name = name;
     spec.Race = race;
     spec.Class = profile.Class;
     spec.Gender = uint8(urand(GENDER_MALE, GENDER_FEMALE));
     spec.Level = level;
-    spec.AccountId = COMPANION_ACCOUNT_BASE + number;
+    spec.AccountId = account;
 
     Player* bot = BotFactory::Create(spec);
     if (!bot || !BotFactory::PlaceNear(bot, owner))
@@ -146,24 +127,93 @@ bool Animus::CompanionParty::Add(Player* owner, Layout const& layout, AptitudeDe
         return false;
     }
 
+    // A spec of the class, as the forge's character generator draws one for a seat (StageScenario::BuildSeat)
+    // when nothing is asked of it. The model is told what the character can do and what talents it has, never
+    // which spec it drew.
+    uint8 const specIndex = DrawSpec(ClassAssets::For(profile), AptitudeDemand::Anything());
+
+    // As the forge builds a seat (StageScenario::BuildSeat, Configure). Talent points depend on the map for death
+    // knights; the bot is on the owner's map now.
+    bot->InitTalentForLevel();
+    SeatCharacter::Configure(bot, layout, specIndex, false);
+    // The core's autosave keeps it, as CompanionLoader sets a loaded one; Save writes it now.
+    bot->SetSaveTimer(sWorld->getIntConfig(CONFIG_INTERVAL_SAVE));
+
+    if (!Join(owner, bot, layout, specIndex, message))
+    {
+        BotFactory::Destroy(bot);
+        return false;
+    }
+
+    LOG_INFO("module.animus", "{} created {} companion {} ({}), level {}, spec {}", owner->GetName(), profile.Name,
+        bot->GetName(), bot->GetGUID().ToString(), level, profile.Specs[specIndex].Name);
+    message = Acore::StringFormat("{}, a level {} {}, joins your party.", bot->GetName(), level, profile.Name);
+    return true;
+}
+
+bool Animus::CompanionParty::Attach(Player* owner, Player* bot, Layout const& layout, Record const& record,
+    std::string& message)
+{
+    if (_members.size() >= MAX_COMPANIONS)
+    {
+        message = "You already have a companion.";
+        return false;
+    }
+
+    // A group it was saved in (the row survives a crash) that is not the owner's: left, so it can join theirs.
+    if (Group* old = bot->GetGroup(); old && old != owner->GetGroup())
+        bot->RemoveFromGroup();
+
+    if (!BotFactory::PlaceNear(bot, owner))
+    {
+        message = "The companion could not be placed beside you; see the server log.";
+        return false;
+    }
+
+    if (!Join(owner, bot, layout, record.Spec, message))
+        return false;
+
+    Member& member = *_members.back();
+    member.Edited = record.Edited;
+    for (uint8 slot = EQUIPMENT_SLOT_START; slot < EQUIPMENT_SLOT_END; ++slot)
+        if (record.OwnerGear & (1u << slot))
+            member.OwnerGear.push_back(slot);
+
+    LOG_INFO("module.animus", "{} summoned companion {} ({}), level {}", owner->GetName(), bot->GetName(),
+        bot->GetGUID().ToString(), bot->GetLevel());
+    message = Acore::StringFormat("{} joins your party.", bot->GetName());
+    return true;
+}
+
+bool Animus::CompanionParty::Join(Player* owner, Player* bot, Layout const& layout, uint8 spec,
+    std::string& message)
+{
+    ClassProfile const& profile = *layout.Profile;
+
+    Group* group = owner->GetGroup();
+    if (group && !group->IsLeader(owner->GetGUID()) && bot->GetGroup() != group)
+    {
+        message = "Only your group's leader can add a companion to it.";
+        return false;
+    }
+
+    if (group && group->IsFull() && bot->GetGroup() != group)
+    {
+        message = "Your group is full.";
+        return false;
+    }
+
     auto member = std::make_unique<Member>();
     member->Bot = bot->GetGUID();
     member->Name = bot->GetName();
     member->L = &layout;
-    member->Race = race;
-    member->Level = level;
-    // A spec that can do what was asked of it, as the forge's character generator does when it builds a seat
-    // (StageScenario::BuildSeat). The model is told what the character can do and what talents it has, never which
-    // spec it drew.
-    member->Spec = DrawSpec(ClassAssets::For(profile), demand);
+    member->Race = bot->getRace();
+    member->Level = uint8(bot->GetLevel());
+    member->Spec = spec;
 
-    // As the forge builds a seat (StageScenario::BuildSeat, Configure, PrepareFighter, StockSeats). Talent points
-    // depend on the map for death knights; the bot is on the owner's map now.
-    bot->InitTalentForLevel();
-    member->Build = SeatCharacter::Configure(bot, layout, member->Spec, false).Build;
-    // Read what it can do now that it is the character it is going to be -- talents spent, gear on, spellbook
-    // final -- exactly where StageScenario::Configure reads it, and before anything is asked of it.
-    member->Apt = Aptitude::Of(ClassAssets::For(profile), member->Build, bot);
+    // Read what it can do now that it is the character it is -- talents spent, gear on, spellbook final -- exactly
+    // where StageScenario::Configure reads it, and before anything is asked of it.
+    RefreshBuild(*member, bot);
     member->Stable = SeatCharacter::PrepareFighter(bot, layout, member->Apt);
 
     member->Obs.resize(layout.ObsDim);
@@ -177,19 +227,17 @@ bool Animus::CompanionParty::Add(Player* owner, Layout const& layout, AptitudeDe
         if (!group->Create(owner))
         {
             delete group;
-            BotFactory::Destroy(bot);
-            message = "Could not create a group for your companions; see the server log.";
+            message = "Could not create a group for your companion; see the server log.";
             return false;
         }
 
         sGroupMgr->AddGroup(group);
     }
 
-    if (!group->AddMember(bot))
+    if (bot->GetGroup() != group && !group->AddMember(bot))
     {
         if (newGroup)
             group->Disband();
-        BotFactory::Destroy(bot);
         message = "The companion could not join your group; see the server log.";
         return false;
     }
@@ -197,13 +245,29 @@ bool Animus::CompanionParty::Add(Player* owner, Layout const& layout, AptitudeDe
     // Supplies after joining: a warlock in the group hands out healthstones.
     Restock(*member, bot, owner);
     member->LastPower = bot->GetPower(bot->getPowerType());
-
-    LOG_INFO("module.animus", "{} summoned {} companion {} ({}), level {}, spec {}", owner->GetName(), profile.Name,
-        bot->GetName(), bot->GetGUID().ToString(), level, profile.Specs[member->Spec].Name);
-
-    message = Acore::StringFormat("{}, a level {} {}, joins your party.", bot->GetName(), level, profile.Name);
     _members.push_back(std::move(member));
     return true;
+}
+
+void Animus::CompanionParty::Save(Record& record)
+{
+    for (std::unique_ptr<Member> const& member : _members)
+    {
+        Player* bot = FindBot(member->Bot);
+        if (!bot)
+            continue;
+
+        CharacterDatabaseTransaction trans = CharacterDatabase.BeginTransaction();
+        bot->SaveToDB(trans, false, false);
+        CharacterDatabase.DirectCommitTransaction(trans);
+        CompanionRegistry::Purge(bot->GetGUID());
+
+        record.Spec = member->Spec;
+        record.Edited = member->Edited;
+        record.OwnerGear = 0;
+        for (uint8 slot : member->OwnerGear)
+            record.OwnerGear |= 1u << slot;
+    }
 }
 
 void Animus::CompanionParty::Restock(Member& member, Player* bot, Player* owner) const
@@ -815,9 +879,8 @@ void Animus::CompanionParty::DestroyAll()
     std::vector<std::unique_ptr<Member>> members = std::move(_members);
     _members.clear();
 
-    Player* owner = ObjectAccessor::FindPlayer(_owner);
     for (std::unique_ptr<Member> const& member : members)
-        Destroy(*member, owner);
+        Destroy(*member, nullptr);
 }
 
 bool Animus::CompanionParty::Remove(std::string_view name, std::string& message)
@@ -833,7 +896,7 @@ bool Animus::CompanionParty::Remove(std::string_view name, std::string& message)
         [member](std::unique_ptr<Member> const& m) { return m.get() == member; });
     std::unique_ptr<Member> const gone = std::move(*itr);
     _members.erase(itr);
-    Destroy(*gone, ObjectAccessor::FindPlayer(_owner));
+    Destroy(*gone, nullptr);
     message = Acore::StringFormat("{} dismissed.", gone->Name);
     return true;
 }
@@ -843,11 +906,6 @@ void Animus::CompanionParty::Destroy(Member& member, Player* owner)
     Player* bot = FindBot(member.Bot);
     if (!bot)
         return;
-
-    // What the owner put on it goes back to them first, while both are here. (An owner logging out has already
-    // been saved when this runs, so gear on a companion is lost then.)
-    if (owner && !member.OwnerGear.empty())
-        CompanionGear::Return(bot, owner, member.OwnerGear);
 
     Destroy(bot);
 }

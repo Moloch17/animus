@@ -21,6 +21,7 @@
 
 #include "AnimusConfig.h"
 #include "CompanionParty.h"
+#include "CompanionRegistry.h"
 #include "Layout.h"
 #include "ModelLibrary.h"
 #include "ObjectGuid.h"
@@ -36,7 +37,7 @@ class Unit;
 
 namespace Animus
 {
-    /// Module root: settings, the models and every player's class party.
+    /// Module root: settings, the models, the registry of every player's companion and the parties of those out.
     ///
     /// Everything except RecordDamage runs on the world thread (config load, commands, world update, shutdown), and
     /// none of it while maps are updating. RecordDamage runs on map threads and only reads the bot index and the
@@ -50,45 +51,68 @@ namespace Animus
         void OnUpdate(uint32 diff);
         void OnShutdown();
 
-        /// Command handlers. Return false with `message` set when the request is refused.
-        bool Dismiss(Player* owner, std::string& message);
-        /// One companion of `owner`, by name.
-        bool DismissOne(Player* owner, std::string_view name, std::string& message);
+        /// Everything a player does with their one companion, from the addon or the commands. Each returns false
+        /// with `message` set when refused; on success `message` says what happened.
 
-        /// The addon's inspect-window edits of one companion of `owner` (CompanionParty::Talent, PetTalent, Equip,
-        /// Pet).
+        /// A companion character called `name`, of `race` (human, nightelf, ...) and `playerClass` (priest,
+        /// deathknight, ...), on an account made for the owner, saved, and in the owner's party. Refused when the
+        /// owner has one already, for a name the game would not accept or has taken, a race the class does not
+        /// allow, or a race of the other faction.
+        bool Create(Player* owner, std::string name, std::string_view race, std::string_view playerClass,
+            std::string& message);
+        /// The saved companion comes back beside the owner. Its rows load on the database thread; `message` says
+        /// it is on its way, and the addon is told again (Addon::Push) once it stands there.
+        bool Summon(Player* owner, std::string& message);
+        /// Saved and out of the world; the character stays.
+        bool Dismiss(Player* owner, std::string& message);
+        /// A new name for the companion character, nothing else changed. Out, it is dismissed and summoned again
+        /// under the new name (the client shows a name it has seen).
+        bool Rename(Player* owner, std::string name, std::string& message);
+        /// A new race and class: the companion character is deleted and a new one of the same name created.
+        bool Reroll(Player* owner, std::string_view race, std::string_view playerClass, std::string& message);
+        /// The owner character was deleted: their companion character and its account go too.
+        void OnOwnerDeleted(ObjectGuid owner);
+
+        /// The addon's inspect-window edits of the companion (CompanionParty::Talent, PetTalent, Equip, Pet).
         bool Talent(Player* owner, std::string_view name, uint32 talentId, bool learn, std::string& message);
         bool PetTalent(Player* owner, std::string_view name, uint32 talentId, bool learn, std::string& message);
         bool Equip(Player* owner, std::string_view name, uint8 bag, uint8 slot, uint8 equipSlot,
             std::string& message);
         bool Pet(Player* owner, std::string_view name, CompanionParty::PetView& view, std::string& message);
 
-        /// A companion of `race` (human, nightelf, ...), `playerClass` (priest, deathknight, ...) and `role` (dps, tank,
-        /// heal) joins the owner's group and plays its class's model for Animus.Curriculum.Stage. Refused for a
-        /// name that is not one, a class that has no such role, a race the class does not allow, or a race of the
-        /// other faction.
-        bool Summon(Player* owner, std::string_view race, std::string_view playerClass, std::string_view role,
-            std::string& message);
+        /// What the owner has, for the window: nothing, or a character (its name, race and class words, level and
+        /// spec), out beside them or waiting in the database.
+        struct Companion
+        {
+            bool Exists = false;
+            std::string Name;
+            std::string Race;
+            std::string Class;
+            uint8 Level = 0;
+            std::string Spec;
+            bool Out = false;                   // in the world (or loading)
+            bool Loading = false;
+            bool Parked = false;
+            std::string ModelName;
+            std::string Model;                  // "loaded", or why not, when out
+        };
+        [[nodiscard]] Companion Describe(Player* owner);
 
-        /// One line per class companion of `owner`.
+        /// One line per fact of Describe, for `.animus list`.
         [[nodiscard]] std::vector<std::string> List(Player* owner);
 
-        /// The companions of `owner`, in the order they were summoned; none when they have no party.
-        [[nodiscard]] std::vector<CompanionParty::Summary> Companions(Player* owner);
+        /// Whether `guid` is a companion character (of anyone): it gets no mail and no achievements.
+        [[nodiscard]] bool IsCompanion(ObjectGuid guid) const { return _registry.IsCompanion(guid); }
 
-        /// A race a summon may ask for, with the classes it can be, in the names Summon accepts.
+        /// A race a companion may be, with the classes it can be, in the words Create accepts.
         struct RaceChoice
         {
             std::string Race;
             std::vector<std::string> Classes;
         };
 
-        /// The races of `owner`'s faction, each with the classes it can be: everything Summon takes as its first
-        /// two words. Cheap (player info only), unlike what a class can be asked for, which needs its assets built.
+        /// The races of `owner`'s faction, each with the classes it can be: everything Create takes after the name.
         [[nodiscard]] static std::vector<RaceChoice> RaceChoices(Player const* owner);
-
-        /// The words Summon's third argument takes, one per demand (tank, heal, dps).
-        [[nodiscard]] static std::vector<std::string> WantChoices();
 
         /// The stage whose models companions play (Animus.Curriculum.Stage).
         [[nodiscard]] std::string const& CurrentStage() const { return _config.CurriculumStage; }
@@ -97,7 +121,7 @@ namespace Animus
         /// companion will look for.
         [[nodiscard]] std::vector<std::string> StageList() const;
 
-        /// A player logged out: remove the companions they own.
+        /// A player logged out: their companion is saved and removed.
         void OnPlayerLogout(Player* player);
 
         void RecordDamage(Unit const* attacker, Unit const* victim, uint32 damage, DamageEffectType type);
@@ -107,8 +131,17 @@ namespace Animus
     private:
         AnimusMod() = default;
 
-        /// The party of `owner`, else null with `message` set.
+        /// The party of `owner` with its companion out, else null with `message` set.
         CompanionParty* PartyOf(Player* owner, std::string& message);
+
+        /// A companion character that exists (created or loaded) joins the owner's party under `record`; false with
+        /// `message` when it could not, the record left as it was.
+        bool Adopt(Player* owner, Player* bot, CompanionRegistry::Record& record, std::string& message);
+        /// Save the party's companion and the registry's record of it, then take it out of the world.
+        void SaveParty(ObjectGuid owner);
+        /// The words of a race and class, checked against each other and the owner's faction.
+        bool ResolveRaceClass(Player const* owner, std::string_view race, std::string_view playerClass,
+            uint8& raceId, uint8& classId, std::string& message) const;
 
         void RemoveParty(ObjectGuid owner);
         void RemoveAll();
@@ -116,8 +149,10 @@ namespace Animus
         /// The layout of a profile at the configured stage, built on first use and kept (companions point at it).
         Curriculum::Layout const& LayoutFor(Curriculum::ClassProfile const& profile);
 
+        bool _loaded = false;                   // LoadConfig ran once (the registry loads with the first)
         AnimusConfig _config;
         ModelLibrary _models;
+        CompanionRegistry _registry;
         std::unordered_map<std::string, Curriculum::Layout> _layouts;       // by model name
 
         std::unordered_map<ObjectGuid, std::unique_ptr<CompanionParty>> _parties;   // by owner

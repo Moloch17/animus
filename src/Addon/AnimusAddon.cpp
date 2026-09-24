@@ -31,7 +31,7 @@
 namespace
 {
     /// Bumped when a reply changes shape; the addon shows what it expects.
-    constexpr uint32 PROTOCOL = 1;
+    constexpr uint32 PROTOCOL = 2;
 
     /// The client drops a longer addon message. Replies put the one free-text field last, so it is what a cut
     /// takes.
@@ -75,14 +75,19 @@ namespace
         Send(player, Acore::StringFormat("{}\t{}", ok ? "OK" : "ERR", message));
     }
 
-    /// PARTY <count> <max>, then a MEMBER line per companion.
-    void SendParty(Player* player)
+    /// COMPANION <exists> <name> <race> <class> <level> <spec> <out> <loading> <parked> <model name> <model state>:
+    /// the owner's one companion, or `COMPANION 0` when they have none.
+    void SendCompanion(Player* player)
     {
-        std::vector<Animus::CompanionParty::Summary> const companions = sAnimusMod->Companions(player);
-        Send(player, Acore::StringFormat("PARTY\t{}\t{}", companions.size(), Animus::CompanionParty::MaxSize()));
-        for (Animus::CompanionParty::Summary const& companion : companions)
-            Send(player, Acore::StringFormat("MEMBER\t{}\t{}\t{}\t{}\t{}\t{}\t{}", companion.Name, companion.Class,
-                companion.Spec, companion.Level, companion.Parked ? 1 : 0, companion.ModelName, companion.Model));
+        Animus::AnimusMod::Companion const c = sAnimusMod->Describe(player);
+        if (!c.Exists)
+        {
+            Send(player, "COMPANION\t0");
+            return;
+        }
+
+        Send(player, Acore::StringFormat("COMPANION\t1\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}", c.Name, c.Race,
+            c.Class, c.Level, c.Spec, c.Out ? 1 : 0, c.Loading ? 1 : 0, c.Parked ? 1 : 0, c.ModelName, c.Model));
     }
 
     /// A number the addon sent, if it is one.
@@ -122,16 +127,22 @@ namespace
     }
 
     /// Everything the addon needs to open: HELLO <protocol> <enabled> <stage>, a RACE line per race of the
-    /// player's faction with the classes it can be, WANTS, then the party.
+    /// player's faction with the classes it can be, then the companion.
     void SendHello(Player* player)
     {
         Send(player, Acore::StringFormat("HELLO\t{}\t{}\t{}", PROTOCOL, sAnimusMod->IsEnabled() ? 1 : 0,
             sAnimusMod->CurrentStage()));
         for (Animus::AnimusMod::RaceChoice const& race : Animus::AnimusMod::RaceChoices(player))
             Send(player, Acore::StringFormat("RACE\t{}\t{}", race.Race, Join(race.Classes, ',')));
-        Send(player, Acore::StringFormat("WANTS\t{}", Join(Animus::AnimusMod::WantChoices(), ',')));
-        SendParty(player);
+        SendCompanion(player);
     }
+}
+
+void Animus::Addon::Push(Player* player, std::string const& message)
+{
+    if (!message.empty())
+        SendResult(player, true, message);
+    SendCompanion(player);
 }
 
 bool Animus::Addon::Handle(Player* player, std::string_view msg)
@@ -146,22 +157,47 @@ bool Animus::Addon::Handle(Player* player, std::string_view msg)
     if (request == "hello")
         SendHello(player);
     else if (request == "list")
-        SendParty(player);
-    else if (request == "summon")
+        SendCompanion(player);
+    else if (request == "create")
     {
         if (words.size() != 4)
-            SendResult(player, false, "A summon names a race, a class and what to ask for.");
+            SendResult(player, false, "Creating a companion needs a name, a race and a class.");
         else
         {
-            SendResult(player, sAnimusMod->Summon(player, words[1], words[2], words[3], message), message);
-            SendParty(player);
+            SendResult(player, sAnimusMod->Create(player, std::string(words[1]), words[2], words[3], message),
+                message);
+            SendCompanion(player);
         }
+    }
+    else if (request == "summon")
+    {
+        SendResult(player, sAnimusMod->Summon(player, message), message);
+        SendCompanion(player);
     }
     else if (request == "dismiss")
     {
-        SendResult(player, words.size() > 1 ? sAnimusMod->DismissOne(player, words[1], message)
-            : sAnimusMod->Dismiss(player, message), message);
-        SendParty(player);
+        SendResult(player, sAnimusMod->Dismiss(player, message), message);
+        SendCompanion(player);
+    }
+    else if (request == "rename")
+    {
+        if (words.size() != 2)
+            SendResult(player, false, "A rename needs the new name.");
+        else
+        {
+            SendResult(player, sAnimusMod->Rename(player, std::string(words[1]), message), message);
+            SendCompanion(player);
+        }
+    }
+    else if (request == "reroll")
+    {
+        if (words.size() != 3)
+            SendResult(player, false, "A new race and class need both words.");
+        else
+        {
+            SendResult(player, sAnimusMod->Reroll(player, words[1], words[2], message), message);
+            SendCompanion(player);
+        }
     }
     else if (request == "talent" || request == "pettalent")
     {

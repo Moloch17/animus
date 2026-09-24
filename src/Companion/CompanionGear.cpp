@@ -46,22 +46,22 @@ namespace
         return true;
     }
 
-    /// An item leaves a player for good: out of their bags and, as mail does it, out of their inventory in the
-    /// database now, so the next save cannot bring it back. The item row goes too -- a companion never saves, so
-    /// the item lives only as long as it does; MoveItemToInventory writes a new row if it ever comes back.
+    /// An item leaves a player (the owner or the companion, both saved characters): out of their bags and, as
+    /// mail does it, out of their inventory in the database now, so the next save cannot bring it back. The item
+    /// row stays; the taker's save moves it over.
     void TakeFrom(Player* player, Item* item)
     {
         player->MoveItemFromInventory(item->GetBagSlot(), item->GetSlot(), true);
         CharacterDatabaseTransaction trans = CharacterDatabase.BeginTransaction();
         item->DeleteFromInventoryDB(trans);
-        item->DeleteFromDB(trans);
         CharacterDatabase.CommitTransaction(trans);
     }
 
-    /// An item the companion carried goes into the owner's bags at `dest` (found with CanStoreItem).
-    void GiveTo(Player* owner, Item* item, ItemPosCountVec const& dest)
+    /// An item goes into `player`'s bags at `dest` (found with CanStoreItem). One never saved yet (a companion's
+    /// gear generated at its last level-up) is written as new rather than updated where there is no row.
+    void GiveTo(Player* player, Item* item, ItemPosCountVec const& dest)
     {
-        owner->MoveItemToInventory(dest, item, true, false);
+        player->MoveItemToInventory(dest, item, true, item->GetState() != ITEM_NEW);
     }
 
     /// Whether `player` may take `item` (CanEquipItem or CanStoreItem), asked as its owner. Every soulbound item
@@ -150,7 +150,7 @@ bool Animus::CompanionGear::Give(Player* owner, Player* bot, uint8 bag, uint8 sl
 
     TakeFrom(owner, item);
     if (worn)
-        bot->MoveItemFromInventory(INVENTORY_SLOT_BAG_0, eslot, true);
+        TakeFrom(bot, worn);
 
     bot->EquipItem(dest, item, true);
     bot->AutoUnequipOffhandIfNeed();
@@ -162,31 +162,6 @@ bool Animus::CompanionGear::Give(Player* owner, Player* bot, uint8 bag, uint8 sl
         item->GetTemplate()->Name1, item->GetEntry(), equipped,
         worn ? Acore::StringFormat(", taking back {}", worn->GetTemplate()->Name1) : "");
     return true;
-}
-
-std::vector<uint8> Animus::CompanionGear::Return(Player* bot, Player* owner, std::vector<uint8> const& slots)
-{
-    std::vector<uint8> returned;
-    for (uint8 slot : slots)
-    {
-        Item* item = bot->GetItemByPos(INVENTORY_SLOT_BAG_0, slot);
-        if (!item)
-            continue;
-
-        ItemPosCountVec dest;
-        if (AsOwner(owner, item, [&] { return owner->CanStoreItem(NULL_BAG, NULL_SLOT, dest, item, false); })
-            != EQUIP_ERR_OK)
-        {
-            LOG_INFO("module.animus", "{} has no room for {} from companion {}; it is lost", owner->GetName(),
-                item->GetTemplate()->Name1, bot->GetName());
-            continue;
-        }
-
-        bot->MoveItemFromInventory(INVENTORY_SLOT_BAG_0, slot, true);
-        GiveTo(owner, item, dest);
-        returned.push_back(slot);
-    }
-    return returned;
 }
 
 std::vector<Item*> Animus::CompanionGear::Detach(Player* bot, std::vector<uint8> const& slots)

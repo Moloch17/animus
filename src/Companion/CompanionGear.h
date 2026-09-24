@@ -36,9 +36,6 @@ namespace Animus::CompanionGear
     bool Give(Player* owner, Player* bot, uint8 bag, uint8 slot, uint8 equipSlot, uint8& equipped,
         std::string& message);
 
-    /// Give the owner back what they gave: every `slots` item that fits in their bags. Returns the slots emptied.
-    std::vector<uint8> Return(Player* bot, Player* owner, std::vector<uint8> const& slots);
-
     /// Take the owner's items off a companion about to be built again (GearBuilder::Equip destroys everything it
     /// carries), then put them back on. Items that no longer fit go to the owner, else are lost.
     std::vector<Item*> Detach(Player* bot, std::vector<uint8> const& slots);

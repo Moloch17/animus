@@ -53,7 +53,7 @@ hooksecurefunc("UnitPopup_OnClick", function(self)
     if self.value == "ANIMUS_DISMISS" then
         local dropdown = UIDROPDOWNMENU_INIT_MENU
         if dropdown and A.IsCompanion(dropdown.name) then
-            A.DismissOne(dropdown.name)
+            A.Dismiss()
         end
     end
 end)

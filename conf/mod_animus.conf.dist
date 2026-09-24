@@ -37,8 +37,7 @@ Animus.ModelDir = "animus"
 # CLASS COMPANIONS
 #
 #    Animus.Curriculum.Stage
-#        Description: Which curriculum stage's models class companions (".animus summon")
-#                     play. Companions summoned before a ".reload config" keep their stage.
+#        Description: Which curriculum stage's models class companions play. Companions summoned before a ".reload config" keep their stage.
 #        Default:     "stage1_duel" - the models this module ships (models/, one per class)
 #                     Any stage of ".animus stage list" (stage1_duel ... stage23_crossroads), with that
 #                     stage's models in Animus.ModelDir

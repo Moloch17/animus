@@ -19,6 +19,7 @@
 #ifndef ANIMUS_COMPANION_PARTY_H
 #define ANIMUS_COMPANION_PARTY_H
 
+#include "CompanionRegistry.h"
 #include "CompanionTalents.h"
 #include "Layout.h"
 #include "MlpPolicy.h"
@@ -89,20 +90,33 @@ namespace Animus
         CompanionParty(CompanionParty const&) = delete;
         CompanionParty& operator=(CompanionParty const&) = delete;
 
-        /// Create a companion of `race` and `layout` beside the owner -- in the open world, an instance or on a
-        /// transport -- and add it to the owner's group (creating the group when the owner has none). It is
-        /// the owner's level, or its class's first level when that is higher (death knights: 55), and levels up with
-        /// the owner. The race must be one the class allows. False with `message` set when refused.
-        bool Add(Player* owner, Curriculum::Layout const& layout, Curriculum::AptitudeDemand demand, uint8 race,
-            std::string& message);
+        /// Create a companion called `name`, of `race` and `layout`, on account `account`, beside the owner -- in
+        /// the open world, an instance or on a transport -- and add it to the owner's group (creating the group
+        /// when the owner has none). It is the owner's level, or its class's first level when that is higher (death
+        /// knights: 55), and levels up with the owner. The race must be one the class allows. Its spec is drawn from
+        /// the class's. False with `message` set when refused. The character is in memory only: Save writes it.
+        bool Add(Player* owner, Curriculum::Layout const& layout, uint8 race, std::string const& name,
+            uint32 account, std::string& message);
+
+        /// A companion character loaded from the database (CompanionLoader) joins: placed beside the owner, into
+        /// the group, its build read off it, as `record` remembers it. False with `message` set when it could not
+        /// be placed; the bot is then the caller's to discard.
+        bool Attach(Player* owner, Player* bot, Curriculum::Layout const& layout,
+            CompanionRegistry::Record const& record, std::string& message);
+        using Record = CompanionRegistry::Record;
+
+        /// Write every companion to the characters database now (the transaction committed on this thread, so a
+        /// summon that follows reads it), with its mail and achievements purged; `record` gets what the module
+        /// remembers of it. Dismissing, the owner's logout and shutdown all save first.
+        void Save(CompanionRegistry::Record& record);
 
         Status Update(uint32 diff, Settings const& settings, ModelLibrary& models);
 
         /// Take every companion out of the group and the world.
         void DestroyAll();
 
-        /// Take one companion, by name, out of the group and the world, giving the owner back the gear they put on
-        /// it. False with `message` set for a name that is not a companion's.
+        /// Take one companion, by name, out of the group and the world, saved first (Save). False with `message`
+        /// set for a name that is not a companion's.
         bool Remove(std::string_view name, std::string& message);
 
         /// The owner edits a companion from the inspect window: one talent rank learned or unlearned, on the
@@ -194,8 +208,11 @@ namespace Animus
         };
 
         [[nodiscard]] Member* Find(std::string_view name) const;
+        /// A member for a bot in the world: what Add and Attach share once the character is beside the owner.
+        bool Join(Player* owner, Player* bot, Curriculum::Layout const& layout, uint8 spec, std::string& message);
         /// A member's bot resolved and in the world, else null with `message` set.
         [[nodiscard]] Player* BotOf(Member const& member, std::string& message) const;
+        /// Out of the group and the world (unsaved: Save first). `owner` is unused now that gear stays on it.
         void Destroy(Member& member, Player* owner);
         /// The member's build and aptitude read again off the character (its talents as they are now, its gear),
         /// which is what the model is told about it (SeatView::Build, Apt).

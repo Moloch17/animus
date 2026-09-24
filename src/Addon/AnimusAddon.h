@@ -29,16 +29,21 @@ namespace Animus::Addon
     constexpr std::string_view PREFIX = "Animus";
 
     /// How the Animus addon (animus_addon/Animus) talks to the module: addon whispers a player sends to themselves,
-    /// tab-separated, the first word a request (`hello`, `list`, `summon <race> <class> <wants>`, `dismiss [name]`,
-    /// `talent <name> learn|unlearn <id>`, `pettalent ...`, `pet <name>`, `equip <name> <bag> <slot> <inv slot>`).
+    /// tab-separated, the first word a request (`hello`, `list`, `create <name> <race> <class>`, `summon`, `dismiss`,
+    /// `rename <name>`, `reroll <race> <class>`, `talent <name> learn|unlearn <id>`, `pettalent ...`, `pet <name>`,
+    /// `equip <name> <bag> <slot> <inv slot>`).
     /// Replies are addon whispers from the player to themselves, tab-separated, the first word in capitals (HELLO,
-    /// RACE, WANTS, PARTY, MEMBER, PET, PETTALENT, OK, ERR), so the addon can tell an answer from its own request
+    /// RACE, COMPANION, PET, PETTALENT, OK, ERR), so the addon can tell an answer from its own request
     /// echoed back by a realm without the module. animus_addon/Animus/README.md describes every message.
     ///
     /// Handle `msg` (prefix and all) as one of those; false when it is not an Animus message, so the whisper goes
     /// where it was going. Player security: this is how players use the module, where the `.animus` commands
     /// stay game master ones.
     bool Handle(Player* player, std::string_view msg);
+
+    /// Tell the addon about the companion unasked: OK/ERR `message` when there is one, then the COMPANION line.
+    /// For what finishes later than its request (a summon, whose character loads on the database thread).
+    void Push(Player* player, std::string const& message);
 }
 
 #endif

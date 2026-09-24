@@ -6,7 +6,7 @@ Animus = {}
 local A = Animus
 
 A.PREFIX = "Animus"
-A.PROTOCOL = 1
+A.PROTOCOL = 2
 A.TIMEOUT = 5           -- seconds without an answer before the realm is declared silent
 
 -- The words the module accepts, shown the way the game spells them.
@@ -19,14 +19,6 @@ A.NAMES = {
         warrior = "Warrior", paladin = "Paladin", hunter = "Hunter", rogue = "Rogue", priest = "Priest",
         deathknight = "Death Knight", shaman = "Shaman", mage = "Mage", warlock = "Warlock", druid = "Druid",
     },
-    wants = { tank = "Tank", heal = "Healer", dps = "Damage" },
-}
-
--- What a `wants` word asks of the build, for the summon panel.
-A.WANT_HELP = {
-    tank = "A build that can hold a pull.",
-    heal = "A build that can keep somebody up.",
-    dps = "No demand: whatever the class does when nothing else is asked of it.",
 }
 
 A.state = {
@@ -37,11 +29,9 @@ A.state = {
     protocol = nil,
     races = {},             -- race word -> ordered list of class words
     raceOrder = {},
-    wants = {},             -- ordered list of want words
-    companions = {},        -- { name, class, spec, level, parked, modelName, model }
+    companion = nil,        -- { name, race, class, level, spec, out, loading, parked, modelName, model } or nil
     pets = {},              -- companion name -> { name, level, free, talents = { {id, row, col, maxRank, rank,
                             --   spells, dependsOn, dependsOnRank} } }
-    max = 4,
     lastRequest = nil,      -- the first word of the request the last answer was for
     message = nil,          -- the last OK/ERR text
     messageOk = true,
@@ -88,23 +78,41 @@ function A.List()
     A.Send("list")
 end
 
-function A.Summon(race, class, wants)
-    if not (race and class and wants) then
-        A.SetMessage(false, "A summon names a race, a class and what to ask for.")
+-- The one companion: created with a name, race and class; summoned and dismissed; renamed; or given a new race and
+-- class (which makes a new character of the same name).
+function A.Create(name, race, class)
+    if not (name and name ~= "" and race and class) then
+        A.SetMessage(false, "A companion needs a name, a race and a class.")
         return
     end
-    A.Send("summon", race, class, wants)
+    A.Send("create", name, race, class)
+end
+
+function A.Summon()
+    A.Send("summon")
 end
 
 function A.Dismiss()
     A.Send("dismiss")
 end
 
-function A.DismissOne(name)
-    A.Send("dismiss", name)
+function A.Rename(name)
+    if not name or name == "" then
+        A.SetMessage(false, "Enter the new name first.")
+        return
+    end
+    A.Send("rename", name)
 end
 
--- One rank of a companion's talent learned (learn true) or unlearned, by talent id; the same of its pet.
+function A.Reroll(race, class)
+    if not (race and class) then
+        A.SetMessage(false, "Pick a race and a class first.")
+        return
+    end
+    A.Send("reroll", race, class)
+end
+
+-- One rank of the companion's talent learned (learn true) or unlearned, by talent id; the same of its pet.
 function A.Talent(name, learn, talentId)
     A.Send("talent", name, learn and "learn" or "unlearn", talentId)
 end
@@ -122,16 +130,10 @@ function A.Equip(name, bag, slot, invSlot)
     A.Send("equip", name, bag, slot, invSlot)
 end
 
+-- Whether `name` is the owner's companion, out in the world.
 function A.IsCompanion(name)
-    if not name then
-        return false
-    end
-    for _, companion in ipairs(A.state.companions) do
-        if companion.name == name then
-            return true
-        end
-    end
-    return false
+    local companion = A.state.companion
+    return name ~= nil and companion ~= nil and companion.out and companion.name == name
 end
 
 function A.SetMessage(ok, text)
@@ -160,7 +162,6 @@ function handlers.HELLO(protocol, enabled, stage)
     s.stage = stage
     s.races = {}
     s.raceOrder = {}
-    s.wants = {}
     if s.protocol ~= A.PROTOCOL then
         A.SetMessage(false, format("The realm speaks Animus protocol %s, this addon %d: update one of them.",
             tostring(protocol), A.PROTOCOL))
@@ -177,21 +178,16 @@ function handlers.RACE(race, classes)
     s.races[race] = { strsplit(",", classes or "") }
 end
 
-function handlers.WANTS(wants)
-    A.state.wants = { strsplit(",", wants or "") }
-end
-
-function handlers.PARTY(count, max)
-    A.state.companions = {}
-    A.state.max = tonumber(max) or A.state.max
-    A.state.expected = tonumber(count) or 0
-end
-
-function handlers.MEMBER(name, class, spec, level, parked, modelName, model)
-    table.insert(A.state.companions, {
-        name = name, class = class, spec = spec, level = tonumber(level) or 0, parked = parked == "1",
-        modelName = modelName, model = model or "",
-    })
+function handlers.COMPANION(exists, name, race, class, level, spec, out, loading, parked, modelName, model)
+    if exists ~= "1" then
+        A.state.companion = nil
+        return
+    end
+    A.state.companion = {
+        name = name, race = race, class = class, level = tonumber(level) or 0, spec = spec or "",
+        out = out == "1", loading = loading == "1", parked = parked == "1", modelName = modelName or "",
+        model = model or "",
+    }
 end
 
 function handlers.PET(name, petName, level, free, count)
