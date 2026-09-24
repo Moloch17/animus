@@ -17,6 +17,7 @@
  */
 
 #include "WorldBlock.h"
+#include "Log.h"
 #include "Creature.h"
 #include "GameObject.h"
 #include "Layout.h"

@@ -36,6 +36,7 @@
 #include "Spell.h"
 #include "SpellInfo.h"
 #include "SpellMgr.h"
+#include "Log.h"
 #include "Supplies.h"
 #include "WorldSession.h"
 #include <algorithm>
@@ -209,7 +210,12 @@ Item* Animus::Curriculum::WorldActions::BestUpgrade(Player* bot, StatProfile sta
         if (!CanWear(bot, proto))
             return;
 
-        uint8 const slot = bot->FindEquipSlot(proto, NULL_SLOT, true);
+        // The equip check itself, so that what this offers is what EquipUpgrade can do: proficiency, a two-hander
+        // against an off-hand, a weapon swap in combat, a cast in progress.
+        uint16 dest = 0;
+        if (bot->CanEquipItem(NULL_SLOT, dest, item, true) != EQUIP_ERR_OK)
+            return;
+        uint8 const slot = uint8(dest & 255);
         if (slot == NULL_SLOT)
             return;
 
@@ -639,10 +645,15 @@ uint32 Animus::Curriculum::WorldActions::BuySupplies(Player* bot, Creature* vend
         // BuyItemFromVendorSlot buys `count` lots of the template's BuyCount.
         uint32 const lot = std::max<uint32>(1, proto->BuyCount);
         uint32 const lots = (count - have + lot - 1) / lot;
+        // Its return value says whether the vendor's stock changed (false for an unlimited item), not whether
+        // the purchase went through: the bags say that.
         uint32 const before = bot->GetItemCount(supply.Item);
-        if (bot->BuyItemFromVendorSlot(vendor->GetGUID(), supply.Slot, supply.Item, uint8(std::min<uint32>(lots, 5)),
-            NULL_BAG, NULL_SLOT))
-            bought += bot->GetItemCount(supply.Item) - before;
+        bot->BuyItemFromVendorSlot(vendor->GetGUID(), supply.Slot, supply.Item, uint8(std::min<uint32>(lots, 5)),
+            NULL_BAG, NULL_SLOT);
+        uint32 const after = bot->GetItemCount(supply.Item);
+        bool const ok = after > before;
+        if (ok)
+            bought += after - before;
     }
 
     return bought;
@@ -700,6 +711,13 @@ void Animus::Curriculum::WorldActions::Sense(Player* bot, float radius, WorldVie
     Cell::VisitObjects(bot, creatureSearcher, radius);
 
     float corpseDistance = 0.0f, giverDistance = 0.0f, vendorDistance = 0.0f;
+    bool vendorBusiness = false;
+    bool const junk = JunkValue(bot) > 0;
+    bool const worn = bot->GetMoney() > 0 && Durability(bot) < 1.0f;
+    uint32 foodCount = 0, drinkCount = 0;
+    CountSupplies(bot, foodCount, drinkCount);
+    bool const short_ = foodCount < CONSUMABLE_COUNT
+        || (bot->GetMaxPower(POWER_MANA) > 0 && drinkCount < CONSUMABLE_COUNT);
     bool corpseLootable = false;
     for (Creature* creature : creatures)
     {
@@ -738,11 +756,22 @@ void Animus::Curriculum::WorldActions::Sense(Player* bot, float radius, WorldVie
             }
         }
         if (creature->HasNpcFlag(NPCFlags(UNIT_NPC_FLAG_VENDOR_MASK | UNIT_NPC_FLAG_REPAIR))
-            && creature->GetReactionTo(bot) > REP_UNFRIENDLY && (!world.Vendor || distance < vendorDistance))
+            && creature->GetReactionTo(bot) > REP_UNFRIENDLY)
         {
-            world.Vendor = creature;
-            world.VendorRepairs = creature->HasNpcFlag(UNIT_NPC_FLAG_REPAIR);
-            vendorDistance = distance;
+            // The vendor slot goes to the nearest trader with business to do: one that buys when there is junk,
+            // repairs when something is worn, sells food or drink when the bags run low. Without any, the nearest.
+            bool const repairs = creature->HasNpcFlag(UNIT_NPC_FLAG_REPAIR);
+            bool const sells = creature->HasNpcFlag(NPCFlags(UNIT_NPC_FLAG_VENDOR_MASK))
+                && !creature->HasFlagsExtra(CREATURE_FLAG_EXTRA_NO_SELL_VENDOR);
+            bool const business = (junk && sells) || (worn && repairs) || (short_ && SellsSupplies(bot, creature));
+            if (!world.Vendor || (business && !vendorBusiness)
+                || (business == vendorBusiness && distance < vendorDistance))
+            {
+                world.Vendor = creature;
+                world.VendorRepairs = repairs;
+                vendorDistance = distance;
+                vendorBusiness = business;
+            }
         }
     }
 
