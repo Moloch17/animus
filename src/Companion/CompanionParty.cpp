@@ -718,17 +718,32 @@ std::vector<ObjectGuid> Animus::CompanionParty::GetBotGUIDs() const
     return bots;
 }
 
-std::vector<std::string> Animus::CompanionParty::Describe(ModelLibrary& models) const
+std::size_t Animus::CompanionParty::MaxSize()
 {
-    std::vector<std::string> lines;
+    return MAX_COMPANIONS;
+}
+
+std::vector<Animus::CompanionParty::Summary> Animus::CompanionParty::Summarize(ModelLibrary& models) const
+{
+    std::vector<Summary> summaries;
+    summaries.reserve(_members.size());
     for (std::unique_ptr<Member> const& member : _members)
     {
         std::string error;
         bool const loaded = models.Find(*member->L, error) != nullptr;
-        lines.push_back(Acore::StringFormat("{}: level {} {} ({}), model {}: {}{}", member->Name, member->Level,
-            member->L->Profile->Name, member->L->Profile->Specs[member->Spec].Name, member->L->ModelName(),
-            loaded ? "loaded" : error, member->Parked ? " (waiting for you to land)" : ""));
+        summaries.push_back({ member->Name, member->L->Profile->Name, member->L->Profile->Specs[member->Spec].Name,
+            member->Level, member->L->ModelName(), loaded ? "loaded" : error, member->Parked });
     }
+    return summaries;
+}
+
+std::vector<std::string> Animus::CompanionParty::Describe(ModelLibrary& models) const
+{
+    std::vector<std::string> lines;
+    for (Summary const& companion : Summarize(models))
+        lines.push_back(Acore::StringFormat("{}: level {} {} ({}), model {}: {}{}", companion.Name, companion.Level,
+            companion.Class, companion.Spec, companion.ModelName, companion.Model,
+            companion.Parked ? " (waiting for you to land)" : ""));
     return lines;
 }
 

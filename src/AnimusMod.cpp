@@ -129,19 +129,24 @@ namespace
         return "?";
     }
 
+    /// Every id once, under its first name, in the order of the table.
+    template <std::size_t N>
+    std::vector<NamedId> Unique(std::array<NamedId, N> const& names)
+    {
+        std::vector<NamedId> unique;
+        for (NamedId const& entry : names)
+            if (std::none_of(unique.begin(), unique.end(), [&](NamedId const& seen) { return seen.Id == entry.Id; }))
+                unique.push_back(entry);
+        return unique;
+    }
+
     /// Every id's first name, for messages.
     template <std::size_t N>
     std::string Names(std::array<NamedId, N> const& names)
     {
         std::string list;
-        std::vector<uint8> seen;
-        for (NamedId const& entry : names)
-        {
-            if (std::find(seen.begin(), seen.end(), entry.Id) != seen.end())
-                continue;
-            seen.push_back(entry.Id);
+        for (NamedId const& entry : Unique(names))
             list += (list.empty() ? "" : ", ") + std::string(entry.Name);
-        }
         return list;
     }
 }
@@ -326,6 +331,40 @@ std::vector<std::string> Animus::AnimusMod::List(Player* owner)
         return {};
 
     return itr->second->Describe(_models);
+}
+
+std::vector<Animus::CompanionParty::Summary> Animus::AnimusMod::Companions(Player* owner)
+{
+    auto const itr = _parties.find(owner->GetGUID());
+    if (itr == _parties.end())
+        return {};
+
+    return itr->second->Summarize(_models);
+}
+
+std::vector<Animus::AnimusMod::RaceChoice> Animus::AnimusMod::RaceChoices(Player const* owner)
+{
+    std::vector<RaceChoice> choices;
+    for (NamedId const& race : Unique(RACE_NAMES))
+    {
+        if (Player::TeamIdForRace(race.Id) != owner->GetTeamId())
+            continue;
+
+        RaceChoice& choice = choices.emplace_back();
+        choice.Race = race.Name;
+        for (NamedId const& playerClass : Unique(CLASS_NAMES))
+            if (sObjectMgr->GetPlayerInfo(race.Id, playerClass.Id))
+                choice.Classes.emplace_back(playerClass.Name);
+    }
+    return choices;
+}
+
+std::vector<std::string> Animus::AnimusMod::WantChoices()
+{
+    std::vector<std::string> wants;
+    for (NamedId const& want : Unique(WANT_NAMES))
+        wants.emplace_back(want.Name);
+    return wants;
 }
 
 std::vector<std::string> Animus::AnimusMod::StageList() const

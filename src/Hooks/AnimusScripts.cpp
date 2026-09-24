@@ -16,12 +16,14 @@
  * with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include "AnimusAddon.h"
 #include "AnimusMod.h"
 #include "Chat.h"
 #include "CommandScript.h"
 #include "Optional.h"
 #include "Player.h"
 #include "PlayerScript.h"
+#include "SharedDefines.h"
 #include "UnitScript.h"
 #include "WorldScript.h"
 
@@ -121,9 +123,20 @@ namespace
     class AnimusPlayerScript : public PlayerScript
     {
     public:
-        AnimusPlayerScript() : PlayerScript("AnimusPlayerScript", { PLAYERHOOK_ON_LOGOUT }) { }
+        AnimusPlayerScript() : PlayerScript("AnimusPlayerScript",
+            { PLAYERHOOK_ON_LOGOUT, PLAYERHOOK_CAN_PLAYER_USE_PRIVATE_CHAT }) { }
 
         void OnPlayerLogout(Player* player) override { sAnimusMod->OnPlayerLogout(player); }
+
+        /// An addon whisper a player sends to themselves is the Animus addon talking to the module (any player, no
+        /// security): answered here and never delivered. Every other whisper goes on its way.
+        bool OnPlayerCanUseChat(Player* player, uint32 type, uint32 lang, std::string& msg, Player* receiver) override
+        {
+            if (lang != LANG_ADDON || type != CHAT_MSG_WHISPER || receiver != player)
+                return true;
+
+            return !Animus::Addon::Handle(player, msg);
+        }
     };
 
     class AnimusUnitScript : public UnitScript

@@ -67,6 +67,21 @@ namespace Animus
             Curriculum::CurriculumTuning::OptionTuning Options;     // how long each durative action may run
         };
 
+        /// What a companion is, for `.animus list` and the addon.
+        struct Summary
+        {
+            std::string Name;
+            std::string Class;          // the profile's name (hunter, deathknight)
+            std::string Spec;
+            uint8 Level = 1;
+            std::string ModelName;      // the model it plays (hunter_duel)
+            std::string Model;          // "loaded", or why its model is not
+            bool Parked = false;        // out of the world while the owner flies or rides a vehicle
+        };
+
+        /// How many companions a party holds at most.
+        [[nodiscard]] static std::size_t MaxSize();
+
         explicit CompanionParty(ObjectGuid owner);
         ~CompanionParty();
 
@@ -97,6 +112,8 @@ namespace Animus
         [[nodiscard]] bool HasBot(ObjectGuid bot) const;
         [[nodiscard]] std::size_t Size() const { return _members.size(); }
 
+        /// Every companion, in the order they were added.
+        [[nodiscard]] std::vector<Summary> Summarize(ModelLibrary& models) const;
         /// One line per companion: name, class, level, model state.
         [[nodiscard]] std::vector<std::string> Describe(ModelLibrary& models) const;
 

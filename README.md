@@ -7,6 +7,7 @@ changes, together with [animus-lib](https://github.com/Moloch17/animus-lib), the
 - **Class companions.** Up to four characters of the race and class you choose join your party at your
   level and level up with you. They follow you through loading screens, into instances and onto transports, and play
   their class model in every fight.
+- **The Animus addon** (`animus_addon/Animus`): the window players summon and dismiss them from.
 They run the same encoding code as training, so a model sees and does exactly what it trained on.
 
 **The detail is in [chapter 6 of the Animus manual][manual-6].** This page is the map.
@@ -39,9 +40,18 @@ install step line up, is in
 `animus-lib/` (a git subtree, default `master`) and commits it. A realm must build the manifests its models were
 trained with, so update it together with the models.
 
+## The addon
+
+Players use the module through the Animus addon in `animus_addon/Animus`: copy that folder into the client's
+`Interface/AddOns/` and type `/animus` (or click the minimap button). It offers the races of your faction, the
+classes each can be and what to ask of the build, lists your companions with their models, and dismisses them. It
+talks to the module over addon whispers the player sends to themselves (prefix `Animus`), which need
+`AddonChannel = 1` in `worldserver.conf` (the default); no security is required. The messages are documented in
+[its README](animus_addon/Animus/README.md), for anyone writing another client.
+
 ## Commands
 
-Game master commands, not available from the console.
+Game master commands, not available from the console; the addon does the same for every player.
 
 | Command | Effect |
 |---|---|

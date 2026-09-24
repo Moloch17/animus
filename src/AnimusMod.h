@@ -63,6 +63,26 @@ namespace Animus
         /// One line per class companion of `owner`.
         [[nodiscard]] std::vector<std::string> List(Player* owner);
 
+        /// The companions of `owner`, in the order they were summoned; none when they have no party.
+        [[nodiscard]] std::vector<CompanionParty::Summary> Companions(Player* owner);
+
+        /// A race a summon may ask for, with the classes it can be, in the names Summon accepts.
+        struct RaceChoice
+        {
+            std::string Race;
+            std::vector<std::string> Classes;
+        };
+
+        /// The races of `owner`'s faction, each with the classes it can be: everything Summon takes as its first
+        /// two words. Cheap (player info only), unlike what a class can be asked for, which needs its assets built.
+        [[nodiscard]] static std::vector<RaceChoice> RaceChoices(Player const* owner);
+
+        /// The words Summon's third argument takes, one per demand (tank, heal, dps).
+        [[nodiscard]] static std::vector<std::string> WantChoices();
+
+        /// The stage whose models companions play (Animus.Curriculum.Stage).
+        [[nodiscard]] std::string const& CurrentStage() const { return _config.CurriculumStage; }
+
         /// Every curriculum stage with its arenas: the names Animus.Curriculum.Stage accepts, and so which models a
         /// companion will look for.
         [[nodiscard]] std::vector<std::string> StageList() const;
