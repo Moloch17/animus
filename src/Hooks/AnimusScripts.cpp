@@ -73,6 +73,7 @@ namespace
                 { "dismiss",    HandleDismissCommand,   SEC_GAMEMASTER, Console::No },
                 { "rename",     HandleRenameCommand,    SEC_GAMEMASTER, Console::No },
                 { "reroll",     HandleRerollCommand,    SEC_GAMEMASTER, Console::No },
+                { "purge",      HandlePurgeCommand,     SEC_ADMINISTRATOR, Console::Yes },
                 { "stage",      stageCommandTable },
             };
 
@@ -125,6 +126,12 @@ namespace
         {
             std::string message;
             return Reply(handler, sAnimusMod->Reroll(handler->GetPlayer(), race, playerClass, message), message);
+        }
+
+        /// .animus purge: every account and character the module made, deleted; every companion sent away unsaved.
+        static bool HandlePurgeCommand(ChatHandler* handler)
+        {
+            return ReplyLines(handler, sAnimusMod->PurgeAll(), "Nothing to purge.");
         }
 
         /// .animus stage list: every curriculum stage and its arenas -- the names Animus.Curriculum.Stage takes.

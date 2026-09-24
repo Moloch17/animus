@@ -64,6 +64,8 @@ namespace Animus
         /// The companion character is gone from the characters database: forget it. The account stays for the
         /// next one unless `andAccount`.
         void Erase(ObjectGuid owner, bool andAccount);
+        /// Every record gone, from memory and the table (the accounts and characters are the caller's to delete).
+        void Clear();
 
         /// A name the owner may give a companion: the client's rules, not reserved, not taken. False with
         /// `message` set.

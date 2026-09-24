@@ -75,6 +75,11 @@ namespace Animus
         /// The owner character was deleted: their companion character and its account go too.
         void OnOwnerDeleted(ObjectGuid owner);
 
+        /// Every account and character the module ever made, gone: companions out of the world unsaved, every
+        /// `ANIMUS<guid>` account deleted with its characters (orphans of older runs included), the registry
+        /// emptied. Returns what it did, one line per account.
+        [[nodiscard]] std::vector<std::string> PurgeAll();
+
         /// The addon's inspect-window edits of the companion (CompanionParty::Talent, PetTalent, Equip, Pet).
         bool Talent(Player* owner, std::string_view name, uint32 talentId, bool learn, std::string& message);
         bool PetTalent(Player* owner, std::string_view name, uint32 talentId, bool learn, std::string& message);

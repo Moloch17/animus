@@ -81,6 +81,7 @@ Game master commands, not available from the console; the addon does the same fo
 | `.animus reroll <race> <class>` | A new character of the same name |
 | `.animus list` | Your companion and whether its model is loaded |
 | `.animus stage list` | Every curriculum stage and its arenas: the names `Animus.Curriculum.Stage` accepts |
+| `.animus purge` | Administrator, console too: every account the module made (`ANIMUS<guid>`) deleted with its characters, every companion sent away unsaved, the registry emptied |
 
 ## Models
 

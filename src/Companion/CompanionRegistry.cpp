@@ -167,6 +167,13 @@ void Animus::CompanionRegistry::Erase(ObjectGuid owner, bool andAccount)
         AccountMgr::DeleteAccount(account);
 }
 
+void Animus::CompanionRegistry::Clear()
+{
+    _records.clear();
+    _byBot.clear();
+    CharacterDatabase.DirectExecute("DELETE FROM animus_companion");
+}
+
 bool Animus::CompanionRegistry::CheckName(std::string& name, std::string& message)
 {
     if (!normalizePlayerName(name))

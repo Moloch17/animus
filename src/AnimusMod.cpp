@@ -17,6 +17,7 @@
  */
 
 #include "AnimusMod.h"
+#include "AccountMgr.h"
 #include "AnimusAddon.h"
 #include "BotFactory.h"
 #include "CharacterCache.h"
@@ -530,6 +531,47 @@ void Animus::AnimusMod::OnOwnerDeleted(ObjectGuid owner)
         record->Bot.ToString(), record->Account);
     CompanionRegistry::DeleteCharacter(*record);
     _registry.Erase(owner, true);
+}
+
+std::vector<std::string> Animus::AnimusMod::PurgeAll()
+{
+    // Out of the world first, unsaved: AccountMgr::DeleteAccount kicks a character's session, which a socketless
+    // one never answers, and deleting the rows under a character still in the world is not something to try.
+    std::size_t const out = _parties.size();
+    while (!_parties.empty())
+        RemoveParty(_parties.begin()->first);
+    _registry.Clear();
+
+    std::vector<std::string> lines;
+    if (out)
+        lines.push_back(Acore::StringFormat("{} companion{} sent away unsaved.", out, out == 1 ? "" : "s"));
+
+    QueryResult accounts = LoginDatabase.Query("SELECT id, username FROM account WHERE username LIKE 'ANIMUS%'");
+    if (!accounts)
+    {
+        lines.push_back("No Animus accounts.");
+        return lines;
+    }
+
+    do
+    {
+        Field* fields = accounts->Fetch();
+        uint32 const account = fields[0].Get<uint32>();
+        std::string const username = fields[1].Get<std::string>();
+
+        // The account's characters go with it (Player::DeleteFromDB, finally), then the account.
+        uint32 characters = 0;
+        if (QueryResult names = CharacterDatabase.Query("SELECT name FROM characters WHERE account = {}", account))
+            characters = uint32(names->GetRowCount());
+
+        AccountOpResult const result = AccountMgr::DeleteAccount(account);
+        lines.push_back(Acore::StringFormat("Account {} ({}) with {} character{}: {}.", username, account, characters,
+            characters == 1 ? "" : "s", result == AOR_OK ? "deleted" : "could not be deleted"));
+        LOG_INFO("module.animus", "Purge: account {} ({}) with {} characters {}", username, account, characters,
+            result == AOR_OK ? "deleted" : "not deleted");
+    } while (accounts->NextRow());
+
+    return lines;
 }
 
 bool Animus::AnimusMod::Talent(Player* owner, std::string_view name, uint32 talentId, bool learn,
