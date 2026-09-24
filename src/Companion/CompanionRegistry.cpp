@@ -36,6 +36,29 @@ namespace
         return Acore::StringFormat("ANIMUS{}", owner.GetCounter());
     }
 
+    bool TableExists()
+    {
+        return CharacterDatabase.Query("SHOW TABLES LIKE 'animus_companion'") != nullptr;
+    }
+
+    /// The module's one table, made when the first companion account is: nothing of the module's is in the
+    /// database before then, and nothing after a purge.
+    void CreateTable()
+    {
+        CharacterDatabase.DirectExecute(
+            "CREATE TABLE IF NOT EXISTS `animus_companion` ("
+            "`owner` INT UNSIGNED NOT NULL COMMENT 'characters.guid of the player character that owns it', "
+            "`account` INT UNSIGNED NOT NULL COMMENT 'account.id the companion character belongs to', "
+            "`guid` INT UNSIGNED NOT NULL COMMENT 'characters.guid of the companion', "
+            "`spec` TINYINT UNSIGNED NOT NULL DEFAULT 0 COMMENT 'index into the class profile''s specs', "
+            "`edited` TINYINT UNSIGNED NOT NULL DEFAULT 0 "
+            "COMMENT '1 once the owner edited its talents, pet talents or gear', "
+            "`owner_gear` INT UNSIGNED NOT NULL DEFAULT 0 "
+            "COMMENT 'bit per equipment slot holding an item the owner gave it', "
+            "PRIMARY KEY (`owner`), UNIQUE KEY `guid` (`guid`)"
+            ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+    }
+
     std::string RandomPassword()
     {
         static constexpr char ALPHABET[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
@@ -51,8 +74,9 @@ void Animus::CompanionRegistry::Load()
     _records.clear();
     _byBot.clear();
 
-    QueryResult result = CharacterDatabase.Query("SELECT owner, account, guid, spec, edited, owner_gear "
-        "FROM animus_companion");
+    // No table until the first companion account: nothing to know.
+    QueryResult result = TableExists() ? CharacterDatabase.Query("SELECT owner, account, guid, spec, edited, "
+        "owner_gear FROM animus_companion") : nullptr;
     if (!result)
     {
         LOG_INFO("module.animus", "Animus knows no companions yet");
@@ -109,7 +133,10 @@ uint32 Animus::CompanionRegistry::AccountFor(Player const* owner) const
 {
     std::string username = AccountName(owner->GetGUID());
     if (uint32 const existing = AccountMgr::GetId(username))
+    {
+        CreateTable();      // gone by hand while the account stayed: back before the record needs it
         return existing;
+    }
 
     // AccountMgr::CreateAccount inserts asynchronously and the id is needed now: the same rows, written directly.
     // The password is random and never shown; the account exists only to own the companion character.
@@ -123,7 +150,10 @@ uint32 Animus::CompanionRegistry::AccountFor(Player const* owner) const
 
     uint32 const account = AccountMgr::GetId(username);
     if (account)
+    {
+        CreateTable();
         LOG_INFO("module.animus", "Created account {} ({}) for {}'s companion", username, account, owner->GetName());
+    }
     else
         LOG_ERROR("module.animus", "Could not create account {} for {}'s companion", username, owner->GetName());
     return account;
@@ -171,23 +201,7 @@ void Animus::CompanionRegistry::Clear()
 {
     _records.clear();
     _byBot.clear();
-
-    // The module's one table, dropped and made again empty, so the module keeps working until the next start
-    // (the updater applies data/sql/db-characters/animus_companion.sql only when its hash changes: keep the two
-    // definitions the same).
     CharacterDatabase.DirectExecute("DROP TABLE IF EXISTS animus_companion");
-    CharacterDatabase.DirectExecute(
-        "CREATE TABLE IF NOT EXISTS `animus_companion` ("
-        "`owner` INT UNSIGNED NOT NULL COMMENT 'characters.guid of the player character that owns it', "
-        "`account` INT UNSIGNED NOT NULL COMMENT 'account.id the companion character belongs to', "
-        "`guid` INT UNSIGNED NOT NULL COMMENT 'characters.guid of the companion', "
-        "`spec` TINYINT UNSIGNED NOT NULL DEFAULT 0 COMMENT 'index into the class profile''s specs', "
-        "`edited` TINYINT UNSIGNED NOT NULL DEFAULT 0 "
-        "COMMENT '1 once the owner edited its talents, pet talents or gear', "
-        "`owner_gear` INT UNSIGNED NOT NULL DEFAULT 0 "
-        "COMMENT 'bit per equipment slot holding an item the owner gave it', "
-        "PRIMARY KEY (`owner`), UNIQUE KEY `guid` (`guid`)"
-        ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
 }
 
 bool Animus::CompanionRegistry::CheckName(std::string& name, std::string& message)

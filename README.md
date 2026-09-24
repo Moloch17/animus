@@ -58,15 +58,14 @@ The addon talks to the module over addon whispers the player sends to themselves
 
 ## Companions in the database
 
-A companion is a character of its own: `animus_companion` (characters database, created by the module's
-`data/sql/db-characters/` on startup) maps an owner to it -- its `characters` guid, the account it lives on and
-what the module remembers (spec, whether the owner edited it, the gear they gave it). The account is
-`ANIMUS<owner guid>` in the auth database, made on the owner's first create with a random password nobody is told;
-it stays when the character is replaced and goes when the owner's character is deleted. The character saves as
-any does (the core's autosave interval, and at once on dismiss, on the owner's logout and at shutdown), and is
-loaded again on summon as a login loads one, on the database thread. Its mail and achievements are deleted before
-every load and after every save, players cannot mail it, level rewards skip it and its achievement criteria are
-never checked.
+A companion is a character of its own: `animus_companion` (characters database, created by the module itself when the
+first companion account is, and dropped by `.animus purge`) maps an owner to it -- its `characters` guid, the account
+it lives on and what the module remembers (spec, whether the owner edited it, the gear they gave it). The account is
+`ANIMUS<owner guid>` in the auth database, made on the owner's first create with a random password nobody is told; it
+stays when the character is replaced and goes when the owner's character is deleted. The character saves as any does
+(the core's autosave interval, and at once on dismiss, on the owner's logout and at shutdown), and is loaded again on
+summon as a login loads one, on the database thread. Its mail and achievements are deleted before every load and after
+every save, players cannot mail it, level rewards skip it and its achievement criteria are never checked.
 
 ## Commands
 
@@ -81,7 +80,7 @@ Game master commands, not available from the console; the addon does the same fo
 | `.animus reroll <race> <class>` | A new character of the same name |
 | `.animus list` | Your companion and whether its model is loaded |
 | `.animus stage list` | Every curriculum stage and its arenas: the names `Animus.Curriculum.Stage` accepts |
-| `.animus purge` | Administrator, console too: every account the module made (`ANIMUS<guid>`) deleted with its characters, every companion sent away unsaved, the module's table dropped and made again empty |
+| `.animus purge` | Administrator, console too: every account the module made (`ANIMUS<guid>`) deleted with its characters, every companion sent away unsaved, the module's table dropped |
 
 ## Models
 

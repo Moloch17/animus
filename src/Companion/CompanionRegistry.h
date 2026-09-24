@@ -31,7 +31,8 @@ namespace Animus
 {
     /// What a player character owns: one companion, a character of its own on an account made for it, remembered
     /// in `animus_companion` (characters database) between summons. The character itself is the core's (its
-    /// `characters` row and everything hanging off it); this is the map from owner to it.
+    /// `characters` row and everything hanging off it); this is the map from owner to it. The table is made when
+    /// the first account is (AccountFor), not before, and dropped by a purge.
     class CompanionRegistry
     {
     public:
@@ -64,8 +65,8 @@ namespace Animus
         /// The companion character is gone from the characters database: forget it. The account stays for the
         /// next one unless `andAccount`.
         void Erase(ObjectGuid owner, bool andAccount);
-        /// Every record gone from memory, and the module's table dropped and made again empty (the accounts and
-        /// characters are the caller's to delete).
+        /// Every record gone from memory, and the module's table dropped (the accounts and characters are the
+        /// caller's to delete). The next account made brings the table back.
         void Clear();
 
         /// A name the owner may give a companion: the client's rules, not reserved, not taken. False with
