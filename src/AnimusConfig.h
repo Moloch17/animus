@@ -22,6 +22,7 @@
 #include "Define.h"
 #include "Position.h"
 #include "CurriculumTuning.h"
+#include "LifeService.h"
 #include <string>
 #include <vector>
 
@@ -44,6 +45,8 @@ namespace Animus
         /// Animus.Curriculum.Options.*: how long a companion's durative actions (rest, hold an interrupt, keep range)
         /// may run, as the forge's seats have them.
         Curriculum::CurriculumTuning::OptionTuning CurriculumOptions;
+        /// Animus.Life.*: life outside the fight for companions whose model carries the world block.
+        Life::Settings Life;
 
         void Load();
     };

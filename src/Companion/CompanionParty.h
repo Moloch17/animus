@@ -150,6 +150,9 @@ namespace Animus
         [[nodiscard]] bool HasBot(ObjectGuid bot) const;
         [[nodiscard]] std::size_t Size() const { return _members.size(); }
 
+        /// Every companion's bot that is in the world, in the order they were added (the life service's list).
+        [[nodiscard]] std::vector<Player*> PresentBots() const;
+
         /// Every companion, in the order they were added.
         [[nodiscard]] std::vector<Summary> Summarize(ModelLibrary& models) const;
         /// One line per companion: name, class, level, model state.

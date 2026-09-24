@@ -246,12 +246,15 @@ void Animus::CompanionRegistry::Rename(Record const& record, std::string const& 
 void Animus::CompanionRegistry::Purge(ObjectGuid bot)
 {
     // Items sitting in its mail go with the mail (a loaded character's gear that no longer fits is mailed to it).
+    // The auction house's mail stays (MAIL_AUCTION, 2): what the companion sold or bought is in it, and the life
+    // service collects it (LifeService::CollectMail).
     uint32 const guid = bot.GetCounter();
     CharacterDatabase.DirectExecute("DELETE ii FROM item_instance ii INNER JOIN mail_items mi ON "
-        "mi.item_guid = ii.guid INNER JOIN mail m ON m.id = mi.mail_id WHERE m.receiver = {}", guid);
+        "mi.item_guid = ii.guid INNER JOIN mail m ON m.id = mi.mail_id WHERE m.receiver = {} AND m.messageType <> 2",
+        guid);
     CharacterDatabase.DirectExecute("DELETE mi FROM mail_items mi INNER JOIN mail m ON "
-        "m.id = mi.mail_id WHERE m.receiver = {}", guid);
-    CharacterDatabase.DirectExecute("DELETE FROM mail WHERE receiver = {}", guid);
+        "m.id = mi.mail_id WHERE m.receiver = {} AND m.messageType <> 2", guid);
+    CharacterDatabase.DirectExecute("DELETE FROM mail WHERE receiver = {} AND messageType <> 2", guid);
     CharacterDatabase.DirectExecute("DELETE FROM character_achievement WHERE guid = {}",
         guid);
     CharacterDatabase.DirectExecute("DELETE FROM character_achievement_progress WHERE guid = {}",

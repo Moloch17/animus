@@ -689,3 +689,80 @@ Animus.Curriculum.Flag.Death = 1.0
 Animus.Curriculum.Flag.StepCost = 0.0002
 
 ###################################################################################################
+
+###################################################################################################
+# LIFE OUTSIDE THE FIGHT
+#
+# For companions whose model carries the world block (the forge's stages 20-22 and the crossroads): the
+# model itself loots, takes and hands in quests, gathers, puts on the better item, sells the greys,
+# repairs and restocks (WorldBlock, the same features and presses it trained with). What is listed here
+# is the scripted rest -- lookups, and what no sim could teach -- each with a switch. A companion whose
+# model has no world block is untouched by all of it. `.animus life` shows the switches;
+# `.animus life <feature> on|off` flips one until the next config reload.
+#
+#    Animus.Life.Enable
+#        Description: The whole of it.
+#        Default:     1
+
+Animus.Life.Enable = 1
+
+#
+#    Animus.Life.Quests
+#        Description: The owner's quests are the companion's too: taken when the owner takes one it can
+#                     take, dropped when the owner drops it. The model does the objectives, the looting
+#                     and the turn-in (choosing the reward that rates highest for its build).
+#        Default:     1
+
+Animus.Life.Quests = 1
+
+#
+#    Animus.Life.Auction, Animus.Life.AuctionBudgetGold
+#        Description: Idle beside an auctioneer, the companion lists its unbound greens and better that
+#                     are no upgrade for it (at the house's median price for the item, else four times
+#                     the vendor's), and buys one upgrade for its build at buyout under the budget.
+#        Default:     1, 50
+
+Animus.Life.Auction = 1
+Animus.Life.AuctionBudgetGold = 50
+
+#
+#    Animus.Life.Mail
+#        Description: The house's mail (sales, purchases, returns) is collected when idle. Companions
+#                     receive no other mail.
+#        Default:     1
+
+Animus.Life.Mail = 1
+
+#
+#    Animus.Life.Taxi, Animus.Life.TaxiBeyondYards
+#        Description: When the owner is further than this on the same map and a flight path between the
+#                     nearest flight points would close most of it, the companion takes it (and pays).
+#        Default:     1, 1500
+
+Animus.Life.Taxi = 1
+Animus.Life.TaxiBeyondYards = 1500
+
+#
+#    Animus.Life.CorpseRun
+#        Description: A dead companion releases and walks back to its corpse once the owner is out of the
+#                     fight, reclaiming it as a player does; after five minutes, or a corpse on another
+#                     map, it takes the spirit healer's terms. Off: it stands up where it fell after ten
+#                     quiet seconds, as before.
+#        Default:     1
+
+Animus.Life.CorpseRun = 1
+
+#
+#    Animus.Life.Crafting
+#        Description: Idle, the companion makes what it knows a recipe for from what it carries.
+#        Default:     1
+
+Animus.Life.Crafting = 1
+
+#
+#    Animus.Life.IdleSeconds
+#        Description: Out of combat this long, with nothing to fight, before the mail, the house or a
+#                     recipe.
+#        Default:     20
+
+Animus.Life.IdleSeconds = 20

@@ -33,6 +33,7 @@
 #include <vector>
 
 class Player;
+class Quest;
 class Unit;
 
 namespace Animus
@@ -127,6 +128,12 @@ namespace Animus
         /// Every curriculum stage with its arenas: the names Animus.Curriculum.Stage accepts, and so which models a
         /// companion will look for.
         [[nodiscard]] std::vector<std::string> StageList() const;
+
+        /// Life outside the fight (LifeService): the owner's quests reach its companions; `.animus life`.
+        void OnOwnerQuestAccept(Player* owner, Quest const* quest);
+        void OnOwnerQuestAbandon(Player* owner, uint32 questId);
+        [[nodiscard]] std::vector<std::string> LifeStatus() const;
+        bool LifeToggle(std::string_view feature, std::string_view state, std::string& message);
 
         /// A player logged out: their companion is saved and removed.
         void OnPlayerLogout(Player* player);

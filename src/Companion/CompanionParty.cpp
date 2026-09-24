@@ -28,6 +28,7 @@
 #include "EncoderSupport.h"
 #include "Group.h"
 #include "GroupMgr.h"
+#include "LifeService.h"
 #include "Item.h"
 #include "Log.h"
 #include "Map.h"
@@ -360,7 +361,30 @@ Animus::CompanionParty::Status Animus::CompanionParty::Update(uint32 diff, Setti
     for (std::unique_ptr<Member> const& member : _members)
         UpdateMember(*member, FindBot(member->Bot), owner, diff, settings, models);
 
+    // Life outside the fight, for the companions whose model carries the world block: the mail, the house, a
+    // recipe when idle, a flight when the owner is far (LifeService). The block's own presses run in Decide.
+    std::vector<Life::Companion> companions;
+    for (std::unique_ptr<Member> const& member : _members)
+    {
+        Player* bot = FindBot(member->Bot);
+        if (!bot || !bot->IsInWorld() || member->Parked)
+            continue;
+        companions.push_back({ bot, member->L ? member->L->Profile->Specs[member->Spec].Stats
+            : Curriculum::StatProfile::StrengthMelee, member->L && member->L->Has(BlockId::World),
+            _enemies.empty() && !bot->IsInCombat() });
+    }
+    sLife->Update(diff, owner, companions);
+
     return Status::Active;
+}
+
+std::vector<Player*> Animus::CompanionParty::PresentBots() const
+{
+    std::vector<Player*> bots;
+    for (std::unique_ptr<Member> const& member : _members)
+        if (Player* bot = FindBot(member->Bot); bot && bot->IsInWorld())
+            bots.push_back(bot);
+    return bots;
 }
 
 void Animus::CompanionParty::UpdatePull(Player* owner, std::vector<Player*> const& bots)
@@ -492,6 +516,19 @@ void Animus::CompanionParty::UpdateMember(Member& member, Player* bot, Player* o
         }
 
         member.DeadMs += diff;
+        // A companion with the world block walks back to its corpse as a player does (LifeService::RunToCorpse,
+        // Animus.Life.CorpseRun); the rest stand up in place as before.
+        if (sLife->RunToCorpse(diff, bot, owner, member.L && member.L->Has(BlockId::World)))
+        {
+            if (bot->IsAlive())
+            {
+                member.DeadMs = 0;
+                member.SinceDecisionMs = 0;
+                member.StepDamage.store(0, std::memory_order_relaxed);
+                member.StepDamageTaken.store(0, std::memory_order_relaxed);
+            }
+            return;
+        }
         if (quiet && owner->IsAlive() && !owner->IsInCombat() && member.DeadMs >= RESURRECT_DELAY_MS)
         {
             bot->ResurrectPlayer(0.5f);
@@ -504,6 +541,10 @@ void Animus::CompanionParty::UpdateMember(Member& member, Player* bot, Player* o
     }
 
     member.DeadMs = 0;
+
+    // On a flight path (LifeService::Fly) nothing is decided: the client would show a taxi ride.
+    if (bot->IsInFlight())
+        return;
 
     // The owner levelled: the companion follows between pulls, as a new character of that level.
     if (quiet && LevelFor(member, owner) > member.Level)
@@ -716,6 +757,10 @@ Animus::Curriculum::SeatView Animus::CompanionParty::View(Member const& member, 
         // is true, rather than guessing at damage and being wrong about a healer.
         view.OpponentApt = Curriculum::Aptitude();
     }
+
+    // Life outside the fight: the world block's features from the real world, for a model that carries it.
+    if (layout.Has(BlockId::World))
+        sLife->Sense(bot, view.World);
 
     return view;
 }

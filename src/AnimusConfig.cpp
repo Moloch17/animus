@@ -125,4 +125,14 @@ void Animus::AnimusConfig::Load()
     CurriculumActions = curriculum.Actions;
     CurriculumOptions = curriculum.Options;
 
+    Life.Enable = sConfigMgr->GetOption<bool>("Animus.Life.Enable", true);
+    Life.Quests = sConfigMgr->GetOption<bool>("Animus.Life.Quests", true);
+    Life.Auction = sConfigMgr->GetOption<bool>("Animus.Life.Auction", true);
+    Life.AuctionBudgetCopper = sConfigMgr->GetOption<uint32>("Animus.Life.AuctionBudgetGold", 50) * 10000;
+    Life.Mail = sConfigMgr->GetOption<bool>("Animus.Life.Mail", true);
+    Life.Taxi = sConfigMgr->GetOption<bool>("Animus.Life.Taxi", true);
+    Life.TaxiBeyondYards = sConfigMgr->GetOption<float>("Animus.Life.TaxiBeyondYards", 1500.0f);
+    Life.CorpseRun = sConfigMgr->GetOption<bool>("Animus.Life.CorpseRun", true);
+    Life.Crafting = sConfigMgr->GetOption<bool>("Animus.Life.Crafting", true);
+    Life.IdleSeconds = sConfigMgr->GetOption<uint32>("Animus.Life.IdleSeconds", 20);
 }

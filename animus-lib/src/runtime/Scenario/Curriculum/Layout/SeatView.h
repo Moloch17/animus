@@ -27,10 +27,13 @@
 #include "Position.h"
 #include "Supplies.h"
 #include "TalentBuilder.h"
+#include "WorldActions.h"
 #include <array>
 #include <optional>
 #include <vector>
 
+class Creature;
+class GameObject;
 class Player;
 class SpellInfo;
 class Unit;
@@ -39,6 +42,28 @@ namespace Animus::Curriculum
 {
     struct Layout;
     class SeatMemory;
+
+    /// The world outside a fight, as the life encounters read it for the WorldBlock (or the live module's life
+    /// service for a companion): the nearest thing of each kind within the seat's senses, and the episode's quest.
+    struct WorldView
+    {
+        enum QuestStates : uint8 { QUEST_NONE = 0, QUEST_ACTIVE = 1, QUEST_COMPLETE = 2 };
+
+        bool Active = false;                        // something fills this: the block's features are live
+        Unit* Corpse = nullptr;                     // the nearest corpse the seat may loot, else one it may skin
+        bool CorpseQuestItem = false;
+        bool CorpseSkinnable = false;
+        Creature* Giver = nullptr;                  // the nearest quest giver the seat has business with
+        bool GiverOffers = false;
+        bool GiverTurnIn = false;
+        GameObject* Node = nullptr;                 // the nearest gathering node
+        WorldActions::NodeKind NodeKind = WorldActions::NodeKind::None;
+        bool NodeOpenable = false;
+        Creature* Vendor = nullptr;                 // the nearest vendor (a repairer when VendorRepairs)
+        bool VendorRepairs = false;
+        uint8 QuestState = QUEST_NONE;              // the episode's quest
+        float QuestProgress = 0.0f;
+    };
 
     /// One bot's situation at a decision: what the blocks cannot read from the world themselves. The scenario fills
     /// it; each part is only used by the blocks that need it.
@@ -391,6 +416,9 @@ namespace Animus::Curriculum
             ObjectGuid Usable;
         } Flags;
 
+        /// Life outside the fight (WorldBlock). Inactive in every arena that has no life encounter.
+        WorldView World;
+
         /// What the side's director asked of this seat. Advice, not a lever: the seat reads it and still chooses
         /// its own actions. Inactive in an arena with no director, where every field below is ignored.
         struct TeamOrder
@@ -433,6 +461,21 @@ namespace Animus::Curriculum
     struct SeatActionResult
     {
         uint32 SpellCasts = 0;
+        // What a world press did (WorldBlock): the life encounters read these for their rewards and columns.
+        uint32 Interactions = 0;
+        uint32 Wasted = 0;                          // a press that did nothing in the world
+        uint32 CorpsesLooted = 0;
+        uint32 NodesLooted = 0;
+        uint32 ItemsLooted = 0;
+        uint32 CopperLooted = 0;
+        uint32 GatherCasts = 0;                     // gathering and skinning casts started
+        uint32 Equipped = 0;
+        uint32 CopperSold = 0;
+        uint32 Repairs = 0;
+        uint32 CopperRepaired = 0;
+        uint32 SuppliesBought = 0;
+        bool QuestAccepted = false;
+        bool QuestTurnedIn = false;
         uint32 TrinketUses = 0;
         uint32 ItemUses = 0;                        // use effects of an equipped weapon or off-hand item
         uint32 SustainCasts = 0;

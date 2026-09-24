@@ -169,6 +169,16 @@ bool Animus::Addon::Handle(Player* player, std::string_view msg)
             SendCompanion(player);
         }
     }
+    else if (request == "life")
+    {
+        if (words.size() == 1)
+            for (std::string const& line : sAnimusMod->LifeStatus())
+                SendResult(player, true, line);
+        else if (words.size() != 3)
+            SendResult(player, false, "A life switch names a feature and on or off.");
+        else
+            SendResult(player, sAnimusMod->LifeToggle(words[1], words[2], message), message);
+    }
     else if (request == "summon")
     {
         SendResult(player, sAnimusMod->Summon(player, message), message);

@@ -17,6 +17,7 @@
  */
 
 #include "AnimusMod.h"
+#include "LifeService.h"
 #include "AccountMgr.h"
 #include "AnimusAddon.h"
 #include "BotFactory.h"
@@ -123,6 +124,7 @@ Animus::AnimusMod* Animus::AnimusMod::Instance()
 void Animus::AnimusMod::LoadConfig()
 {
     _config.Load();
+    sLife->Configure(_config.Life);
 
     // Models load when a companion or a stage seat first needs them, from the (new) model directory.
     _models.Reset(_config.Enable ? _config.ModelDir : "");
@@ -748,4 +750,38 @@ Animus::Curriculum::Layout const& Animus::AnimusMod::LayoutFor(Curriculum::Class
     }
 
     return itr->second;
+}
+
+void Animus::AnimusMod::OnOwnerQuestAccept(Player* owner, Quest const* quest)
+{
+    if (auto const party = _parties.find(owner->GetGUID()); party != _parties.end())
+        sLife->OnOwnerQuestAccept(owner, quest, party->second->PresentBots());
+}
+
+void Animus::AnimusMod::OnOwnerQuestAbandon(Player* owner, uint32 questId)
+{
+    if (auto const party = _parties.find(owner->GetGUID()); party != _parties.end())
+        sLife->OnOwnerQuestAbandon(owner, questId, party->second->PresentBots());
+}
+
+std::vector<std::string> Animus::AnimusMod::LifeStatus() const
+{
+    return sLife->Status();
+}
+
+bool Animus::AnimusMod::LifeToggle(std::string_view feature, std::string_view state, std::string& message)
+{
+    bool const on = state == "on";
+    if (!on && state != "off")
+    {
+        message = "The state is on or off.";
+        return false;
+    }
+    if (!sLife->Toggle(feature, on))
+    {
+        message = "The feature is one of all, quests, auction, mail, taxi, corpse, crafting.";
+        return false;
+    }
+    message = Acore::StringFormat("Life: {} {} (until the next reload of the config).", feature, state);
+    return true;
 }

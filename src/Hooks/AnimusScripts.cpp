@@ -74,6 +74,7 @@ namespace
                 { "rename",     HandleRenameCommand,    SEC_GAMEMASTER, Console::No },
                 { "reroll",     HandleRerollCommand,    SEC_GAMEMASTER, Console::No },
                 { "purge",      HandlePurgeCommand,     SEC_ADMINISTRATOR, Console::Yes },
+                { "life",       HandleLifeCommand,      SEC_GAMEMASTER, Console::Yes },
                 { "stage",      stageCommandTable },
             };
 
@@ -134,6 +135,16 @@ namespace
             return ReplyLines(handler, sAnimusMod->PurgeAll(), "Nothing to purge.");
         }
 
+        /// .animus life [<feature> on|off]: what the companions do outside the fight, and a switch for each.
+        static bool HandleLifeCommand(ChatHandler* handler, Optional<std::string_view> feature,
+            Optional<std::string_view> state)
+        {
+            if (!feature)
+                return ReplyLines(handler, sAnimusMod->LifeStatus(), "Life is off.");
+            std::string message;
+            return Reply(handler, sAnimusMod->LifeToggle(*feature, state.value_or("on"), message), message);
+        }
+
         /// .animus stage list: every curriculum stage and its arenas -- the names Animus.Curriculum.Stage takes.
         static bool HandleStageListCommand(ChatHandler* handler)
         {
@@ -160,9 +171,23 @@ namespace
         AnimusPlayerScript() : PlayerScript("AnimusPlayerScript",
             { PLAYERHOOK_ON_LOGOUT, PLAYERHOOK_CAN_PLAYER_USE_PRIVATE_CHAT, PLAYERHOOK_ON_DELETE,
                 PLAYERHOOK_CAN_SEND_MAIL, PLAYERHOOK_CAN_GIVE_MAIL_REWARD_AT_GIVE_LEVEL,
-                PLAYERHOOK_ON_BEFORE_ACHI_COMPLETE }) { }
+                PLAYERHOOK_ON_BEFORE_ACHI_COMPLETE, PLAYERHOOK_ON_PLAYER_QUEST_ACCEPT,
+                PLAYERHOOK_ON_QUEST_ABANDON }) { }
 
         void OnPlayerLogout(Player* player) override { sAnimusMod->OnPlayerLogout(player); }
+
+        /// The owner's quests are its companions' too (Animus.Life.Quests): taken with the owner, dropped with it.
+        void OnPlayerQuestAccept(Player* player, Quest const* quest) override
+        {
+            if (!sAnimusMod->IsCompanion(player->GetGUID()))
+                sAnimusMod->OnOwnerQuestAccept(player, quest);
+        }
+
+        void OnPlayerQuestAbandon(Player* player, uint32 questId) override
+        {
+            if (!sAnimusMod->IsCompanion(player->GetGUID()))
+                sAnimusMod->OnOwnerQuestAbandon(player, questId);
+        }
 
         /// A player character deleted: its companion character and account go with it.
         void OnPlayerDelete(ObjectGuid guid, uint32 /*accountId*/) override { sAnimusMod->OnOwnerDeleted(guid); }
