@@ -41,7 +41,7 @@ Animus.ModelDir = "animus"
 #                     before a ".reload config" keeps its stage. A name that is not a stage falls
 #                     back to the default.
 #        Default:     "stage16_companion" - the models this module ships (models/, one per class)
-#                     Any stage of ".animus stage list" (stage1_move ... stage25_raid_gauntlet), with that
+#                     Any stage of ".animus stage list" (stage1_move ... stage29_raid_gauntlet), with that
 #                     stage's models in Animus.ModelDir
 
 Animus.Curriculum.Stage = "stage16_companion"
@@ -220,7 +220,7 @@ Animus.Curriculum.Casting.Cancel = 0.05
 Animus.Curriculum.Goals.Match = 0.02
 #   every arena with a director, per decision a seat spends fighting the enemy its director called, while one is
 #   called and alive. Compliance shaping: an order is meant to be followed because following it wins fights, but a
-#   channel that correlates with nothing cannot bootstrap into that. stage22_duo_led ran 30M steps with the order
+#   channel that correlates with nothing cannot bootstrap into that. stage26_duo_led ran 30M steps with the order
 #   paying nothing and order_focus_kept sat at chance the whole way, so the director's calls changed nothing in the
 #   world and it never left exploration. The same job Goals.Match does for the goal head; anneal towards 0 once
 #   order_focus_kept holds up without it. The director itself never earns this -- it is taken back out of its own
@@ -556,7 +556,7 @@ Animus.Curriculum.Stealth.StalkMax = 1.0
 
 #
 #    Animus.Curriculum.Ambush.*
-#        Scripted enemy players who ambush the owner (stage23_crossroads' ambush and escort_duel arenas).
+#        Scripted enemy players who ambush the owner (stage27_crossroads' ambush and escort_duel arenas).
 #        Their class, role and level follow the Opponent.* chances and spread.
 
 #   beside pulls: they arrive at a random time between these, in ms (at most 3/4 into the episode)

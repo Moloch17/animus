@@ -37,7 +37,7 @@
  * a leaf teaches is thrown away unless the stage exported from is downstream of it -- which is how the drills,
  * the raids and the team stages came to be a dead end. A linear chain ends in one leaf that carries everything.
  *
- * Scenario names carry the stage's number (stage1_move ... stage23_crossroads), model names only its suffix
+ * Scenario names carry the stage's number (stage1_move ... stage27_crossroads), model names only its suffix
  * (_move). The move stage is the first: nothing seeds it.
  *
  * A stage's episodes are its arenas (see ArenaDefinition): each episode draws one by weight, so a stage can mix
@@ -794,7 +794,7 @@ namespace
         // The Barrens, for stage 9's reason: the second base is placed by the same objective search, 100-180 yd from
         // the first, and only open ground has room for it.
         stages.push_back({
-            .Name = "stage20_flag",
+            .Name = "stage24_flag",
             .Suffix = "_flag",
             .Extends = "stage19_triage",
             // stage6_travel for the travel block, stage12_pvp for the pvp block: this stage extends the
@@ -812,9 +812,9 @@ namespace
         });
 
         stages.push_back({
-            .Name = "stage21_warsong",
+            .Name = "stage25_warsong",
             .Suffix = "_warsong",
-            .Extends = "stage20_flag",
+            .Extends = "stage24_flag",
             // Ten a side is a group: the party block was trained at stages 15-17 and the flag line it extends
             // does not carry it.
             .Merges = { "stage19_triage" },
@@ -843,7 +843,7 @@ namespace
         // AnimusForge.Envs has to come down roughly in proportion (a few dozen envs, not 128) before either of these
         // is started. Train by name: `forge start stage13_raid_single`.
         stages.push_back({
-            .Name = "stage24_raid_single",
+            .Name = "stage28_raid_single",
             .Suffix = "_raid",
             .Extends = "stage19_triage",
             .Summary = "a raid of eight groups against one elite and its adds, won or lost as the single pack is",
@@ -855,9 +855,9 @@ namespace
         // The raid's endurance: pull after pull with recovery between, which is what a wing of a raid instance is
         // before the boss of it. Seeded from the single fight, as the gauntlet is from the pack.
         stages.push_back({
-            .Name = "stage25_raid_gauntlet",
+            .Name = "stage29_raid_gauntlet",
             .Suffix = "_raidrun",
-            .Extends = "stage24_raid_single",
+            .Extends = "stage28_raid_single",
             .Summary = "a raid clearing pull after pull, recovering between them",
             .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Companion, Party, Support },
             .Arenas = { { .Name = "raid_gauntlet", .Seats = SeatPlan::Raid, .Against = Opposition::Pulls,
@@ -874,9 +874,9 @@ namespace
         // focus, the duty goes round the side in turn. A learned director comes next, and meets seats that
         // already know how to be commanded rather than seats that have never heard an order.
         stages.push_back({
-            .Name = "stage22_duo_led",
+            .Name = "stage26_duo_led",
             .Suffix = "_duo",
-            .Extends = "stage21_warsong",
+            .Extends = "stage25_warsong",
             // The pack and support blocks, trained at stages 6-8; the flag line it extends dropped both.
             .Merges = { "stage11_endurance" },
             .Summary = "two against two, told who to kill and whose turn it is: follow the call",
@@ -893,13 +893,13 @@ namespace
         // episode: an ambush of the owner in the middle of the gauntlet, and a lone enemy player attacking the owner.
         // Every PvE arena plays long episodes; the one-on-ones stay short.
         stages.push_back({
-            .Name = "stage23_crossroads",
+            .Name = "stage27_crossroads",
             .Suffix = "_crossroads",
             .Extends = "stage19_triage",
             // The leaf of every other branch, so nothing trained in the queue is left behind: the PvP line
             // through warsong, the movement line through flight. The PvE line arrives by extension.
             .Merges = {
-                "stage22_duo_led", "stage21_warsong", "stage12_pvp", "stage9_pvp", "stage7_flight",
+                "stage26_duo_led", "stage25_warsong", "stage12_pvp", "stage9_pvp", "stage7_flight",
                 "stage16_companion", "stage10_gauntlet", "stage8_duel",
             },
             .Summary = "PvE and PvP in one policy: every earlier situation, an ambush mid-gauntlet and a ganked owner",
