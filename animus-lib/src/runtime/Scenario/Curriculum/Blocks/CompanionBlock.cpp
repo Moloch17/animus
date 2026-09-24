@@ -23,6 +23,8 @@
 #include <boost/json/object.hpp>
 #include "MoveSpline.h"
 #include "Player.h"
+#include "SeatView.h"
+#include <algorithm>
 #include <cmath>
 
 namespace
@@ -32,6 +34,35 @@ namespace
     constexpr uint32 FOLLOW_MOVE_POINT_ID = 3;
     constexpr float FOLLOW_DISTANCE = 2.0f;
     constexpr float FOLLOW_MIN_DISTANCE = 4.0f;
+    /// A running follow is re-aimed when where it is heading and where behind the owner now is have come this far
+    /// apart. Every decision would path-find for every following seat of every env whether the owner had moved or
+    /// not; a couple of yards is under what an owner covers in a decision at a run.
+    constexpr float FOLLOW_REAIM_YARDS = 2.0f;
+
+    /// Where "just behind the owner" is right now.
+    Position BehindOwner(Player const* bot, Player const* owner)
+    {
+        float x = 0.0f;
+        float y = 0.0f;
+        float z = 0.0f;
+        owner->GetNearPoint(bot, x, y, z, bot->GetCombatReach(), FOLLOW_DISTANCE,
+            Position::NormalizeOrientation(owner->GetOrientation() + float(M_PI)));
+        return Position(x, y, z);
+    }
+
+    /// Run to just behind the owner, unless the run already under way is heading there.
+    void Aim(Player* bot, Player const* owner, bool fresh)
+    {
+        Position const spot = BehindOwner(bot, owner);
+        if (!fresh && !bot->movespline->Finalized())
+        {
+            G3D::Vector3 const heading = bot->movespline->FinalDestination();
+            if (spot.GetExactDist2d(heading.x, heading.y) <= FOLLOW_REAIM_YARDS)
+                return;
+        }
+
+        Encoding::MoveTo(bot, FOLLOW_MOVE_POINT_ID, spot.GetPositionX(), spot.GetPositionY(), spot.GetPositionZ());
+    }
 
     bool IsAllowed(SeatView const& view, uint32 action)
     {
@@ -49,8 +80,10 @@ namespace
         switch (action)
         {
             case CompanionBlock::ACTION_FOLLOW:
+                // Masked while it runs, as every option's own action is: nothing cancels itself.
                 return !bot->IsNonMeleeSpellCast(false, false, true) && !bot->HasUnitState(Encoding::IMMOBILE_STATES)
-                    && bot->GetDistance(owner) > FOLLOW_MIN_DISTANCE;
+                    && bot->GetDistance(owner) > FOLLOW_MIN_DISTANCE
+                    && !(view.Option && view.Option->Running(SeatOptionKind::Follow, view.NowMs));
             case CompanionBlock::ACTION_ASSIST:
             {
                 int32 const slot = Encoding::SlotOf(view, owner->GetVictim());
@@ -92,7 +125,10 @@ void Animus::Curriculum::CompanionBlock::Observe(SeatView const& view, float* ob
         obs[OBS_OWNER_BEARING_SIN] = std::sin(bearing);
         obs[OBS_OWNER_BEARING_COS] = std::cos(bearing);
         obs[OBS_OWNER_IN_COMBAT] = owner->IsInCombat() ? 1.0f : 0.0f;
-        obs[OBS_OWNER_MOVING] = owner->movespline->Finalized() ? 0.0f : 1.0f;
+        // The movement flags, not the spline: a real owner moves by its client's packets and never has a spline
+        // running, so asking the spline reported every human owner as standing still. A scripted owner's spline sets
+        // the same flags (MoveSplineInit::Launch), so training and play agree.
+        obs[OBS_OWNER_MOVING] = owner->isMoving() ? 1.0f : 0.0f;
         obs[OBS_OWNER_LEVEL_DIFF] = (float(owner->GetLevel()) - float(bot->GetLevel())) / 5.0f;
         WriteOneHot(PLAYABLE_CLASSES, owner->getClass(), obs + OBS_OWNER_CLASS_FIRST);
 
@@ -116,11 +152,43 @@ void Animus::Curriculum::CompanionBlock::Observe(SeatView const& view, float* ob
         obs[OBS_OWNER_ATTACKERS] = float(attackers) / float(PACK_SLOTS);
     }
 
+    if (view.Option && view.Option->Running(SeatOptionKind::Follow, view.NowMs))
+        obs[OBS_FOLLOWING] = std::min(1.0f, float(view.Option->Of(SeatOptionKind::Follow).UntilMs - view.NowMs)
+            / float(std::max<uint32>(1, view.Options.FollowMs)));
+
     Encoding::WriteRevives(view, obs + OBS_GLOBAL_COUNT);
 
     uint32 const actions = view.L->Slice(BlockId::Companion).ActionCount;
     for (uint32 action = 0; mask && action < actions; ++action)
         mask[action] = IsAllowed(view, action) ? 1 : 0;
+}
+
+void Animus::Curriculum::CompanionBlock::BeforeApply(SeatView& view, SeatActionResult& /*result*/) const
+{
+    // The running follow: re-aimed at where the owner is now, over until the seat is there and the owner has
+    // stopped. An owner that is gone, dead or on another map ends it too; the encoder ends it when the feet are told
+    // something else, and its clock ends it on its own.
+    if (!view.Option || !view.Option->Running(SeatOptionKind::Follow, view.NowMs))
+        return;
+
+    Player* bot = view.Bot;
+    Player* owner = view.Owner;
+    if (!bot || !bot->IsAlive() || !owner || !owner->IsAlive() || !owner->IsInMap(bot))
+    {
+        view.Option->Stop(SeatOptionKind::Follow);
+        return;
+    }
+
+    if (bot->GetDistance(owner) <= FOLLOW_MIN_DISTANCE && !owner->isMoving())
+    {
+        view.Option->Stop(SeatOptionKind::Follow);
+        return;
+    }
+
+    if (bot->IsNonMeleeSpellCast(false, false, true) || bot->HasUnitState(Encoding::IMMOBILE_STATES))
+        return;
+
+    Aim(bot, owner, false);
 }
 
 void Animus::Curriculum::CompanionBlock::Apply(SeatView& view, uint32 local, SeatActionResult& result) const
@@ -139,15 +207,10 @@ void Animus::Curriculum::CompanionBlock::Apply(SeatView& view, uint32 local, Sea
     switch (local)
     {
         case ACTION_FOLLOW:
-        {
-            float x = 0.0f;
-            float y = 0.0f;
-            float z = 0.0f;
-            owner->GetNearPoint(bot, x, y, z, bot->GetCombatReach(), FOLLOW_DISTANCE,
-                Position::NormalizeOrientation(owner->GetOrientation() + float(M_PI)));
-            Encoding::MoveTo(bot, FOLLOW_MOVE_POINT_ID, x, y, z);
+            if (view.Option)
+                view.Option->Start(SeatOptionKind::Follow, view.NowMs + view.Options.FollowMs);
+            Aim(bot, owner, true);
             return;
-        }
         case ACTION_ASSIST:
         case ACTION_GUARD:
         {

@@ -86,6 +86,7 @@ Animus::Curriculum::CurriculumTuning Animus::Curriculum::CurriculumTuning::Load(
     ClampPercent(prefix, "Pulls.PartyEliteChance", tuning.Pulls.PartyEliteChance);
     ClampPercent(prefix, "Pulls.OwnerPullsChance", tuning.Pulls.OwnerPullsChance);
     ClampPercent(prefix, "ScriptedPlayers.StealthChance", tuning.ScriptedPlayers.StealthChance);
+    ClampPercent(prefix, "ScriptedPlayers.RunChance", tuning.ScriptedPlayers.RunChance);
     ClampPercent(prefix, "ScriptedPlayers.TacticsChance", tuning.ScriptedPlayers.TacticsChance);
     ClampRolePair(prefix, "Owner.TankChance", tuning.Owner.TankChance, "Owner.HealerChance", tuning.Owner.HealerChance);
     ClampRolePair(prefix, "Opponent.TankChance", tuning.Opponent.TankChance, "Opponent.HealerChance",
@@ -114,6 +115,7 @@ Animus::Curriculum::CurriculumTuning Animus::Curriculum::CurriculumTuning::Load(
             std::swap(low, high);
     };
     orderYards(tuning.Travel.ObjectiveMin, tuning.Travel.ObjectiveMax);
+    orderYards(tuning.ScriptedPlayers.RunMinYards, tuning.ScriptedPlayers.RunMaxYards);
     orderYards(tuning.Travel.FlyingMin, tuning.Travel.FlyingMax);
     orderYards(tuning.Flag.BaseMin, tuning.Flag.BaseMax);
     tuning.Flag.CapturesToWin = std::max<uint32>(1, tuning.Flag.CapturesToWin);

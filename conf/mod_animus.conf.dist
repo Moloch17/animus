@@ -456,6 +456,11 @@ Animus.Curriculum.Options.MoveTurnMs = 750
 
 Animus.Curriculum.Options.MovePitchMs = 750
 
+#   ... and how long a companion's follow keeps after you before it lapses (ms). One press runs the companion to just
+#   behind you and keeps re-aiming that run at where you are now; it ends on its own when it is there and you have
+#   stopped, and like a bearing it ends when the feet are told something else. Re-pressing keeps following.
+Animus.Curriculum.Options.FollowMs = 6000
+
 #   Ground effects: damage from something standing on the ground rather than aimed at the companion, charged per
 #   fraction of maximum health on top of the damage itself. The only term that pays for moving its feet.
 Animus.Curriculum.Hazards.Damage = 0.5
@@ -574,6 +579,11 @@ Animus.Curriculum.ScriptedPlayers.HealMaxMs = 2500
 #   between pulls: time between wander steps
 Animus.Curriculum.ScriptedPlayers.WanderMinMs = 6000
 Animus.Curriculum.ScriptedPlayers.WanderMaxMs = 12000
+#   ... and the percent of an owner's steps that are a run instead: a leg at a run to a spot RunMinYards-RunMaxYards
+#   from the spawn point with a real route there (training only; a companion's owner is you)
+Animus.Curriculum.ScriptedPlayers.RunChance = 35
+Animus.Curriculum.ScriptedPlayers.RunMinYards = 40.0
+Animus.Curriculum.ScriptedPlayers.RunMaxYards = 60.0
 #   of max health and mana per second, out of combat
 Animus.Curriculum.ScriptedPlayers.RegenFraction = 0.04
 #   healers heal party members under this health fraction

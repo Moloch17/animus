@@ -22,6 +22,7 @@
 #include "MotionMaster.h"
 #include "MoveSpline.h"
 #include "ObjectMgr.h"
+#include "PathGenerator.h"
 #include "Player.h"
 #include "Random.h"
 #include "Spell.h"
@@ -45,6 +46,11 @@ namespace
     constexpr float WANDER_MIN_DISTANCE = 8.0f;
     constexpr float WANDER_MAX_DISTANCE = 20.0f;
     constexpr float WANDER_LEASH = 30.0f;       // never wander further than this from home
+    /// A run (ScriptedPlayerTuning::RunChance): how many spots are tried for one with a real route, how much longer
+    /// than the straight line that route may be, and the run speed the leg's time is budgeted at.
+    constexpr uint32 RUN_ATTEMPTS = 4;
+    constexpr float RUN_MAX_DETOUR = 1.8f;
+    constexpr float RUN_SPEED = 7.0f;
     constexpr float HEAL_RANGE = 40.0f;
     constexpr uint32 SEARCH_REPATH_MS = 2500;   // a hidden enemy: time between search steps
     constexpr float SEARCH_RADIUS = 10.0f;      // ... around where it was last seen
@@ -211,7 +217,7 @@ namespace
         player->GetMotionMaster()->MovePoint(MOVE_POINT_ID, x, y, z);
     }
 
-    /// Between pulls: recover out of combat and wander near home.
+    /// Between pulls: recover out of combat and wander near home, now and then running a longer leg (RunChance).
     void Idle(Player* player, uint32 nowMs, Position const& home, State& state, Tuning const& tuning)
     {
         if (player->GetVictim())
@@ -231,6 +237,39 @@ namespace
             return;
 
         state.NextMoveMs = nowMs + urand(tuning.WanderMinMs, tuning.WanderMaxMs);
+
+        // A run: a leg to somewhere, as a player crossing to the next camp, so that following is a thing the seats
+        // beside it have to do rather than a step they never see. Measured from home, not from the player, so the
+        // legs stay inside what the critic's origin-relative state can express, and the wander's leash makes the
+        // return leg. Only a spot with a real route (PATHFIND_NORMAL and not a shortcut: see TravelEncounter) that
+        // is not much longer than the straight line; otherwise this step is an ordinary wander.
+        if (roll_chance_i(tuning.RunChance))
+        {
+            for (uint32 attempt = 0; attempt < RUN_ATTEMPTS; ++attempt)
+            {
+                float const angle = frand(0.0f, 2.0f * float(M_PI));
+                float const distance = frand(tuning.RunMinYards, tuning.RunMaxYards);
+                Position destination(home.GetPositionX() + distance * std::cos(angle),
+                    home.GetPositionY() + distance * std::sin(angle), home.GetPositionZ());
+                float const straight = player->GetExactDist2d(&destination);
+                if (straight < tuning.RunMinYards)
+                    continue;
+
+                player->UpdateAllowedPositionZ(destination.m_positionX, destination.m_positionY,
+                    destination.m_positionZ);
+                PathGenerator path(player);
+                if (!path.CalculatePath(destination.GetPositionX(), destination.GetPositionY(),
+                    destination.GetPositionZ()) || !(path.GetPathType() & PATHFIND_NORMAL)
+                    || (path.GetPathType() & PATHFIND_NOT_USING_PATH)
+                    || path.getPathLength() > straight * RUN_MAX_DETOUR)
+                    continue;
+
+                player->GetMotionMaster()->MovePoint(MOVE_POINT_ID, destination);
+                // The next step waits for the leg to be run.
+                state.NextMoveMs += uint32(path.getPathLength() / RUN_SPEED * 1000.0f);
+                return;
+            }
+        }
 
         float const angle = frand(0.0f, 2.0f * float(M_PI));
         float const distance = frand(WANDER_MIN_DISTANCE, WANDER_MAX_DISTANCE);

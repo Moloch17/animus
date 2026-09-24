@@ -27,6 +27,11 @@ namespace Animus::Curriculum
     /// Actions: follow, assist (its target), guard (an enemy on it), revive it (resurrection spells on the dead owner,
     /// a warlock's soulstone on the living one). Heals, shields and buffs on it are core actions aimed by the support
     /// block's friend selection.
+    ///
+    /// Following is a press, not the client's right-click follow. The press runs the seat to just behind the owner
+    /// and, as a positioning option (SeatOptionKind::Follow), keeps re-aiming that run at where the owner is now
+    /// until the seat is there and the owner has stopped, the clock (Options.FollowMs) lapses, or the feet are told
+    /// something else. The policy re-presses to keep following, as it re-presses a bearing to keep walking.
     class CompanionBlock final : public Block
     {
     public:
@@ -47,14 +52,15 @@ namespace Animus::Curriculum
             OBS_OWNER_TARGET_FIRST      = 21,   // one-hot: which enemy slot the owner attacks
             OBS_OWNER_NO_TARGET         = 25,
             OBS_SLOT_ON_OWNER_FIRST     = 26,   // per enemy slot: attacking the owner
-            OBS_GLOBAL_COUNT            = 30
+            OBS_FOLLOWING               = 30,   // the follow's clock left / Options.FollowMs; 0 when not following
+            OBS_GLOBAL_COUNT            = 31
 
             // Then per revive: known, cooldown.
         };
 
         enum Action : uint32
         {
-            ACTION_FOLLOW               = 0,    // run to just behind the owner
+            ACTION_FOLLOW               = 0,    // run to just behind the owner and keep after it (an option)
             ACTION_ASSIST               = 1,    // target the owner's target
             ACTION_GUARD                = 2,    // target an enemy attacking the owner
             ACTION_REVIVE_FIRST         = 3     // one per revive
@@ -64,6 +70,7 @@ namespace Animus::Curriculum
         [[nodiscard]] BlockSize Size(Layout const& layout) const override;
         void DescribeManifest(Layout const& layout, boost::json::object& block) const override;
         void Observe(SeatView const& view, float* obs, uint8* mask) const override;
+        void BeforeApply(SeatView& view, SeatActionResult& result) const override;
         void Apply(SeatView& view, uint32 local, SeatActionResult& result) const override;
         [[nodiscard]] bool IsMovement(uint32 local) const override { return local == ACTION_FOLLOW; }
     };

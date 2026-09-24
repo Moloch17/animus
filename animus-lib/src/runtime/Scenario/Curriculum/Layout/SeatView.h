@@ -58,10 +58,16 @@ namespace Animus::Curriculum
         MoveBearing,        // walking a compass point of its own choosing (MoveBlock), until it chooses another
         MoveTurn,           // turning on the spot, as a held key, while the feet do whatever they are doing
         MovePitch,          // looking further up or down, the same way; only off the ground
+        /// Running to just behind the owner (CompanionBlock), re-aimed at where the owner is now every decision
+        /// until the seat is there and the owner has stopped, or the feet are told something else. Last on
+        /// purpose: the core block reports the clocks of every kind before it (CoreBlock's OPTION_KINDS), and a
+        /// kind added there would change every layout's observation; this one is reported by the companion block,
+        /// so only layouts that have the block change.
+        Follow,
         Count
     };
 
-    /// A positioning option owns the feet, and the held bearing is the only one. Only the seat moving its feet
+    /// A positioning option owns the feet: the held bearing, or the companion's follow. Only the seat moving its feet
     /// another way takes over from it: a fight is spells and swings between steps, and ending it on those left a
     /// melee seat re-issuing its own movement every decision (stage1_duel 2026-09-17: the rogue pressed one every
     /// 0.39 s while it stood in melee reach 96% of the time). Aiming does not end it either (IsAiming): a player
@@ -74,7 +80,7 @@ namespace Animus::Curriculum
     /// after one; the three-second hold was a one-decision hold and the "held key" was never trained on).
     [[nodiscard]] constexpr bool IsPositioning(SeatOptionKind kind)
     {
-        return kind == SeatOptionKind::MoveBearing;
+        return kind == SeatOptionKind::MoveBearing || kind == SeatOptionKind::Follow;
     }
 
     /// Holding an interrupt is a standby, not something the seat does: it waits for the target to cast while the seat

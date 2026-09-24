@@ -89,8 +89,10 @@ namespace Animus::Curriculum
             /// not running. Without them a running option is hidden state: the policy could not tell that it is
             /// already resting, holding an interrupt or walking a bearing -- and the seat runs several at once (a
             /// positioning option, a standby, a turn and a pitch), so one slot with one clock could not say which.
-            /// Five: rest, the held interrupt, the held bearing, the held turn and the held pitch. The direction of
-            /// the last target-relative move used to sit before these; there are no target-relative moves now.
+            /// Five: rest, the held interrupt, the held bearing, the held turn and the held pitch. The companion's
+            /// follow is an option too, reported by the companion block so that only its layouts carry it. The
+            /// direction of the last target-relative move used to sit before these; there are no target-relative
+            /// moves now.
             OBS_OPTION_FIRST            = 89,
             OBS_GLOBAL_COUNT            = 94
 

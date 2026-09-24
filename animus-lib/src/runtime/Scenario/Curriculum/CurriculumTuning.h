@@ -507,6 +507,11 @@ namespace Animus::Curriculum
             /// The policy re-presses to keep turning, and what it has turned to is kept when it stops.
             uint32 MoveTurnMs = 750;
             uint32 MovePitchMs = 750;
+            /// How long a companion's follow keeps after the owner before it lapses (CompanionBlock). Longer than a
+            /// bearing: where the owner is going is the owner's to know, and a follow that ends every three seconds
+            /// behind a running owner is three seconds of re-pressing for nothing chosen. Ends on its own when the
+            /// seat is there and the owner has stopped.
+            uint32 FollowMs = 6000;
         } Options;
 
         /// Ground effects: damage from something standing on the ground rather than aimed at the seat (a fire pool,
@@ -651,6 +656,13 @@ namespace Animus::Curriculum
             uint32 HealMaxMs = 2500;
             uint32 WanderMinMs = 6000;          // between pulls: time between wander steps
             uint32 WanderMaxMs = 12000;
+            /// Between pulls, this percent of an owner's steps are a run rather than a wander: a leg at a run to a
+            /// point RunMinYards-RunMaxYards from the spawn point (never nearer than RunMinYards to where it stands),
+            /// with a real route there. The wander's leash brings it back, another leg. This is where a companion
+            /// meets an owner that goes somewhere, which every pull it fights beside is spawned around.
+            int32 RunChance = 35;
+            float RunMinYards = 40.0f;
+            float RunMaxYards = 60.0f;
             float RegenFraction = 0.04f;        // of max health and mana per second, out of combat
             float HealBelow = 0.85f;            // healers heal party members under this health fraction
             float SelfHealBelow = 0.6f;         // PvP healers heal themselves under this
@@ -843,6 +855,7 @@ namespace Animus::Curriculum
             f("Options.MoveBearingMs", tuning.Options.MoveBearingMs);
             f("Options.MoveTurnMs", tuning.Options.MoveTurnMs);
             f("Options.MovePitchMs", tuning.Options.MovePitchMs);
+            f("Options.FollowMs", tuning.Options.FollowMs);
             f("Owner.LevelSpread", tuning.Owner.LevelSpread);
             f("Owner.TankChance", tuning.Owner.TankChance);
             f("Owner.HealerChance", tuning.Owner.HealerChance);
@@ -927,6 +940,9 @@ namespace Animus::Curriculum
             f("ScriptedPlayers.HealMaxMs", tuning.ScriptedPlayers.HealMaxMs);
             f("ScriptedPlayers.WanderMinMs", tuning.ScriptedPlayers.WanderMinMs);
             f("ScriptedPlayers.WanderMaxMs", tuning.ScriptedPlayers.WanderMaxMs);
+            f("ScriptedPlayers.RunChance", tuning.ScriptedPlayers.RunChance);
+            f("ScriptedPlayers.RunMinYards", tuning.ScriptedPlayers.RunMinYards);
+            f("ScriptedPlayers.RunMaxYards", tuning.ScriptedPlayers.RunMaxYards);
             f("ScriptedPlayers.RegenFraction", tuning.ScriptedPlayers.RegenFraction);
             f("ScriptedPlayers.HealBelow", tuning.ScriptedPlayers.HealBelow);
             f("ScriptedPlayers.SelfHealBelow", tuning.ScriptedPlayers.SelfHealBelow);

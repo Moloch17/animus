@@ -63,13 +63,12 @@ namespace
     constexpr float COMBAT_TIME_SCALE_MS = 60000.0f;
     constexpr float QUIET_TIME_SCALE_MS = 20000.0f;
 
-    /// Out of combat between pulls: companions further than this run back to the owner (training's follow shaping
-    /// starts at 25 yd), and further than TELEPORT_DISTANCE (or on another map) they are teleported.
-    constexpr float LEASH_DISTANCE = 30.0f;
-    constexpr float TELEPORT_DISTANCE = 100.0f;
+    /// Following the owner is the model's job (the companion block's follow press, re-aimed while it runs): nothing
+    /// here leashes or teleports a companion that has fallen behind on the owner's map. Only a companion with no
+    /// model to decide for it is walked behind the owner, from this far, since there is nothing else it can do.
     constexpr float FOLLOW_DISTANCE = 2.0f;
     constexpr float NO_MODEL_FOLLOW_DISTANCE = 6.0f;
-    constexpr uint32 LEASH_MOVE_POINT_ID = 5;
+    constexpr uint32 NO_MODEL_MOVE_POINT_ID = 5;
 
     /// A dead companion stands up again this long after the party is out of combat.
     constexpr uint32 RESURRECT_DELAY_MS = 10000;
@@ -86,7 +85,7 @@ namespace
         owner->GetNearPoint(bot, x, y, z, bot->GetCombatReach(), FOLLOW_DISTANCE,
             Position::NormalizeOrientation(owner->GetOrientation() + float(M_PI)));
         bot->GetMotionMaster()->Clear();
-        bot->GetMotionMaster()->MovePoint(LEASH_MOVE_POINT_ID, x, y, z);
+        bot->GetMotionMaster()->MovePoint(NO_MODEL_MOVE_POINT_ID, x, y, z);
     }
 
     Player* FindBot(ObjectGuid guid)
@@ -444,13 +443,6 @@ void Animus::CompanionParty::UpdateMember(Member& member, Player* bot, Player* o
     if (quiet && LevelFor(member, owner) > member.Level)
         LevelUp(member, bot, owner);
 
-    float const distance = bot->GetDistance(owner);
-    if (quiet && distance > TELEPORT_DISTANCE)
-    {
-        BotFactory::TeleportNear(bot, owner);
-        return;
-    }
-
     std::string error;
     MlpPolicy* policy = models.Find(*member.L, error);
     if (!policy)
@@ -461,14 +453,12 @@ void Animus::CompanionParty::UpdateMember(Member& member, Player* bot, Player* o
             member.ModelErrorLogged = true;
         }
 
-        if (quiet && distance > NO_MODEL_FOLLOW_DISTANCE && bot->movespline->Finalized())
+        if (quiet && bot->GetDistance(owner) > NO_MODEL_FOLLOW_DISTANCE && bot->movespline->Finalized())
             MoveBehind(bot, owner);
         return;
     }
 
     member.ModelErrorLogged = false;
-    if (quiet && distance > LEASH_DISTANCE && bot->movespline->Finalized())
-        MoveBehind(bot, owner);
 
     member.SinceDecisionMs += diff;
     if (member.SinceDecisionMs < settings.DecisionMs)
