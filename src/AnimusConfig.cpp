@@ -21,6 +21,7 @@
 #include "DBCEnums.h"
 #include "Log.h"
 #include "StageDefinition.h"
+#include <string_view>
 #include "Tokenize.h"
 #include "World.h"
 #include <algorithm>
@@ -107,12 +108,17 @@ void Animus::AnimusConfig::Load()
 
     ModelDir = ResolveModelDir(sConfigMgr->GetOption<std::string>("Animus.ModelDir", "animus"));
 
-    CurriculumStage = sConfigMgr->GetOption<std::string>("Animus.Curriculum.Stage", "stage1_duel");
+    // The stage whose models the module ships (models/<class>_companion.amdl). A name that is not a stage falls back
+    // to it, and it to the first stage, since LayoutFor builds the layout of whatever is named here.
+    constexpr std::string_view DEFAULT_STAGE = "stage14_companion";
+    CurriculumStage = sConfigMgr->GetOption<std::string>("Animus.Curriculum.Stage", std::string(DEFAULT_STAGE));
     if (!Curriculum::FindStage(CurriculumStage))
     {
-        LOG_ERROR("module.animus", "Animus.Curriculum.Stage \"{}\" is not a curriculum stage; using \"stage1_duel\"",
-            CurriculumStage);
-        CurriculumStage = "stage1_duel";
+        std::string const fallback = Curriculum::FindStage(DEFAULT_STAGE) || Curriculum::CurriculumStages().empty()
+            ? std::string(DEFAULT_STAGE) : Curriculum::CurriculumStages().front().Name;
+        LOG_ERROR("module.animus", "Animus.Curriculum.Stage \"{}\" is not a curriculum stage; using \"{}\"",
+            CurriculumStage, fallback);
+        CurriculumStage = fallback;
     }
     CurriculumDecisionMs = std::max<uint32>(1, sConfigMgr->GetOption<uint32>("Animus.Curriculum.DecisionMs", 250));
     Curriculum::CurriculumTuning const curriculum = Curriculum::CurriculumTuning::Load("Animus.Curriculum.");

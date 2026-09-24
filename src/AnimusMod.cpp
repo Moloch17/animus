@@ -726,7 +726,16 @@ void Animus::AnimusMod::RemoveAll()
 
 Animus::Curriculum::Layout const& Animus::AnimusMod::LayoutFor(Curriculum::ClassProfile const& profile)
 {
-    Curriculum::StageDefinition const& stage = *Curriculum::FindStage(_config.CurriculumStage);
+    // AnimusConfig::Load only keeps a stage that exists; the first stage stands in should that ever not hold, rather
+    // than a null dereference on the first create (which is what a renamed stage once caused).
+    Curriculum::StageDefinition const* found = Curriculum::FindStage(_config.CurriculumStage);
+    if (!found)
+    {
+        LOG_ERROR("module.animus", "Stage \"{}\" is not a curriculum stage; companions use \"{}\"",
+            _config.CurriculumStage, Curriculum::CurriculumStages().front().Name);
+        found = &Curriculum::CurriculumStages().front();
+    }
+    Curriculum::StageDefinition const& stage = *found;
     std::string const name = profile.Name + stage.Suffix;
     auto itr = _layouts.find(name);
     if (itr == _layouts.end())

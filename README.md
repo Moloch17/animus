@@ -26,11 +26,10 @@ They run the same encoding code as training, so a model sees and does exactly wh
    none, and never overwrites one; under Docker the container copies it to your config volume on its first start.
    AzerothCore reads a module's settings from the `.conf` only: without it every `Animus.*` key logs "Missing
    property" at startup.
-4. Models: installing copies the ones in `models/` (`stage1_duel`'s, one per class, each `.amdl` with its `.json`
-   manifest; confirmed at 60M steps, trained with animus-lib 99cbe94) to `<config dir>/modules/animus`, which reaches
-   a Docker runtime image (only `bin/` and `etc/` do). Companions play them by default
-   (`Animus.Curriculum.Stage = stage1_duel`). Models you place by hand go in `<DataDir>/animus`, which is searched
-   first; the startup log names the directory used.
+4. Models: installing copies the ones in `models/` (`stage14_companion`'s, one per class, each `.amdl` with its
+   `.json` manifest) to `<config dir>/modules/animus`, which reaches a Docker runtime image (only `bin/` and `etc/`
+   do). Companions play them by default (`Animus.Curriculum.Stage = stage14_companion`). Models you place by hand go
+   in `<DataDir>/animus`, which is searched first; the startup log names the directory used.
 
 Don't build it into the forge core; a forge build disables it. Where the models come from, and how `DataDir` and the
 install step line up, is in
@@ -84,12 +83,12 @@ Game master commands, not available from the console; the addon does the same fo
 
 ## Models
 
-A companion plays `<class><stage suffix>.amdl` for `Animus.Curriculum.Stage` (`hunter_duel.amdl` for the default
-`stage1_duel`): one model per class, not per class and role -- the curriculum has no roles, and a model plays every
-build its class can have. A model loads only if its manifest is exactly the one this server builds for that layout,
-so the realm needs the curriculum revision the forge trained with, and the same world database and DBC data. A refused
-model is logged once and shown by `.animus list`, and its companion only follows you. Models load on first use and
-again after `.reload config`.
+A companion plays `<class><stage suffix>.amdl` for `Animus.Curriculum.Stage` (`hunter_companion.amdl` for the default
+`stage14_companion`): one model per class, not per class and role -- the curriculum has no roles, and a model plays
+every build its class can have. A model loads only if its manifest is exactly the one this server builds for that
+layout, so the realm needs the curriculum revision the forge trained with, and the same world database and DBC data. A
+refused model is logged once and shown by `.animus list`, and its companion only follows you. Models load on first use
+and again after `.reload config`.
 
 `conf/mod_animus.conf.dist` documents every `Animus.*` key. For debug logging set
 `Logger.module.animus=1,Console Server`.
