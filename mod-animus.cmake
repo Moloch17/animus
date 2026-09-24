@@ -21,6 +21,20 @@ if(NOT "${${ANIMUS_LINKAGE_VARIABLE}}" MATCHES "static|dynamic")
   return()
 endif()
 
+# mod-animus-forge used to share the curriculum with this module through animus-lib, so a configure could enable
+# both and link one copy. The library is gone: the forge carries those sources in its own src/, this module carries
+# them in its bundle, and two copies in one build is a duplicate-symbol link failure with nothing to say why. A
+# forge core is not a realm and has no use for companions, so the answer is to enable one of them.
+list(FIND MODULES_MODULE_LIST "mod-animus-forge" ANIMUS_FORGE_INDEX)
+if(NOT ANIMUS_FORGE_INDEX EQUAL -1)
+  ModuleNameToVariable(mod-animus-forge ANIMUS_FORGE_LINKAGE)
+  if("${${ANIMUS_FORGE_LINKAGE}}" MATCHES "static|dynamic")
+    message(FATAL_ERROR "mod-animus and mod-animus-forge each carry their own copy of the curriculum since "
+      "animus-lib was folded in, and cannot be built together. Disable one: -DMODULE_MOD-ANIMUS=disabled for a "
+      "forge core, or -DMODULE_MOD-ANIMUS-FORGE=disabled for a realm.")
+  endif()
+endif()
+
 # Where the core installs module configs (CopyModuleConfig, src/cmake/macros/ConfigInstall.cmake).
 if(WIN32)
   set(ANIMUS_MODULE_CONF_DIR "${CMAKE_INSTALL_PREFIX}/configs/modules")
