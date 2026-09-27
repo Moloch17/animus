@@ -108,6 +108,9 @@ namespace Animus
 
         /// One line per fact of Describe, for `.animus list`.
         [[nodiscard]] std::vector<std::string> List(Player* owner);
+        /// `.animus models`: every class's model for Animus.Curriculum.Stage, and whether it loads -- the check to run
+        /// after copying models in, before anyone summons a companion.
+        [[nodiscard]] std::vector<std::string> ModelStatus();
 
         /// Whether `guid` is a companion character (of anyone): it gets no mail and no achievements.
         [[nodiscard]] bool IsCompanion(ObjectGuid guid) const { return _registry.IsCompanion(guid); }

@@ -75,6 +75,7 @@ namespace
                 { "reroll",     HandleRerollCommand,    SEC_GAMEMASTER, Console::No },
                 { "purge",      HandlePurgeCommand,     SEC_ADMINISTRATOR, Console::Yes },
                 { "life",       HandleLifeCommand,      SEC_GAMEMASTER, Console::Yes },
+                { "models",     HandleModelsCommand,    SEC_GAMEMASTER, Console::Yes },
                 { "stage",      stageCommandTable },
             };
 
@@ -143,6 +144,12 @@ namespace
                 return ReplyLines(handler, sAnimusMod->LifeStatus(), "Life is off.");
             std::string message;
             return Reply(handler, sAnimusMod->LifeToggle(*feature, state.value_or("on"), message), message);
+        }
+
+        /// .animus models: every class's model for the configured stage, and whether it loads (and if not, why).
+        static bool HandleModelsCommand(ChatHandler* handler)
+        {
+            return ReplyLines(handler, sAnimusMod->ModelStatus(), "No classes.");
         }
 
         /// .animus stage list: every curriculum stage and its arenas -- the names Animus.Curriculum.Stage takes.

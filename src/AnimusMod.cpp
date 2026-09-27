@@ -639,6 +639,24 @@ Animus::AnimusMod::Companion Animus::AnimusMod::Describe(Player* owner)
     return companion;
 }
 
+std::vector<std::string> Animus::AnimusMod::ModelStatus()
+{
+    std::vector<std::string> lines;
+    lines.push_back(Acore::StringFormat("Stage {}, models in {}:", _config.CurriculumStage, _config.ModelDir));
+    uint32 loaded = 0;
+    for (Curriculum::ClassProfile const& profile : Curriculum::ClassProfiles())
+    {
+        Curriculum::Layout const& layout = LayoutFor(profile);
+        std::string error;
+        bool const ok = _models.Find(layout, error) != nullptr;
+        loaded += ok ? 1 : 0;
+        lines.push_back(Acore::StringFormat("  {}: {}", layout.ModelName(), ok ? "loads" : error));
+    }
+    lines.push_back(Acore::StringFormat("{} of {} load. Ground probe: {}{}.", loaded, Curriculum::ClassProfiles().size(),
+        _config.ProbeSource, _config.ProbeSource == "live" ? "" : " from " + _config.ProbeDir));
+    return lines;
+}
+
 std::vector<std::string> Animus::AnimusMod::List(Player* owner)
 {
     Companion const companion = Describe(owner);

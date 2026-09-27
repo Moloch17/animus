@@ -45,6 +45,7 @@
 #include "Random.h"
 #include "SeatCharacter.h"
 #include "SeatEncoder.h"
+#include "TravelBlock.h"
 #include "StringFormat.h"
 #include "World.h"
 #include <algorithm>
@@ -613,7 +614,7 @@ void Animus::CompanionParty::Decide(Member& member, Player* bot, Player* owner, 
     member.LastPower = current;
 
     Unit* target = CurrentTarget(member, bot);
-    Track(member, bot, target, settings);
+    Track(member, bot, owner, target, settings);
     member.Memory.Observe(bot, target, _nowMs);
     SeatView view = View(member, bot, owner, target, settings);
     // The durative action it is running: one press that stands for many decisions (rest, hold an interrupt, keep
@@ -790,6 +791,22 @@ Animus::Curriculum::SeatView Animus::CompanionParty::View(Member const& member, 
         view.OpponentApt = Curriculum::Aptitude();
     }
 
+    // A movement model travels to an objective (the forge's travel encounter gives it one each episode); a
+    // companion's is its owner, so the model walks, jumps, swims and flies to where the player is with what it
+    // learned. The detour is unknown here and read as the straight line; arriving is the encounter's distance,
+    // closer indoors.
+    if (Unit const* objective = TravelObjective(member, bot, owner))
+    {
+        view.HasObjective = true;
+        view.Objective.Relocate(objective);
+        view.Detour = 1.0f;
+        view.CloseRate = member.CloseRate;
+        view.MountsAllowed = !bot->GetMap()->IsDungeon() && !bot->GetMap()->IsBattlegroundOrArena();
+        view.GroundMountAllowed = true;
+        view.ArriveWithin = bot->IsOutdoors() ? Curriculum::TravelBlock::ARRIVE_DISTANCE
+            : Curriculum::TravelBlock::ARRIVE_INDOORS;
+    }
+
     // Life outside the fight: the world block's features from the real world, for a model that carries it.
     if (layout.Has(BlockId::World))
         sLife->Sense(bot, view.World);
@@ -819,7 +836,15 @@ Animus::Curriculum::SeatView Animus::CompanionParty::View(Member const& member, 
     return view;
 }
 
-void Animus::CompanionParty::Track(Member& member, Player* bot, Unit* target, Settings const& settings) const
+Unit const* Animus::CompanionParty::TravelObjective(Member const& member, Player* bot, Player* owner)
+{
+    if (!member.L || !member.L->Has(BlockId::Travel) || !owner || !owner->IsInWorld() || owner->GetMap() != bot->GetMap())
+        return nullptr;
+    return owner;
+}
+
+void Animus::CompanionParty::Track(Member& member, Player* bot, Player* owner, Unit* target,
+    Settings const& settings) const
 {
     // The facing it steers by is its own, seeded from the character the first time: a default of 0 would aim it
     // due east.
@@ -873,7 +898,12 @@ void Animus::CompanionParty::Track(Member& member, Player* bot, Unit* target, Se
     member.MotionLastY = y;
     member.MotionHasLast = true;
 
-    float const range = target ? bot->GetExactDist2d(target) : -1.0f;
+    // The closing rate is toward what the model is heading for: its objective where it travels (the forge's travel
+    // encounter replaces the target's with the objective's the same way), else its target.
+    Unit const* toward = TravelObjective(member, bot, owner);
+    if (!toward)
+        toward = target;
+    float const range = toward ? bot->GetExactDist2d(toward) : -1.0f;
     if (!member.MotionMarkMs || _nowMs < member.MotionMarkMs)
     {
         member.MotionMarkMs = std::max<uint64>(1, _nowMs);

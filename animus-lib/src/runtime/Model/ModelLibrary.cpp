@@ -20,6 +20,7 @@
 #include "Layout.h"
 #include "Log.h"
 #include "StringFormat.h"
+#include <boost/json.hpp>
 #include <cctype>
 #include <filesystem>
 #include <fstream>
@@ -27,6 +28,63 @@
 
 namespace
 {
+    /// Where two manifests first part: the path to the first value that differs ("blocks[2].features.ground_probe
+    /// .source: \"live\" here, \"geometry\" in the model's"), or what could not be read. What a refused model needs
+    /// to be fixed is which setting or revision differs, not only that something does.
+    std::string FirstDifference(boost::json::value const& server, boost::json::value const& model, std::string path)
+    {
+        if (server.kind() != model.kind())
+            return Acore::StringFormat("{}: {} here, {} in the model's", path.empty() ? "(root)" : path,
+                boost::json::serialize(server), boost::json::serialize(model));
+        if (server.is_object())
+        {
+            boost::json::object const& a = server.get_object();
+            boost::json::object const& b = model.get_object();
+            for (auto const& [key, value] : a)
+            {
+                std::string const at = path.empty() ? std::string(key) : path + "." + std::string(key);
+                auto const other = b.find(key);
+                if (other == b.end())
+                    return at + ": only this server has it";
+                if (std::string const found = FirstDifference(value, other->value(), at); !found.empty())
+                    return found;
+            }
+            for (auto const& [key, value] : b)
+                if (!a.contains(key))
+                    return (path.empty() ? std::string(key) : path + "." + std::string(key)) + ": only the model has it";
+            return {};
+        }
+        if (server.is_array())
+        {
+            boost::json::array const& a = server.get_array();
+            boost::json::array const& b = model.get_array();
+            for (std::size_t i = 0; i < std::min(a.size(), b.size()); ++i)
+                if (std::string const found = FirstDifference(a[i], b[i], Acore::StringFormat("{}[{}]", path, i));
+                    !found.empty())
+                    return found;
+            if (a.size() != b.size())
+                return Acore::StringFormat("{}: {} entries here, {} in the model's", path, a.size(), b.size());
+            return {};
+        }
+        if (server != model)
+            return Acore::StringFormat("{}: {} here, {} in the model's", path, boost::json::serialize(server),
+                boost::json::serialize(model));
+        return {};
+    }
+
+    std::string ManifestDifference(std::string const& server, std::string const& model)
+    {
+        boost::system::error_code error;
+        boost::json::value const ours = boost::json::parse(server, error);
+        if (error)
+            return "this server's manifest does not parse";
+        boost::json::value const theirs = boost::json::parse(model, error);
+        if (error)
+            return "the model's manifest does not parse: " + error.message();
+        std::string found = FirstDifference(ours, theirs, "");
+        return found.empty() ? "they differ only in formatting" : found;
+    }
+
     std::string TrimEnd(std::string text)
     {
         while (!text.empty() && std::isspace(static_cast<unsigned char>(text.back())))
@@ -66,7 +124,8 @@ Animus::MlpPolicy* Animus::ModelLibrary::Find(Curriculum::Layout const& layout, 
         manifest << manifestFile.rdbuf();
         if (TrimEnd(manifest.str()) != TrimEnd(layout.Manifest()))
             entry.Error = Acore::StringFormat("{} was trained on a different {} layout than this server builds "
-                "(its manifest differs; export a model trained with this build)", modelPath, name);
+                "(its manifest differs at {}; export a model trained with this build)", modelPath, name,
+                ManifestDifference(layout.Manifest(), manifest.str()));
     }
 
     std::string loadError;

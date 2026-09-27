@@ -263,7 +263,10 @@ namespace Animus
         [[nodiscard]] Unit* CurrentTarget(Member& member, Player* bot) const;
         /// What the forge's seats keep between decisions and the client would otherwise tell the core: its facing,
         /// in-water state, breath, the last sight of its target and the rates its legs cover ground at.
-        void Track(Member& member, Player* bot, Unit* target, Settings const& settings) const;
+        void Track(Member& member, Player* bot, Player* owner, Unit* target, Settings const& settings) const;
+        /// The place a layout with the travel block travels to (a movement stage's model): the owner, while it is on
+        /// the companion's map. Null otherwise.
+        [[nodiscard]] static Unit const* TravelObjective(Member const& member, Player* bot, Player* owner);
         [[nodiscard]] Curriculum::SeatView View(Member const& member, Player* bot, Player* owner, Unit* target,
         Settings const& settings) const;
         /// Potions, bandages, stones and food for the member, topped up (the forge stocks every episode).
