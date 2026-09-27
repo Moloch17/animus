@@ -147,6 +147,9 @@ namespace Animus::Curriculum
         float DamageScale = 1.0f;
         std::vector<uint32> Stable;             // hunters: beasts offered this episode
         bool PetAtStart = false;                // the episode started with the seat's pet out
+        /// Episodes this character has played: a seat keeps its character for Characters.ReuseEpisodes episodes
+        /// when the next draw gives it the same class and build (StageScenario::ReuseSeat), then rebuilds.
+        uint32 EpisodesPlayed = 0;
 
         /// The highest rank of every catalog action the bot knows, resolved once when the character is built:
         /// walking the rank chain per action per decision is most of what observing a seat costs, and the
@@ -215,6 +218,23 @@ namespace Animus::Curriculum
         /// The clock its head went under water, or 0 while it is up. Kept as an instant rather than a total so it
         /// needs no per-decision accumulation, and resets the moment the seat surfaces -- which is what a breath is.
         uint32 SubmergedSinceMs = 0;
+        /// Water, kept per seat for every stage (StageScenario::ApplySeatAction): time in the water at all, time
+        /// with the head under, the breath spent as the core spends it (BreathSpentMs runs up under water and back
+        /// down ten times as fast above it, the shape of Player::HandleDrowning), the most of a breath ever spent,
+        /// surfacings after a dive, damage taken under water past the breath (as a fraction of maximum health),
+        /// whether that killed the seat, and time spent walking on the water with an aura for it.
+        uint32 WaterMs = 0;
+        uint32 SubmergedMs = 0;
+        uint32 BreathSpentMs = 0;
+        float BreathSpentMax = 0.0f;
+        uint32 Breaths = 0;
+        float DrowningDamage = 0.0f;
+        bool Drowned = false;
+        uint32 WaterWalkMs = 0;
+        uint32 AquaticMs = 0;           // time in a druid's Aquatic Form (FORM_AQUA)
+        float LastStepSelfDamage = 0.0f;    // AgentStats::SelfDamage over the last step, as a fraction of max health
+        bool DeathLogged = false;           // the death diagnostic line was written for this episode
+        uint32 BreathingCasts = 0;      // water-breathing spells started (ActionCatalog::Action::WaterBreathing)
         uint32 ItemUses = 0;
         bool InCombat = false;
         uint32 CombatStartMs = 0;               // episode time the bot entered its current combat
@@ -318,6 +338,19 @@ namespace Animus::Curriculum
             LastStepDamageTaken = 0.0f;
             SpellCasts = 0;
             TrinketUses = 0;
+            SubmergedSinceMs = 0;
+            WaterMs = 0;
+            SubmergedMs = 0;
+            BreathSpentMs = 0;
+            BreathSpentMax = 0.0f;
+            Breaths = 0;
+            DrowningDamage = 0.0f;
+            Drowned = false;
+            WaterWalkMs = 0;
+            AquaticMs = 0;
+            BreathingCasts = 0;
+            LastStepSelfDamage = 0.0f;
+            DeathLogged = false;
             Jumps = 0;
             JumpsRefused = 0;
             Drops = 0;
@@ -406,9 +439,8 @@ namespace Animus::Curriculum
     /// EnvState::Arena before the env's first episode.
     constexpr uint32 NO_ARENA = ~uint32(0);
 
-    /// StageScenario::ForceLayout and ForceTier when nothing is forced.
+    /// A layout index that names none: StageScenario::_directorLayout when no arena has a learned director.
     constexpr uint32 NO_LAYOUT = ~uint32(0);
-    constexpr uint32 NO_TIER = ~uint32(0);
 
     struct EnvState
     {
@@ -427,6 +459,20 @@ namespace Animus::Curriculum
         bool Fresh = false;                     // built by Setup, not yet reset
         bool BuildFailed = false;               // the last reset could not build the episode: end it and retry
         uint32 OpponentEntry = 0;               // creature entry: the duel's opponent, the first pull's first member
+
+        /// What an encounter fixed for this episode before its seats were built (Encounter::BeforeLevel): the map
+        /// the seats are placed on (0 = the stage's), their level (0 = drawn), the instance difficulty they open it
+        /// at, and where they spawn (an instance's front door). Cleared when the arena is drawn.
+        uint32 EpisodeMapId = 0;            // read only when HasEpisodeMap: Eastern Kingdoms is map 0
+        bool HasEpisodeMap = false;
+        uint8 EpisodeLevel = 0;
+        /// The side the episode wants its seats on (TeamId + 1; 0: any): a quest or a town belongs to one. The race
+        /// draw honours it, and a kept character of the other side is rebuilt.
+        uint8 EpisodeTeam = 0;
+        uint8 DungeonDifficulty = 0;
+        uint8 RaidDifficulty = 0;
+        bool HasEpisodeSpawn = false;
+        Position EpisodeSpawn;
 
         /// A resurrection offer already accepted for each seat, and for the owner in the last slot: which seat
         /// made it, and when it was taken. A client sends one CMSG_RESURRECT_RESPONSE and is done; the core has

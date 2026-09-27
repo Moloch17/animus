@@ -57,6 +57,9 @@ namespace Animus::BotFactory
         uint32 BattlegroundId = 0;
         uint32 BattlegroundType = 0;
         uint8 BattlegroundTeam = 0;
+        /// The difficulty a new instance is opened at when this bot is the first in (Difficulty: DUNGEON_*, RAID_*).
+        uint8 DungeonDifficulty = 0;
+        uint8 RaidDifficulty = 0;
 
         /// Player GUID counter to create the bot with; 0 = a new one. A scenario that rebuilds bots
         /// reuses a fixed set: the core keeps some per-GUID state for the life of the server (e.g.

@@ -48,6 +48,14 @@ namespace Animus
         /// Animus.Life.*: life outside the fight for companions whose model carries the world block.
         Life::Settings Life;
 
+        /// Animus.Probe.*: where a companion's ground probe and flight rays come from -- the forge's layered fields
+        /// ("geometry"), its probe tables ("baked", fields where a grid has none) or live collision ("live") -- and
+        /// the directory the field and table files are in. Load configures the stores from these, ahead of any
+        /// layout: a model's manifest names its probe, so a model trained on the fields is refused under "live".
+        std::string ProbeSource = "geometry";
+        std::string ProbeDir;
+        uint32 ProbeCacheGrids = 64;
+
         void Load();
     };
 }

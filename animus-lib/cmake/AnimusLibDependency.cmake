@@ -139,6 +139,22 @@ function(AnimusLibRequire dependent bundleDir)
     target_include_directories(modules PUBLIC ${rootIncludes})
   endforeach()
 
+  # The ground probe reads the forge's layered fields and probe tables, which are zstd-compressed (LayeredField,
+  # ProbeBake). A stock core does not link zstd, so the library does: the static archive first, so the worldserver
+  # needs no libzstd at run time (install libzstd-dev, or zstd-devel, to build).
+  get_property(zstdLinked GLOBAL PROPERTY ANIMUS_LIB_ZSTD_LINKED)
+  if(NOT zstdLinked)
+    set_property(GLOBAL PROPERTY ANIMUS_LIB_ZSTD_LINKED TRUE)
+    find_path(ANIMUS_ZSTD_INCLUDE_DIR zstd.h)
+    find_library(ANIMUS_ZSTD_LIBRARY NAMES libzstd.a zstd)
+    if(NOT ANIMUS_ZSTD_INCLUDE_DIR OR NOT ANIMUS_ZSTD_LIBRARY)
+      message(FATAL_ERROR "animus-lib needs zstd for the ground probe's field files: install libzstd-dev (Debian, "
+        "Ubuntu) or zstd-devel (Fedora), or set ANIMUS_ZSTD_INCLUDE_DIR and ANIMUS_ZSTD_LIBRARY")
+    endif()
+    target_include_directories(modules PRIVATE "${ANIMUS_ZSTD_INCLUDE_DIR}")
+    target_link_libraries(modules PRIVATE "${ANIMUS_ZSTD_LIBRARY}")
+  endif()
+
   # The loader registers the training half's core hooks only when that half is compiled (animus_lib_loader.cpp).
   if(NOT ANIMUS_LIB_RUNTIME_ONLY)
     target_compile_definitions(modules PRIVATE ANIMUS_LIB_TRAINING)

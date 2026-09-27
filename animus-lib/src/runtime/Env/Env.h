@@ -58,6 +58,9 @@ namespace Animus
         uint32 WhiteHits = 0;
         uint32 SpecialHits = 0;
         uint64 DamageTaken = 0;         // by the agent, from anything
+        /// Damage the agent dealt itself with no attacker behind it (SELF_DAMAGE): the environment's drowning,
+        /// fatigue, lava and falls, and a warlock's Life Tap. Not part of DamageTaken, which is what enemies did.
+        uint64 SelfDamage = 0;
         // Of DamageTaken, what each enemy slot (Env::Targets) dealt, a pet's or totem's counted for its owner's slot.
         // What crowd control prevents is read from here: an enemy's own damage rate is what holding it out of the
         // fight saves. Damage from anything not in a target slot is in DamageTaken only.

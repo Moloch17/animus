@@ -100,6 +100,18 @@ std::string_view Animus::Curriculum::RewardTermName(RewardTerm term)
         case RewardTerm::Stalk:                 return "stalk";
         case RewardTerm::Clearance:             return "clearance";
         case RewardTerm::Repeat:                return "repeat";
+        case RewardTerm::BossProgress:          return "boss_progress";
+        case RewardTerm::Wasted:                return "wasted";
+        case RewardTerm::QuestAccepted:         return "quest_accepted";
+        case RewardTerm::QuestCredit:           return "quest_credit";
+        case RewardTerm::QuestTurnIn:           return "quest_turn_in";
+        case RewardTerm::GatherNode:            return "gather_node";
+        case RewardTerm::GatherSkillUp:         return "gather_skill_up";
+        case RewardTerm::TownSold:              return "town_sold";
+        case RewardTerm::TownRepaired:          return "town_repaired";
+        case RewardTerm::TownStocked:           return "town_stocked";
+        case RewardTerm::TownEquipped:          return "town_equipped";
+        case RewardTerm::TownDone:              return "town_done";
         case RewardTerm::Count:                 break;
     }
 

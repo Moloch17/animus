@@ -304,6 +304,10 @@ namespace Animus::Curriculum
         int8 PitchTurning = 0;
         float Pitch = 0.0f;
         float SubmergedTime = 0.0f;                 // seconds its head has been under, 0 while it is up
+        /// How much of its breath the seat has spent, 0 to 1 and past it while drowning: the core's own timer
+        /// (WaterBreath.Timer, 180 s by default), run up under water and back down ten times as fast above it. 0
+        /// under a water-breathing aura, when the core runs no timer at all.
+        float BreathSpent = 0.0f;
         TalentBuilder::Build const* Build = nullptr;
         float LastStepDamage = 0.0f;                // damage done / the level's damage scale
         float LastStepPowerDelta = 0.0f;            // primary power change, as a fraction of max
@@ -483,6 +487,7 @@ namespace Animus::Curriculum
         uint32 DrinkUsed = 0;
         uint32 HealsOnFull = 0;                     // direct heals started on a friend at full health (masked: 0)
         uint32 DefensiveCasts = 0;                  // short damage reductions and immunities started
+        uint32 BreathingCasts = 0;                  // water-breathing spells started (Unending Breath, Aquatic Form)
         uint32 HealingCasts = 0;                    // heals, HoTs and absorbs started ...
         uint32 DownrankedCasts = 0;                 // ... below the highest known rank
         uint32 HealingPowerSpent = 0;               // ... and the mana they cost (SpellInfo::CalcPowerCost)

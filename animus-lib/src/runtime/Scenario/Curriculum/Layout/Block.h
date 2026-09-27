@@ -22,7 +22,6 @@
 #include "Define.h"
 #include <array>
 #include <boost/json/fwd.hpp>
-#include <optional>
 #include <string>
 #include <string_view>
 
@@ -209,7 +208,6 @@ namespace Animus::Curriculum
     constexpr float EPISODE_TIME_SCALE_MS = 300000.0f;
 
     [[nodiscard]] std::string_view BlockName(BlockId id);
-    [[nodiscard]] std::optional<BlockId> FindBlock(std::string_view name);
 
     /// A block's place in a layout's observation row and action mask.
     struct BlockSlice

@@ -458,13 +458,3 @@ std::vector<Animus::Curriculum::SpecBuild> const& Animus::Curriculum::SpecBuilds
 
     return builds;
 }
-
-Animus::Curriculum::SpecBuild const* Animus::Curriculum::FindSpecBuild(uint8 playerClass,
-    std::string_view spec)
-{
-    for (SpecBuild const& build : SpecBuilds())
-        if (build.Class == playerClass && build.Spec == spec)
-            return &build;
-
-    return nullptr;
-}

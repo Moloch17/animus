@@ -83,12 +83,11 @@ namespace
             case SPELL_AURA_TRACK_CREATURES:
             case SPELL_AURA_TRACK_RESOURCES:
             case SPELL_AURA_TRACK_STEALTHED:
-            case SPELL_AURA_WATER_BREATHING:
             // Feather fall and hover used to be excluded here with the rest of the travel conveniences. They are
             // survival auras now (IsSurvivalAura): a drop off a ledge is a move the seat may choose, and Slow Fall
             // or Levitate is what decides whether it costs health, so the classes that have one need the button.
-            // Water walk left the list with them, because Levitate carries it too and an excluded aura vetoes the
-            // whole spell; on its own it makes nothing useful (Path of Frost, Water Walking), so those stay out.
+            // Water walk and water breathing left the list with them, for the dive drill and the lake fight: what a
+            // build can do in water changes whether a crossing or a dive is worth it, and they are survival auras.
             case SPELL_AURA_FAR_SIGHT:
             case SPELL_AURA_BIND_SIGHT:
             case SPELL_AURA_MOD_POSSESS:
@@ -182,6 +181,8 @@ namespace
             case SPELL_AURA_230:                // increases maximum health (Commanding Shout)
             case SPELL_AURA_FEATHER_FALL:       // Slow Fall: a fall costs nothing (Player::HandleFall)
             case SPELL_AURA_HOVER:              // Levitate: the same
+            case SPELL_AURA_WATER_BREATHING:    // Unending Breath, Water Breathing: no breath timer (Player::getMaxTimer)
+            case SPELL_AURA_WATER_WALK:         // Water Walking, Path of Frost: a lake is a floor
                 return true;
             default:
                 return false;
@@ -395,6 +396,8 @@ Animus::Curriculum::ActionCatalog::ActionCatalog(uint8 playerClass, ClassKit con
         action.Dispel = action.DispelMask != 0;
         action.DispelFriendly = action.Dispel && info->IsPositive();
         action.FeatherFall = info->HasAura(SPELL_AURA_FEATHER_FALL) || info->HasAura(SPELL_AURA_HOVER);
+        action.WaterBreathing = info->HasAura(SPELL_AURA_WATER_BREATHING);
+        action.WaterWalk = info->HasAura(SPELL_AURA_WATER_WALK);
         return action;
     };
 

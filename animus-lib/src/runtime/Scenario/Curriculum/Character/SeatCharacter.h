@@ -46,8 +46,6 @@ namespace Animus::Curriculum
             Random,         // every point at random, inside the spec's tree first
         };
 
-        [[nodiscard]] char const* TalentPlanName(TalentPlan plan);
-
         struct Built
         {
             TalentBuilder::Build Build;

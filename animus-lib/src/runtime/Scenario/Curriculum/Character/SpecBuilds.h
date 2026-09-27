@@ -44,7 +44,6 @@ namespace Animus::Curriculum
     };
 
     [[nodiscard]] std::vector<SpecBuild> const& SpecBuilds();
-    [[nodiscard]] SpecBuild const* FindSpecBuild(uint8 playerClass, std::string_view spec);
 }
 
 #endif

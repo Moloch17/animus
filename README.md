@@ -2,7 +2,7 @@
 
 Characters for an ordinary AzerothCore realm whose combat decisions come from models trained in
 [Animus Forge](https://github.com/Moloch17/animus-forge). The module builds against a stock AzerothCore with no core
-changes, together with [animus-lib](https://github.com/Moloch17/animus-lib), the code it shares with the forge.
+changes, together with animus-lib (`animus-lib/`), the forge's curriculum runtime it plays the models with.
 
 - **A class companion.** Every player character may have one: a character of the name, race and class they
   choose, on an account made for it, saved in the characters database between summons. It joins your party at your
@@ -35,11 +35,28 @@ Don't build it into the forge core; a forge build disables it. Where the models 
 install step line up, is in
 [manual 6.3 and 6.4](https://github.com/Moloch17/animus-forge/blob/master/docs/manual/06-animus.md#63-installing).
 
+## Ground probe fields
+
+A companion senses the ground around it (how far it can walk along sixteen bearings, steps, shores, burning ground,
+the room around it, and in the air how far it can fly) from the forge's layered height fields, as the forge trains
+it to: one file a map grid, `<map>_<gridX>_<gridY>.field`, about 0.3 MB. Put them in `<DataDir>/fields`, beside
+`maps/`, `vmaps/` and `mmaps/` (`Animus.Probe.Dir` moves it). The forge makes them with `forge fieldworld all`, which
+bakes every grid of every map's navmesh into its `apps/forge/probes/world/`; ship the whole directory, or the maps
+your players go to. A companion on a grid with no field keeps its last reading until it reaches one, and the grid is
+logged once. `Animus.Probe.Source` must be the probe the models were trained with (their manifest names it; the
+forge's default is `geometry`).
+
+Building needs zstd (the field files are compressed): `libzstd-dev` on Debian and Ubuntu, `zstd-devel` on Fedora.
+
 ## Updating animus-lib
 
-`tools/update-animus-lib.sh [ref]` pulls a revision of [animus-lib](https://github.com/Moloch17/animus-lib) into
-`animus-lib/` (a git subtree, default `master`) and commits it. A realm must build the manifests its models were
-trained with, so update it together with the models.
+The forge folded animus-lib into its core (`src/server/game/Animus`), so the bundle is refreshed from a forge
+checkout: `tools/update-animus-lib.sh [forge checkout]` copies every file the bundle shares with the forge's runtime,
+keeps the module's own (the model reader, the loader and `CoreHooks`, and the bot factory that places companions),
+lists any include the bundle can no longer resolve, records the forge revision in `animus-lib/FORGE_REVISION`, and
+checks the conf template documents every tuning key. A realm must build the manifests its models were trained with,
+so refresh it from the forge revision of the models, together with them, then build against a stock core (a
+forge-only call only fails at link).
 
 ## The addon
 

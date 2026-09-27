@@ -25,18 +25,6 @@
 #include "Supplies.h"
 #include "TravelBlock.h"
 
-char const* Animus::Curriculum::SeatCharacter::TalentPlanName(TalentPlan plan)
-{
-    switch (plan)
-    {
-        case TalentPlan::Standard: return "standard";
-        case TalentPlan::Noisy:    return "noisy";
-        case TalentPlan::Random:   return "random";
-    }
-
-    return "standard";
-}
-
 Animus::Curriculum::SeatCharacter::Built Animus::Curriculum::SeatCharacter::Configure(Player* bot,
     Layout const& layout, uint8 specIndex, bool pvp, TalentPlan plan, uint32 noisePoints)
 {

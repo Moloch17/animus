@@ -60,6 +60,9 @@ Player* Animus::BotSlot::CreateNext(BotFactory::BotSpec spec, Map*& map, uint32 
     if (spec.BattlegroundId)
         bot->SetBattlegroundId(spec.BattlegroundId, BattlegroundTypeId(spec.BattlegroundType), 0, true, false,
             TeamId(spec.BattlegroundTeam));
+    // Likewise the difficulty: MapInstanced opens a new instance at the first player's.
+    bot->SetDungeonDifficulty(Difficulty(spec.DungeonDifficulty));
+    bot->SetRaidDifficulty(Difficulty(spec.RaidDifficulty));
 
     // Create made a session if the slot had none; the slot owns it either way.
     if (_sessions[session].get() != bot->GetSession())

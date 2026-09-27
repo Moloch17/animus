@@ -17,6 +17,10 @@
  */
 
 #include "MoveBlock.h"
+#include "GroundSense.h"
+#include "LayeredField.h"
+#include "ProbeBake.h"
+#include "SeatEncoder.h"
 #include "EncoderSupport.h"
 #include "Layout.h"
 #include <boost/json/array.hpp>
@@ -44,9 +48,11 @@ namespace
     namespace Encoding = Animus::Curriculum::Encoding;
     using Animus::Curriculum::TravelBlock;
     using Animus::Curriculum::SeatOptionKind;
+    namespace Ground = Animus::Curriculum::GroundSense;
+    namespace LayeredField = Animus::Curriculum::LayeredField;
+    using Ground::NavRay;
 
     constexpr uint32 MOVE_POINT_ID = 0x4D56;    // "MV": this block's spline, distinct from the duel block's
-    constexpr int NAV_RAY_POLYS = 16;           // polygons a single bearing's raycast may cross
     constexpr float YARD_SCALE = 40.0f;         // distances are reported as a fraction of this
     constexpr float OBJECTIVE_SCALE = 500.0f;   // an objective is further off than anything else it looks at
     constexpr float RUN_SPEED = 7.0f;           // yards a second, unmounted and unhasted (TravelBlock's)
@@ -124,62 +130,6 @@ namespace
         }
     }
 
-    /// How far the seat could walk along `heading` before it leaves the navmesh, up to `range`.
-    ///
-    /// This is the sense the block did not have. MarchBearing samples the *height* of the ground at five points
-    /// and blocks on a change between two of them, so a vertical wall standing on a flat floor returns the same
-    /// z at six yards and at twelve: the step is zero, nothing blocks, and the ray reports clear ground straight
-    /// through the wall. It detected slopes and drops, never obstacles. Outdoors that passes, because a cliff is
-    /// a height change; indoors every wall, door frame and table is a vertical face on a level floor and the
-    /// seat walked into all of them blind.
-    ///
-    /// A navmesh raycast stops where walkable space stops, which is what an obstacle is to a pair of legs. It is
-    /// also per-polygon, so unlike a height sample it cannot be confused by the storey above.
-    ///
-    /// **The filter is what makes this three senses instead of one.** dtNavMeshQuery::raycast tests
-    /// `filter->passFilter()` on every polygon it steps into, and the mesh carries liquid as its own area flags
-    /// (TerrainBuilder: water and ocean are NAV_WATER, magma NAV_MAGMA, slime NAV_SLIME). So NAV_GROUND alone
-    /// stops at the water's edge and gives the distance to the shore; NAV_GROUND | NAV_WATER crosses the water
-    /// and stops at the far side; and the difference between the two is how wide the water is that way -- which
-    /// is exactly what "is this crossing worth it" needs and what no observation has ever carried. Leaving magma
-    /// and slime out of both is what makes a lava edge a continuous distance rather than a flag sampled at five
-    /// points, which a seat could walk straight between.
-    ///
-    /// Flags are always set explicitly: a default-constructed dtQueryFilterExt includes 0xffff and would happily
-    /// cross slime, and the runtime's own filter never includes NAV_SLIME at all (GetNavTerrain folds slime into
-    /// NAV_MAGMA), so neither default is the one wanted here.
-    /// Returns yards to the first polygon edge the filter refuses to cross, or a negative number when there is
-    /// no answer -- off the mesh, or a failed query. That distinction matters: a failed obstacle ray that read
-    /// as `range` would be a seat told the way is clear to the horizon because the question could not be asked.
-    /// Every caller must decide what silence means for what it is asking, and none of them may treat it as
-    /// clear ground.
-    float NavRay(dtNavMeshQuery const* query, dtPolyRef startRef, float x, float y, float z, float heading,
-        float range, uint16 includeFlags)
-    {
-        if (!query || !startRef)
-            return -1.0f;
-
-        dtQueryFilterExt filter;
-        filter.setIncludeFlags(includeFlags);
-        filter.setExcludeFlags(0);
-
-        // Detour's axes are {y, z, x}, not the world's (x, y, z). Getting this wrong is silent -- the ray simply
-        // goes somewhere else -- so it is written out rather than swizzled in passing.
-        float const from[3] = { y, z, x };
-        float const to[3] = { y + range * std::sin(heading), z, x + range * std::cos(heading) };
-
-        float t = 0.0f;
-        float normal[3] = { 0.0f, 0.0f, 0.0f };
-        dtPolyRef visited[NAV_RAY_POLYS];
-        int count = 0;
-        if (dtStatusFailed(query->raycast(startRef, from, to, &filter, &t, normal, visited, &count,
-            NAV_RAY_POLYS)))
-            return -1.0f;
-
-        // Detour reports t = FLT_MAX when the ray ran the whole way without leaving the mesh.
-        return t >= 1.0f ? range : t * range;
-    }
-
     /// How long a jump hangs in the air, and how far it carries.
     ///
     /// Rising and falling take the same time, so the whole arc is 2 * speedZ / gravity -- about 825 ms at the
@@ -233,8 +183,8 @@ namespace
     ///     Fall or Levitate it costs nothing;
     ///   - up to JUMP_RISE_MAX above the launch, which a step clears anyway; higher is a wall;
     ///   - on the navmesh, within a step of the ground found (a landing the mesh does not cover is a fall onto
-    ///     something the seat cannot walk on), water allowed only for a hop -- a deep fall into a lake is
-    ///     measured to the lakebed, as Player::HandleFall measures it;
+    ///     something the seat cannot walk on), water allowed only for a hop -- a fall into deep water ends at
+    ///     the surface and costs nothing (Encoding::FallToGround), so a lake is never a drop to learn from;
     ///   - clear of collision in two legs: across at the apex, for a wall in the way, and straight down over
     ///     the landing, for a lip that overhangs it. One diagonal ray would cut every cliff face and refuse
     ///     every drop.
@@ -292,116 +242,9 @@ namespace
         return aim;
     }
 
-    /// March one bearing outward and say where it stops.
-    ///
-    /// This replaces a single height sample twelve yards out, compared against the seat's own feet. That sample
-    /// answered "is the point twelve yards that way roughly level with me", which is three different questions
-    /// short of the one a pair of legs is asking. It could not see past twelve yards, it read a gentle slope as
-    /// a wall because MAX_STEP was measured over the whole twelve, and a wall, a cliff, a lava lake and the edge
-    /// of the map all came back as the same 0.
-    ///
-    /// What comes back now is the distance to the first thing that stops the ray, which means the same at six
-    /// yards as at forty, plus what stopped it: the signed height change, whether there was water it could swim,
-    /// and whether there was liquid that burns. Each cell is judged against the cell before it, so ground that
-    /// climbs steadily stays walkable and only a real discontinuity blocks.
-    ///
-    /// Still geometry and not a route. Nothing here says which way to go.
-    void MarchBearing(Player* bot, Map* map, float heading, float& reachOut, float& stepOut, float& waterOut,
-        float& burnsOut)
-    {
-        reachOut = 1.0f;
-        stepOut = 0.0f;
-        waterOut = 0.0f;
-        burnsOut = 0.0f;
-
-        uint32 const phase = bot->GetPhaseMask();
-        float const collision = bot->GetCollisionHeight();
-        float const fromX = bot->GetPositionX();
-        float const fromY = bot->GetPositionY();
-        float const dx = std::cos(heading);
-        float const dy = std::sin(heading);
-
-        float previousZ = bot->GetPositionZ();
-        float previousRange = 0.0f;
-        float free = 0.0f;
-        float blockedStep = 0.0f;
-        float worstStep = 0.0f;
-        bool blocked = false;
-
-        for (uint32 cell = 0; cell < MoveBlock::MARCH_CELLS && !blocked; ++cell)
-        {
-            float const range = MoveBlock::MARCH_RANGES[cell];
-            float const gap = range - previousRange;
-            float const allowance = MoveBlock::MAX_STEP + gap * MoveBlock::MARCH_SLOPE;
-            float const x = fromX + range * dx;
-            float const y = fromY + range * dy;
-
-            // Liquid before ground, because the ground test cannot tell a lake from a cliff and would call it
-            // the latter: mmaps drops the terrain under real liquid, so GetHeight comes back INVALID_HEIGHT over
-            // any water worth swimming -- the same answer it gives for the edge of the map. Which liquid it is
-            // decides everything, and LiquidData::Flags is what carries it; Status only says how deep the stuff
-            // is, so a test on Status alone called magma "water" and handed the seat a lava lake to cross.
-            LiquidData const liquid = map->GetLiquidData(phase, x, y, previousZ, collision, {});
-            bool const liquidHere = liquid.Status != LIQUID_MAP_NO_WATER && liquid.Level > INVALID_HEIGHT
-                && liquid.Level >= previousZ - allowance;
-
-            if (liquidHere && (liquid.Flags & (MAP_LIQUID_TYPE_MAGMA | MAP_LIQUID_TYPE_SLIME)) != 0)
-            {
-                // Somewhere to die, not somewhere to go. The ray stops short of it, and the seat can tell this
-                // apart from a wall because burns says so.
-                burnsOut = 1.0f;
-                blocked = true;
-                break;
-            }
-
-            if (liquidHere && (liquid.Flags & (MAP_LIQUID_TYPE_WATER | MAP_LIQUID_TYPE_OCEAN)) != 0)
-            {
-                // Water is somewhere the seat can go, so the ray carries on across it. What it costs to go there
-                // is OBS_SWIM_SPEED's to say.
-                waterOut = 1.0f;
-                previousZ = liquid.Level;
-                previousRange = range;
-                free = range;
-                continue;
-            }
-
-            // Search from just above the last cell, downwards. The origin used to be twenty yards up, which is
-            // harmless in open country and wrong inside a building: Map::GetHeight casts a strictly downward ray
-            // from the z it is given, so starting above the ceiling returns the floor of the storey above and
-            // the seat is told it can walk there. Starting a step's height up finds the ground it could actually
-            // reach and nothing higher.
-            float const z = map->GetHeight(phase, x, y, previousZ + MoveBlock::MAX_STEP, true,
-                MoveBlock::MARCH_SEARCH);
-            if (z <= INVALID_HEIGHT)
-            {
-                // No ground within twenty yards either way: a long drop, or off the map. Reported as a drop,
-                // because that is what it is to something on legs.
-                blockedStep = -1.0f;
-                blocked = true;
-                break;
-            }
-
-            float const step = z - previousZ;
-            if (std::fabs(step) > allowance)
-            {
-                blockedStep = std::clamp(step / allowance, -1.0f, 1.0f);
-                blocked = true;
-                break;
-            }
-
-            if (std::fabs(step) > std::fabs(worstStep))
-                worstStep = step / allowance;
-
-            previousZ = z;
-            previousRange = range;
-            free = range;
-        }
-
-        reachOut = free / MoveBlock::MARCH_MAX;
-        // What stopped the ray if something did, and otherwise the steepest thing it walked over -- so a bearing
-        // that is clear but climbing still reads differently from one that is clear and flat.
-        stepOut = blocked ? blockedStep : std::clamp(worstStep, -1.0f, 1.0f);
-    }
+    void RefreshLive(Animus::Curriculum::GroundProbe* probe, Map* map, dtNavMeshQuery const* query,
+        Animus::Curriculum::GroundSense::Origin const& at, float facing,
+        std::chrono::steady_clock::time_point& partMark);
 
     /// Redo the march if it has stopped describing where the seat is standing, and say whether it is usable.
     ///
@@ -420,148 +263,101 @@ namespace
         if (!map)
             return;
 
+        namespace Bake = Animus::Curriculum::ProbeBake;
+        namespace Field = Animus::Curriculum::LayeredField;
+        bool stale = !probe->Valid;
         if (probe->Valid)
         {
             float const moved = bot->GetExactDist(&probe->From);
             float const turned = std::fabs(std::atan2(std::sin(facing - probe->Facing),
                 std::cos(facing - probe->Facing)));
-            if (moved < MoveBlock::MARCH_REFRESH_YARDS && turned < MoveBlock::MARCH_REFRESH_RADIANS
-                && view.NowMs - probe->Ms < MoveBlock::MARCH_REFRESH_MS)
-                return;
+            stale = moved >= MoveBlock::MARCH_REFRESH_YARDS || turned >= MoveBlock::MARCH_REFRESH_RADIANS
+                || view.NowMs - probe->Ms >= MoveBlock::MARCH_REFRESH_MS;
         }
 
-        // The seat's own polygon, once for all sixteen rays. Extents match the core's own lookup in
-        // cs_mmaps; a seat standing somewhere the mesh does not cover simply gets no rays, and the height march
-        // still answers.
+        // A baked probe is a lookup, so it is read every decision and is never stale; only the jump test below
+        // keeps the refresh cadence. A live one is measured when it has gone stale.
+        bool const baked = Bake::Store::Baked();
+        if (!baked && !stale)
+            return;
+
+        namespace Encoder = Animus::Curriculum::SeatEncoder;
+        auto probeMark = std::chrono::steady_clock::now();
+        auto partMark = probeMark;
+
+        Ground::Origin const at{ bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(), bot->GetPhaseMask(),
+            bot->GetCollisionHeight() };
         dtNavMeshQuery const* query = map->GetMapCollisionData().GetMMapData().GetNavMeshQuery();
-        dtPolyRef startRef = 0;
-        if (query)
+
+        // Where there is no table the probe is the old live one, on its own cadence: a grid missing from the shipped
+        // tables costs what it always did, not the dense probe every decision. It is counted, and logged once.
+        bool fromTable = false;
+        if (baked)
         {
-            dtQueryFilterExt filter;
-            filter.setIncludeFlags(NAV_GROUND | NAV_WATER);
-            filter.setExcludeFlags(0);
-            float const at[3] = { bot->GetPositionY(), bot->GetPositionZ(), bot->GetPositionX() };
-            float const extents[3] = { 3.0f, 5.0f, 3.0f };
-            if (dtStatusFailed(query->findNearestPoly(at, extents, &filter, &startRef, nullptr)))
-                startRef = 0;
-        }
-
-        for (uint32 ray = 0; ray < MoveBlock::RAY_COUNT; ++ray)
-        {
-            float const heading = RayHeading(facing, ray);
-            float water = 0.0f;
-            MarchBearing(bot, map, heading, probe->Reach[ray], probe->Step[ray], water,
-                probe->Burns[ray]);
-
-            // Three rays, which differ only in what their filter will cross. The dry one walks ground alone,
-            // so it stops at a shore, a lava edge or a wall. The wet one may cross water, so it stops at a lava
-            // edge or a wall. The last crosses everything liquid, so it stops only where the mesh itself ends.
-            //
-            // What the pair is good for is `dry` itself: the yards to the water's edge along this bearing,
-            // continuous, where the plane it replaced was a yes or no sampled at five fixed ranges. It does not
-            // give the width of the crossing -- the wet filter crosses ground too, so past a shore it runs on
-            // over the far bank until a wall stops it, and a narrow channel reads the same as a lake.
-            //
-            // wet against all is the pair that does mean exactly one thing, because those two filters differ in
-            // nothing but magma and slime: if the ray that may not cross them stops short of the ray that may,
-            // what stopped it was burning, and it stopped at the burning edge.
-            float const rayX = bot->GetPositionX();
-            float const rayY = bot->GetPositionY();
-            float const rayZ = bot->GetPositionZ();
-            float const wet = NavRay(query, startRef, rayX, rayY, rayZ, heading, MoveBlock::MARCH_MAX,
-                NAV_GROUND | NAV_WATER);
-            float const dry = NavRay(query, startRef, rayX, rayY, rayZ, heading, MoveBlock::MARCH_MAX,
-                NAV_GROUND);
-            float const all = NavRay(query, startRef, rayX, rayY, rayZ, heading, MoveBlock::MARCH_MAX,
-                NAV_GROUND | NAV_WATER | NAV_MAGMA | NAV_SLIME);
-
-            // The nearer of the two senses wins: the march sees drops the mesh calls walkable, the ray sees
-            // walls the march is blind to, and a seat wants to know about whichever comes first.
-            if (wet >= 0.0f && dry >= 0.0f)
+            // The rays from the nearest cell and the clearance blended over the four around the seat -- what the
+            // bake measured best.
+            Bake::Reading reading;
+            Bake::Reading room;
+            std::shared_ptr<Bake::Table const> const table = Bake::Store::Find(map->GetId(), at.X, at.Y);
+            fromTable = table
+                && Bake::Lookup(*table, at.X, at.Y, at.Z, facing, Bake::Turn::Nearest, false, reading)
+                && Bake::Lookup(*table, at.X, at.Y, at.Z, facing, Bake::Turn::Nearest, true, room);
+            if (fromTable)
             {
-                probe->Reach[ray] = std::min(probe->Reach[ray], wet / MoveBlock::MARCH_MAX);
-                probe->Shore[ray] = std::min(dry / MoveBlock::MARCH_MAX, probe->Reach[ray]);
+                Bake::Store::Reads.fetch_add(1, std::memory_order_relaxed);
+                for (uint32 ray = 0; ray < MoveBlock::RAY_COUNT; ++ray)
+                {
+                    probe->Reach[ray] = reading.Rays[ray].Reach;
+                    probe->Step[ray] = reading.Rays[ray].Step;
+                    probe->Shore[ray] = reading.Rays[ray].Shore;
+                    probe->Burns[ray] = reading.Rays[ray].Burns;
+                }
+                probe->Clearance = room.Room.Clearance;
+                probe->ClearanceSin = room.Room.Directed ? std::sin(room.Room.Away - facing) : 0.0f;
+                probe->ClearanceCos = room.Room.Directed ? std::cos(room.Room.Away - facing) : 0.0f;
+                Encoder::ChargeObserve(Encoder::OBSERVE_PROBE_MARCH, partMark);
             }
             else
-            {
-                // No mesh here, or no answer from it. Fall back to what the height march saw, and say the dry
-                // reach is the reach -- claiming water of unknown width would be worse than claiming none.
-                probe->Shore[ray] = water > 0.0f ? 0.0f : probe->Reach[ray];
-            }
+                Bake::Store::Fallbacks.fetch_add(1, std::memory_order_relaxed);
 
-            // Where the burning starts, graded by how close it is: 1 at the seat's feet, falling to 0 at the
-            // far end of the march, and exactly 0 when there is none.
-            //
-            // This is the ray's answer and not the march's, because the march cannot answer it. It samples
-            // liquid at five fixed ranges, so a lava edge at nine yards falls between the cells at six and at
-            // twelve and reads as no lava at all -- and worse, if the twelve-yard cell lands past the edge it
-            // returns no height, which the march reports as a drop. That is a seat walking into lava believing
-            // it is stepping off a ledge. The mesh is built from the same liquid data, so when it answers it
-            // answers about the same lava, only continuously and at the true edge.
-            if (all >= 0.0f && wet >= 0.0f)
+            if (!stale)
             {
-                // BURN_EDGE_MARGIN guards float noise between two rays cast from one origin; it is not the
-                // mesh's own 1.8 yd simplification error, which both rays share and which therefore cancels.
-                probe->Burns[ray] = all > wet + MoveBlock::BURN_EDGE_MARGIN
-                    ? 1.0f - std::clamp(wet / MoveBlock::MARCH_MAX, 0.0f, 1.0f)
-                    : 0.0f;
+                Encoder::ChargeObserve(Encoder::OBSERVE_PROBE, probeMark);
+                return;
             }
-            // else: no mesh answer, so the march's own flag stands as written, coarse but not silent.
         }
-
-        // How much room the seat has, and which way is out. One query, in the same refresh as the rays and from
-        // the same polygon. The filter is the walkable set a seat actually uses, so a lava edge and a shoreline
-        // both count as an edge to keep off -- which is the honest answer for something on legs.
-        probe->Clearance = 1.0f;
-        probe->ClearanceSin = 0.0f;
-        probe->ClearanceCos = 0.0f;
-        if (query && startRef)
+        // Worked out from the layered fields where the seat stands: the dense probe the tables hold, at the seat's
+        // own place and facing, on the live probe's cadence -- it is a computation, not a lookup.
+        bool fromField = false;
+        if (!fromTable && Field::Store::Enabled())
         {
-            dtQueryFilterExt filter;
-            filter.setIncludeFlags(NAV_GROUND | NAV_WATER);
-            filter.setExcludeFlags(0);
-            float const at[3] = { bot->GetPositionY(), bot->GetPositionZ(), bot->GetPositionX() };
-            float distance = 0.0f;
-            float hit[3] = { 0.0f, 0.0f, 0.0f };
-            float normal[3] = { 0.0f, 0.0f, 0.0f };
-            if (dtStatusSucceed(query->findDistanceToWall(startRef, at, MoveBlock::CLEARANCE_RANGE, &filter,
-                &distance, hit, normal)))
+            Field::Store::Neighbourhood around;
+            Bake::Reading reading;
+            fromField = Field::Store::Gather(map->GetId(), at.X, at.Y, around)
+                && Field::Sense(around.View, at.X, at.Y, at.Z, facing, reading);
+            if (fromField)
             {
-                if (std::isfinite(distance))
-                    probe->Clearance = std::clamp(distance / MoveBlock::CLEARANCE_RANGE, 0.0f, 1.0f);
-
-                // hitNormal is normalize(centre - hit): it already points from the wall back at the seat, which
-                // is the way out. Detour's axes are {y, z, x}, so the world components are [2] and [0].
-                //
-                // And it is not always a direction. Detour builds that vector by subtracting the hit from the
-                // centre and normalising in place, dividing by the vector's own length -- so a seat standing
-                // exactly on an edge, where the hit *is* the centre, normalises a zero vector and gets three
-                // NaNs. atan2 carries them, sin and cos carry them, and two NaN observation planes reach the
-                // networks, which return a NaN logit, which torch.multinomial reports as a probability tensor
-                // containing inf or nan, naming nothing. A seat on an edge is not rare: it is a doorway.
-                //
-                // There is no direction out of a point that is already on the edge, so the honest reading is
-                // the one the probe starts with -- no direction at all -- and the clearance distance beside it
-                // still says the seat is against something.
-                //
-                // And it is only a direction when a wall was found at all. findDistanceToWall writes hitPos
-                // only inside its loop, on a hit, but subtracts and normalises unconditionally at the end --
-                // so with nothing in range it normalises (centre - {0, 0, 0}), which is the bearing from the
-                // world origin to the seat. That is finite, non-zero and completely wrong: it would hand the
-                // policy an absolute compass reading of where in the world it is standing, in open country,
-                // where the held-out arenas exist precisely to prove it is reading terrain and not remembering
-                // places. Nothing further out than the search radius has a way out to point at.
-                float const outX = normal[2];
-                float const outY = normal[0];
-                if (distance < MoveBlock::CLEARANCE_RANGE
-                    && std::isfinite(outX) && std::isfinite(outY) && outX * outX + outY * outY > 1e-6f)
+                Field::Store::Reads.fetch_add(1, std::memory_order_relaxed);
+                for (uint32 ray = 0; ray < MoveBlock::RAY_COUNT; ++ray)
                 {
-                    float const away = std::atan2(outY, outX) - facing;
-                    probe->ClearanceSin = std::sin(away);
-                    probe->ClearanceCos = std::cos(away);
+                    probe->Reach[ray] = reading.Rays[ray].Reach;
+                    probe->Step[ray] = reading.Rays[ray].Step;
+                    probe->Shore[ray] = reading.Rays[ray].Shore;
+                    probe->Burns[ray] = reading.Rays[ray].Burns;
                 }
+                probe->Clearance = reading.Room.Clearance;
+                probe->ClearanceSin = reading.Room.Directed ? std::sin(reading.Room.Away - facing) : 0.0f;
+                probe->ClearanceCos = reading.Room.Directed ? std::cos(reading.Room.Away - facing) : 0.0f;
+                Encoder::ChargeObserve(Encoder::OBSERVE_PROBE_MARCH, partMark);
             }
+            else
+                Field::Store::Fallbacks.fetch_add(1, std::memory_order_relaxed);
         }
+        // With the fields on there is no live stand-in: a seat on a grid with no field keeps the reading it had
+        // (counted as a fallback, and the grid logged once) until it is on one again. Only Probe.Source = live
+        // measures the old probe.
+        if (!fromTable && !fromField && !Field::Store::Enabled())
+            RefreshLive(probe, map, query, at, facing, partMark);
 
         // Where a jump would come down, cached with the rest. The mask reads this; the press reads it too while
         // the cache still describes where the seat stands, and measures again once it has moved or turned.
@@ -574,6 +370,40 @@ namespace
         probe->Facing = facing;
         probe->Ms = view.NowMs;
         probe->Valid = true;
+        Encoder::ChargeObserve(Encoder::OBSERVE_PROBE, probeMark);
+    }
+
+    /// The probe measured where the seat stands: the five-cell march and the rays along its sixteen headings, and
+    /// the room around it.
+    void RefreshLive(Animus::Curriculum::GroundProbe* probe, Map* map, dtNavMeshQuery const* query,
+        Animus::Curriculum::GroundSense::Origin const& at, float facing,
+        std::chrono::steady_clock::time_point& partMark)
+    {
+        namespace Encoder = Animus::Curriculum::SeatEncoder;
+        // The seat's own polygon, once for all sixteen rays.
+        dtPolyRef const startRef = Ground::StartPoly(query, at);
+
+        for (uint32 ray = 0; ray < MoveBlock::RAY_COUNT; ++ray)
+        {
+            float const heading = RayHeading(facing, ray);
+            partMark = std::chrono::steady_clock::now();
+            Ground::March const march = Ground::MarchBearing(map, at, heading, 0.0f);
+            Encoder::ChargeObserve(Encoder::OBSERVE_PROBE_MARCH, partMark);
+            Ground::Rays const rays = Ground::CastRays(query, startRef, at, heading);
+            Encoder::ChargeObserve(Encoder::OBSERVE_PROBE_RAYS, partMark);
+
+            Ground::Bearing const bearing = Ground::Combine(march, rays);
+            probe->Reach[ray] = bearing.Reach;
+            probe->Step[ray] = bearing.Step;
+            probe->Shore[ray] = bearing.Shore;
+            probe->Burns[ray] = bearing.Burns;
+        }
+
+        // How much room the seat has, and which way is out: one query, from the same polygon as the rays.
+        Ground::Room const room = Ground::MeasureRoom(query, startRef, at);
+        probe->Clearance = room.Clearance;
+        probe->ClearanceSin = room.Directed ? std::sin(room.Away - facing) : 0.0f;
+        probe->ClearanceCos = room.Directed ? std::cos(room.Away - facing) : 0.0f;
     }
 
     /// Take a trail sample when one is due, then write the trail into the block's row: each sample as an offset
@@ -730,6 +560,16 @@ namespace
                 && (liquid.Flags & (MAP_LIQUID_TYPE_WATER | MAP_LIQUID_TYPE_OCEAN)) != 0
                 && liquid.Level >= bot->GetPositionZ() - MoveBlock::MAX_STEP)
             {
+                // With a water-walking aura the lake is a floor: the step lands on the surface, and the movement
+                // flag the core would only set on a client's acknowledgement (Unit::SetWaterWalking sends a packet
+                // to a client-controlled player and waits) is set here, the way AllowFlight sets CAN_FLY.
+                if (bot->HasWaterWalkAura())
+                {
+                    bot->AddUnitMovementFlag(MOVEMENTFLAG_WATERWALKING);
+                    Encoding::SwimTo(bot, destination.GetPositionX(), destination.GetPositionY(),
+                        liquid.Level + MoveBlock::WATER_WALK_ABOVE, &view.Facing);
+                    return;
+                }
                 Encoding::SwimTo(bot, destination.GetPositionX(), destination.GetPositionY(),
                     liquid.Level - bot->GetCollisionHeight() * 0.5f, &view.Facing);
                 return;
@@ -779,6 +619,24 @@ void Animus::Curriculum::MoveBlock::DescribeManifest(Layout const& /*layout*/, b
     block["jump_speed_z"] = double(JUMP_SPEED_Z);
     block["jump_rise_max"] = double(JUMP_RISE_MAX);
     block["jump_drop_scale"] = double(JUMP_DROP_SCALE);
+
+    // Which ground probe the model was trained on: the observation's reach, step, shore, burns and clearance are
+    // its definition. "baked" (tables) and "geometry" (layered fields) are the same dense probe, taken at 2 yd cells
+    // and 16 compass bearings, or worked out at the seat; "live" is the old five-cell one, a different observation.
+    // A runtime reading the model with another should know it is fine-tuning territory.
+    namespace Bake = Animus::Curriculum::ProbeBake;
+    boost::json::object probe;
+    probe["source"] = Bake::Store::Baked() ? "baked"
+        : Animus::Curriculum::LayeredField::Store::Enabled() ? "geometry" : "live";
+    probe["dense"] = Bake::Store::Baked() || Animus::Curriculum::LayeredField::Store::Enabled();
+    Bake::Settings const standard = Bake::StandardSettings();
+    probe["table_cell"] = double(standard.Cell);
+    probe["table_bearings"] = standard.Bearings;
+    probe["wedge_rays"] = standard.WedgeRays;
+    probe["march_pitch"] = double(standard.Pitch);
+    probe["march_window"] = double(GroundSense::MARCH_WINDOW);
+    probe["field_cell"] = double(Animus::Curriculum::LayeredField::STANDARD_CELL);
+    block["ground_probe"] = std::move(probe);
 }
 
 std::string Animus::Curriculum::MoveBlock::ActionName(Layout const& /*layout*/, uint32 local) const
@@ -1060,9 +918,49 @@ void Animus::Curriculum::MoveBlock::Observe(SeatView const& view, float* obs, ui
             // is dropped rather than kept, so the first one made after coming ashore is a fresh one -- and the
             // clearance it held goes with it, because the travel encounter's clearance charge reads the probe
             // too, and was charging a swimmer for the bank it stood beside before it got in.
+            // In the air the rays sense what a flyer steers against: how far it can fly level along each bearing
+            // before something solid (a collision ray at the seat's altitude, and the terrain rising above it), in
+            // the reach's slot, and in the step's whether climbing FLIGHT_CLIMB higher opens the way -- positive
+            // where it does, negative where it closes it. OBS_AIRBORNE tells the policy which meaning it is
+            // reading. With the layered fields on it is read from them every decision, as the ground probe is;
+            // with Probe.Source = live it is measured live (~1.3 us a ray). A seat over a grid with no field sees
+            // open air. A swimmer's rays stay open, as they were.
+            bool const flying = !bot->IsInWater();
+            Map* map = bot->GetMap();
+            float const z = bot->GetPositionZ() + bot->GetCollisionHeight() * 0.5f;
+            bool const fields = LayeredField::Store::Enabled();
+            LayeredField::Store::Neighbourhood around;
+            bool const fromField = flying && map && fields
+                && LayeredField::Store::Gather(map->GetId(), bot->GetPositionX(), bot->GetPositionY(), around);
+            if (flying && map && fields)
+                (fromField ? LayeredField::Store::Reads : LayeredField::Store::Fallbacks)
+                    .fetch_add(1, std::memory_order_relaxed);
             for (uint32 ray = 0; ray < RAY_COUNT; ++ray)
             {
-                out[OBS_GROUND_FIRST + ray] = 1.0f;
+                float reach = 1.0f;
+                float climb = 0.0f;
+                if (fromField)
+                {
+                    float const heading = RayHeading(facing, ray);
+                    float const level = LayeredField::FlightReach(around.View, bot->GetPositionX(),
+                        bot->GetPositionY(), z, heading, MARCH_MAX, FLIGHT_PITCH);
+                    float const above = LayeredField::FlightReach(around.View, bot->GetPositionX(),
+                        bot->GetPositionY(), z + FLIGHT_CLIMB, heading, MARCH_MAX, FLIGHT_PITCH);
+                    reach = level / MARCH_MAX;
+                    climb = std::clamp((above - level) / MARCH_MAX, -1.0f, 1.0f);
+                }
+                else if (flying && map && !fields)
+                {
+                    float const heading = RayHeading(facing, ray);
+                    float const level = LayeredField::LiveFlightReach(map, bot->GetPositionX(), bot->GetPositionY(),
+                        z, heading, MARCH_MAX, FLIGHT_PITCH);
+                    float const above = LayeredField::LiveFlightReach(map, bot->GetPositionX(), bot->GetPositionY(),
+                        z + FLIGHT_CLIMB, heading, MARCH_MAX, FLIGHT_PITCH);
+                    reach = level / MARCH_MAX;
+                    climb = std::clamp((above - level) / MARCH_MAX, -1.0f, 1.0f);
+                }
+                out[OBS_GROUND_FIRST + ray] = reach;
+                out[OBS_STEP_FIRST + ray] = climb;
                 out[OBS_SHORE_FIRST + ray] = bot->IsInWater() ? 0.0f : 1.0f;
             }
             out[OBS_CLEARANCE] = 1.0f;
@@ -1078,7 +976,7 @@ void Animus::Curriculum::MoveBlock::Observe(SeatView const& view, float* obs, ui
         out[OBS_FALLING] = (view.Probe && view.Probe->JumpDropPending) || bot->IsFalling() ? 1.0f : 0.0f;
         out[OBS_IN_WATER] = bot->IsInWater() ? 1.0f : 0.0f;
         out[OBS_SUBMERGED] = bot->IsUnderWater() ? 1.0f : 0.0f;
-        out[OBS_SUBMERGED_TIME] = std::min(1.0f, view.SubmergedTime / BREATH_SECONDS);
+        out[OBS_SUBMERGED_TIME] = std::min(1.0f, view.BreathSpent);
         out[OBS_SWIM_SPEED] = bot->GetSpeed(MOVE_SWIM) / RUN_SPEED;
         out[OBS_AIRBORNE] = airborne ? 1.0f : 0.0f;
     }
@@ -1160,6 +1058,11 @@ void Animus::Curriculum::MoveBlock::BeforeApply(SeatView& view, SeatActionResult
     // core's own fall with the core's own damage. Here rather than only in the travel block, which does the same
     // for a dismount, because this block is in every stage and a drop in a pack stage must not leave the seat
     // standing on air. Idempotent with the travel block's call: the second sees the fall spline running.
+    // A water-walking flag this block set outlives its aura on a client-controlled player (the core only clears
+    // it on a client's acknowledgement), so it comes off here when the aura has.
+    if (view.Bot->HasUnitMovementFlag(MOVEMENTFLAG_WATERWALKING) && !view.Bot->HasWaterWalkAura())
+        view.Bot->RemoveUnitMovementFlag(MOVEMENTFLAG_WATERWALKING);
+
     // The core's falling flag, stuck on a seat that is standing on the ground (Descending): taken off here, every
     // decision, so nothing downstream that still asks Unit::IsFalling -- the core's own movement code among them --
     // sees a seat that landed a minute ago as still in the air.

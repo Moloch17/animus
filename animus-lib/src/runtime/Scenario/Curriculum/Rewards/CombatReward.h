@@ -21,6 +21,7 @@
 
 #include "CurriculumTuning.h"
 #include "Define.h"
+#include <algorithm>
 
 class Player;
 class Unit;
@@ -65,6 +66,13 @@ namespace Animus::Curriculum
         /// The share of a timeout charge to take when the fight ended with `healthLeft` of its enemy standing:
         /// `floor` of it always, the rest with the work left undone.
         [[nodiscard]] float TimeoutScale(float floor, float healthLeft);
+
+        /// The factor a fight's outcome terms carry for its difficulty tier: 1 + step x tier (Difficulty.TierScale).
+        /// A win is multiplied by it and a loss divided by it, so the score stays comparable across the ladder.
+        [[nodiscard]] inline float TierScale(float step, uint32 tier)
+        {
+            return 1.0f + std::max(0.0f, step) * float(tier);
+        }
 
         /// How the seat is fighting `target`, measured only: time in the fight (FightMs, which every style share is
         /// divided by), time inside melee reach, time the target spent on the bot's pet, and the roots and snares the

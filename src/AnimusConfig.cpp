@@ -19,7 +19,9 @@
 #include "AnimusConfig.h"
 #include "Config.h"
 #include "DBCEnums.h"
+#include "LayeredField.h"
 #include "Log.h"
+#include "ProbeBake.h"
 #include "StageDefinition.h"
 #include <string_view>
 #include "Tokenize.h"
@@ -135,4 +137,35 @@ void Animus::AnimusConfig::Load()
     Life.CorpseRun = sConfigMgr->GetOption<bool>("Animus.Life.CorpseRun", true);
     Life.Crafting = sConfigMgr->GetOption<bool>("Animus.Life.Crafting", true);
     Life.IdleSeconds = sConfigMgr->GetOption<uint32>("Animus.Life.IdleSeconds", 20);
+
+    // The ground probe, as the forge's AnimusForge.Probe.* sets it for training. The files are the forge's own
+    // (`forge fieldworld` bakes every map's fields), shipped beside the core's maps, vmaps and mmaps by default.
+    ProbeSource = sConfigMgr->GetOption<std::string>("Animus.Probe.Source", "geometry");
+    if (ProbeSource != "geometry" && ProbeSource != "baked" && ProbeSource != "live")
+    {
+        LOG_ERROR("module.animus", "Animus.Probe.Source = \"{}\" is not geometry, baked or live; using geometry",
+            ProbeSource);
+        ProbeSource = "geometry";
+    }
+    std::filesystem::path probeDir = sConfigMgr->GetOption<std::string>("Animus.Probe.Dir", "");
+    if (probeDir.empty())
+        probeDir = std::filesystem::path(sWorld->GetDataPath()) / "fields";
+    else if (probeDir.is_relative())
+        probeDir = std::filesystem::path(sWorld->GetDataPath()) / probeDir;
+    ProbeDir = probeDir.lexically_normal().string();
+    ProbeCacheGrids = std::max<uint32>(1, sConfigMgr->GetOption<uint32>("Animus.Probe.CacheGrids", 64));
+
+    bool const baked = ProbeSource == "baked";
+    Curriculum::ProbeBake::Store::Configure(baked, ProbeDir, ProbeCacheGrids);
+    Curriculum::LayeredField::Store::Configure(baked || ProbeSource == "geometry", ProbeDir, ProbeCacheGrids);
+    if (ProbeSource != "live")
+    {
+        std::error_code error;
+        if (!std::filesystem::is_directory(ProbeDir, error))
+            LOG_ERROR("module.animus", "Animus.Probe.Source = {}, but there are no field files in {}: companions "
+                "sense no ground until they are there (or set Animus.Probe.Source = live, which models trained on "
+                "the fields refuse)", ProbeSource, ProbeDir);
+        else
+            LOG_INFO("module.animus", "Animus ground probe: {} from {}", ProbeSource, ProbeDir);
+    }
 }

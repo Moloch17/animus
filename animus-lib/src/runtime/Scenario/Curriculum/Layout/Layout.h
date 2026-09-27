@@ -23,6 +23,7 @@
 #include "Block.h"
 #include "ClassAssets.h"
 #include "ClassProfile.h"
+#include <optional>
 #include <string>
 #include <vector>
 

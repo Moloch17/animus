@@ -55,6 +55,19 @@ namespace Animus::Curriculum
             // Percent of pet-class characters that start the episode with their pet out, as a player arrives with
             // one: the rest summon it themselves (or not).
             int32 PetOutChance = 50;
+            /// Episodes a seat keeps its character for when the next episode draws the same class and build, before
+            /// it is built afresh (race, level, talents, gear). Building a character was 6.4 ms of a 24 ms decision
+            /// (reset 0.96 episodes per decision, stage1_duel at 128 envs); a kept character is healed, cleared of
+            /// buffs and cooldowns, restocked and moved to the new spawn instead. Evaluations always build: their
+            /// seeded spread of characters is the yardstick. 0 = build every episode.
+            uint32 ReuseEpisodes = 4;
+            /// 1: in training, a seat whose character can still be kept (ReuseEpisodes) keeps its class and build too,
+            /// where a seat is drawn with no party makeup to honour, rather than drawing them and keeping the
+            /// character only when the draw happens to repeat -- which with ten classes and their builds it did for
+            /// 3.5% of stage2_indoor's episodes, whose resets were then nearly all character builds (0.4 ms each, the
+            /// map update's tail). Each env's classes come in runs of up to ReuseEpisodes episodes; the mix across
+            /// envs is the draw's. 0 = draw every episode.
+            uint32 KeepCasting = 1;
         } Characters;
 
         /// Which party seats have a character, and their roles.
@@ -162,7 +175,58 @@ namespace Animus::Curriculum
             /// those had to wait for stage 2's packs, where they compete with learning to fight several enemies.
             uint32 CasterChance = 40;
             uint32 HazardChance = 30;
+            /// The outcome terms scale with the tier: a win (kill, clear, health kept) is multiplied by
+            /// 1 + TierScale x tier, a loss (death, timeout, overtime) divided by it. A tier-0 fight is unchanged;
+            /// at tier 6 and 0.25 a kill pays 2.5x and a death costs 0.4x. Evaluations spread their seeds over
+            /// every tier while training climbs per class, so with flat terms the score fell as the ladder rose
+            /// -- every rung-6 loss cost as much as a rung-0 one -- and convergence read the fall as done. Scaled,
+            /// the break-even win rate falls with the tier, so a hard fight is worth attempting, and the score is
+            /// comparable across rungs. Fixed-bonus opponents (evade, hide, stealth) are not a ladder and stay flat.
+            float TierScale = 0.25f;
         } Difficulty;
+
+        /// Real instances (InstanceEncounter): where the raid stands and what a lost boss fight is worth.
+        struct InstanceTuning
+        {
+            uint32 EngageYards = 35;            // how far back up the path from the boss the seats start
+            uint32 TrashRadius = 60;            // creatures this close to the boss that are not its adds are cleared
+            /// The rung's tier scale is capped here: a ladder of twenty bosses at 0.25 a tier would pay a top kill
+            /// 5.75x, where the pool ladders stop at 2.5x. Kill, HealthKept and BossProgress are multiplied by the
+            /// capped scale, Death and Timeout divided by it.
+            uint32 MaxTierScale = 6;
+            /// Paid on a wipe or an evade for the share of the boss's health the fight took off it, so a forty-seat
+            /// fight has a gradient before its first kill: at 5, a wipe at 40% pays 3 (x the tier scale).
+            float BossProgress = 5.0f;
+            float Timeout = 10.0f;              // the clock, scaled by what is left of the boss (Duel.TimeoutFloor)
+        } Instance;
+
+        /// Life outside the fight (the quest, gather and town stages): what the world around the seat is made of,
+        /// and what it is paid for. The outcome terms scale with the band's tier (Difficulty.TierScale).
+        struct LifeTuning
+        {
+            float StepCost = 0.0002f;           // per decision, as the travel stages charge
+            float Progress = 2.0f;              // potential shaping on the distance to the waypoint, once per approach
+            float Wasted = 0.1f;                // a press that did nothing (an interact with nothing in reach)
+            float Death = 5.0f;                 // divided by the band's tier scale
+            float QuestAccepted = 1.0f;
+            float QuestCredit = 3.0f;           // spread over the objectives' counts, times the tier scale
+            float QuestTurnIn = 10.0f;          // times the tier scale
+            float QuestTimeout = 3.0f;          // the clock without a turn-in, less what was done, over the tier scale
+            float GatherNode = 2.0f;            // per node gathered, times the tier scale
+            float GatherSkillUp = 0.5f;         // per skill point gained
+            float TownSold = 2.0f;              // for the starting junk's whole vendor value, pro rata
+            float TownRepaired = 2.0f;
+            float TownStocked = 2.0f;
+            float TownEquipped = 3.0f;          // per upgrade put on
+            float TownDone = 5.0f;              // sold, repaired, stocked and dressed before the clock
+            float SenseRange = 100.0f;          // yards the seat's world features reach
+            float ObjectiveRadius = 60.0f;      // the world's creatures this close to a quest objective's place come along
+            uint32 ObjectiveSpawns = 24;        // ... up to this many per place (and around a gather ground)
+            float NodeRadius = 150.0f;          // the nodes this close to the gather ground are the field
+            uint32 NodeSpawns = 24;
+            float TownRadius = 80.0f;           // the traders this close to the inn are the town
+            uint32 TownCopperPerLevelSquared = 25;  // the seat's purse: level squared times this (level 20: 1 gold)
+        } Life;
 
         /// Cast-time spells, from the duel stage on.
         struct CastingTuning
@@ -472,6 +536,11 @@ namespace Animus::Curriculum
             int32 LevelSpread = 2;              // its level: the bot's plus or minus this
             int32 TankChance = 25;              // percent tanks, healers, the rest damage dealers
             int32 HealerChance = 25;
+            /// In a cast-owner arena (ArenaDefinition::OwnerCast), the percent of training episodes whose owner
+            /// is still the script rather than the frozen checkpoint: the script wanders and engages on a
+            /// timer, which is the owner the follow lesson was built on, and a frozen solo policy may just stand
+            /// between pulls. Evaluations always script it.
+            int32 CastScriptedShare = 30;
             // Rewards added to the pulls'.
             float DamageTakenDps = 1.0f;        // damage dealers: the owner's damage taken, fraction of its health
             float DamageTakenProtector = 2.0f;  // tanks and healers exist to prevent it
@@ -626,6 +695,19 @@ namespace Animus::Curriculum
             float LedgeDetour = 2.0f;
             float LedgeDropMin = 5.0f;
             float LedgeDropMax = 80.0f;
+            /// Dive arenas (ArenaDefinition::Underwater): how far the objective is and how much water stands over
+            /// it. DiveDepthMax runs past what one breath reaches on purpose, as LedgeDropMax runs past the lethal
+            /// fall: with Unending Breath or Water Breathing the dive is free, without them the seat learns to come
+            /// up for air, or what not coming up costs.
+            float DiveMin = 20.0f;
+            float DiveMax = 120.0f;
+            float DiveDepthMin = 6.0f;
+            float DiveDepthMax = 40.0f;
+            /// Chain arenas (ArenaDefinition::Checkpoints): how far on the next objective is drawn from where the
+            /// seat reached the last. Short legs, so a chain of lakebeds is many small dives and the seat is under
+            /// water for most of the clock unless it chooses not to be.
+            float ChainMin = 30.0f;
+            float ChainMax = 60.0f;
         } Travel;
 
         /// The flag match (Warsong Gulch's rules between two seats).
@@ -691,6 +773,8 @@ namespace Animus::Curriculum
             f("Characters.RandomTalentChance", tuning.Characters.RandomTalentChance);
             f("Characters.TalentNoisePoints", tuning.Characters.TalentNoisePoints);
             f("Characters.PetOutChance", tuning.Characters.PetOutChance);
+            f("Characters.ReuseEpisodes", tuning.Characters.ReuseEpisodes);
+            f("Characters.KeepCasting", tuning.Characters.KeepCasting);
 
             f("Party.SizeWeight1", tuning.Party.SizeWeight1);
             f("Party.SizeWeight2", tuning.Party.SizeWeight2);
@@ -738,6 +822,35 @@ namespace Animus::Curriculum
             f("Difficulty.StretchChance", tuning.Difficulty.StretchChance);
             f("Difficulty.CasterChance", tuning.Difficulty.CasterChance);
             f("Difficulty.HazardChance", tuning.Difficulty.HazardChance);
+            f("Difficulty.TierScale", tuning.Difficulty.TierScale);
+
+            f("Instance.EngageYards", tuning.Instance.EngageYards);
+            f("Instance.TrashRadius", tuning.Instance.TrashRadius);
+            f("Instance.MaxTierScale", tuning.Instance.MaxTierScale);
+            f("Instance.BossProgress", tuning.Instance.BossProgress);
+            f("Instance.Timeout", tuning.Instance.Timeout);
+            f("Life.StepCost", tuning.Life.StepCost);
+            f("Life.Progress", tuning.Life.Progress);
+            f("Life.Wasted", tuning.Life.Wasted);
+            f("Life.Death", tuning.Life.Death);
+            f("Life.QuestAccepted", tuning.Life.QuestAccepted);
+            f("Life.QuestCredit", tuning.Life.QuestCredit);
+            f("Life.QuestTurnIn", tuning.Life.QuestTurnIn);
+            f("Life.QuestTimeout", tuning.Life.QuestTimeout);
+            f("Life.GatherNode", tuning.Life.GatherNode);
+            f("Life.GatherSkillUp", tuning.Life.GatherSkillUp);
+            f("Life.TownSold", tuning.Life.TownSold);
+            f("Life.TownRepaired", tuning.Life.TownRepaired);
+            f("Life.TownStocked", tuning.Life.TownStocked);
+            f("Life.TownEquipped", tuning.Life.TownEquipped);
+            f("Life.TownDone", tuning.Life.TownDone);
+            f("Life.SenseRange", tuning.Life.SenseRange);
+            f("Life.ObjectiveRadius", tuning.Life.ObjectiveRadius);
+            f("Life.ObjectiveSpawns", tuning.Life.ObjectiveSpawns);
+            f("Life.NodeRadius", tuning.Life.NodeRadius);
+            f("Life.NodeSpawns", tuning.Life.NodeSpawns);
+            f("Life.TownRadius", tuning.Life.TownRadius);
+            f("Life.TownCopperPerLevelSquared", tuning.Life.TownCopperPerLevelSquared);
 
             f("Casting.TimeWasted", tuning.Casting.TimeWasted);
             f("Casting.TimeCompleted", tuning.Casting.TimeCompleted);
@@ -859,6 +972,7 @@ namespace Animus::Curriculum
             f("Owner.LevelSpread", tuning.Owner.LevelSpread);
             f("Owner.TankChance", tuning.Owner.TankChance);
             f("Owner.HealerChance", tuning.Owner.HealerChance);
+            f("Owner.CastScriptedShare", tuning.Owner.CastScriptedShare);
             f("Owner.DamageTakenDps", tuning.Owner.DamageTakenDps);
             f("Owner.DamageTakenProtector", tuning.Owner.DamageTakenProtector);
             f("Owner.TankOwnerDamageShare", tuning.Owner.TankOwnerDamageShare);
@@ -918,6 +1032,12 @@ namespace Animus::Curriculum
             f("Travel.LedgeDetour", tuning.Travel.LedgeDetour);
             f("Travel.LedgeDropMin", tuning.Travel.LedgeDropMin);
             f("Travel.LedgeDropMax", tuning.Travel.LedgeDropMax);
+            f("Travel.DiveMin", tuning.Travel.DiveMin);
+            f("Travel.DiveMax", tuning.Travel.DiveMax);
+            f("Travel.DiveDepthMin", tuning.Travel.DiveDepthMin);
+            f("Travel.DiveDepthMax", tuning.Travel.DiveDepthMax);
+            f("Travel.ChainMin", tuning.Travel.ChainMin);
+            f("Travel.ChainMax", tuning.Travel.ChainMax);
 
             f("Flag.BaseMin", tuning.Flag.BaseMin);
             f("Flag.BaseMax", tuning.Flag.BaseMax);

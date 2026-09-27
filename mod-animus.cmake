@@ -35,6 +35,14 @@ if(NOT ANIMUS_FORGE_INDEX EQUAL -1)
   endif()
 endif()
 
+# The same, since the forge folded its module into the core: the curriculum is part of the game library there
+# (src/server/game/Animus), and this module's copy of it would collide with it at link.
+if(EXISTS "${CMAKE_SOURCE_DIR}/src/server/game/Animus/AnimusForge.h")
+  message(FATAL_ERROR "This is an Animus Forge core, which carries the curriculum mod-animus bundles: a forge is not "
+    "a realm and has no use for companions. Disable the module (-DMODULE_MOD-ANIMUS=disabled), or build it into a "
+    "stock AzerothCore.")
+endif()
+
 # Where the core installs module configs (CopyModuleConfig, src/cmake/macros/ConfigInstall.cmake).
 if(WIN32)
   set(ANIMUS_MODULE_CONF_DIR "${CMAKE_INSTALL_PREFIX}/configs/modules")

@@ -228,15 +228,6 @@ std::string_view Animus::Curriculum::BlockName(BlockId id)
     return "unknown";
 }
 
-std::optional<Animus::Curriculum::BlockId> Animus::Curriculum::FindBlock(std::string_view name)
-{
-    for (std::size_t i = 0; i < BLOCK_COUNT; ++i)
-        if (BlockName(BlockId(i)) == name)
-            return BlockId(i);
-
-    return std::nullopt;
-}
-
 Animus::Curriculum::Layout Animus::Curriculum::Layout::Build(ClassProfile const& profile,
     StageDefinition const& stage)
 {

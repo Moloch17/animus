@@ -1,5 +1,9 @@
 # animus-lib
 
+> **This copy is a snapshot of the forge's curriculum runtime.** The forge folded animus-lib into its core
+> (`src/server/game/Animus`); mod-animus refreshes `src/runtime` from a forge checkout with
+> `tools/update-animus-lib.sh` (revision in `FORGE_REVISION`). The standalone repository below is no longer updated.
+
 The code that training and play share. [mod-animus-forge](https://github.com/Moloch17/animus-forge) trains models with
 it on the forge core; [mod-animus](https://github.com/Moloch17/animus) plays them with it on a stock AzerothCore. Both
 run the same scenarios and encodings, so a stage a game master watches is exactly the stage the forge trained, and a

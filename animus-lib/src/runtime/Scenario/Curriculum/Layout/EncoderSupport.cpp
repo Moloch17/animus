@@ -43,6 +43,7 @@
 #include "SpellMgr.h"
 #include "ThreatManager.h"
 #include <algorithm>
+#include <chrono>
 #include <limits>
 
 namespace
@@ -63,6 +64,9 @@ namespace Animus::Curriculum::Encoding
     /// be before it is: the same two the travel block uses (MAX_GROUND_SEARCH, AIRBORNE_ABOVE).
     constexpr float FALL_GROUND_SEARCH = 200.0f;
     constexpr float FALL_ABOVE = 2.0f;
+    /// How far under the surface a seat is put back when it has come up out of the water: enough to be in it
+    /// (LIQUID_MAP_IN_WATER wants the feet below the level), not enough to put the head under.
+    constexpr float SURFACE_SINK = 0.5f;
 
     using SpellChecks::CheckCast;
     using SpellChecks::CooldownFraction;
@@ -142,18 +146,6 @@ namespace Animus::Curriculum::Encoding
         return float(aura->GetDuration()) > float(aura->GetMaxDuration()) * REFRESH_BELOW_FRACTION;
     }
 
-    void WriteKnownCooldowns(Player const* bot, std::vector<ActionCatalog::Action> const& actions, float* out)
-    {
-        for (std::size_t i = 0; i < actions.size(); ++i)
-        {
-            if (SpellInfo const* info = ActionCatalog::KnownRank(bot, actions[i].FirstRank))
-            {
-                out[i * 2] = 1.0f;
-                out[i * 2 + 1] = CooldownFraction(bot, info);
-            }
-        }
-    }
-
     bool CastInProgress(Player const* bot)
     {
         return bot->IsNonMeleeSpellCast(false, true, true);
@@ -219,6 +211,20 @@ namespace Animus::Curriculum::Encoding
         return chosen;
     }
 
+    /// The form the seat would have to leave to take `info`, or null when it can cast as it stands: a form spell
+    /// pressed from another form. Every druid form carries SPELL_ATTR0_NOT_SHAPESHIFTED, so the core refuses Cat
+    /// Form from Bear Form and Aquatic Form from Travel Form outright; a player shifts straight across because the
+    /// client drops the form it is in first. The breathe drill's druids took Travel Form on the bank in their first
+    /// decisions and were never offered Aquatic Form again in the episode.
+    SpellInfo const* FormToDropFor(Player const* bot, SpellInfo const* info)
+    {
+        if (!info->HasAura(SPELL_AURA_MOD_SHAPESHIFT) || bot->GetShapeshiftForm() == FORM_NONE)
+            return nullptr;
+        if (info->CheckShapeshift(bot->GetShapeshiftForm()) == SPELL_CAST_OK)
+            return nullptr;
+        return CancellableForm(bot);
+    }
+
     bool IsSpellActionAllowed(SeatView const& view, Unit* target, ActionCatalog::Action const& def)
     {
         Player* bot = view.Bot;
@@ -257,6 +263,12 @@ namespace Animus::Curriculum::Encoding
                 return false;
         }
 
+        // A form from another form: judged as if standing in none, since the press drops the current one first
+        // (ApplySpellAction). The full cast check cannot be asked that question, so this is the shapeshift rule
+        // alone; a press the core still refuses simply does nothing, as any masked-through press does.
+        if (FormToDropFor(bot, info))
+            return info->CheckShapeshift(FORM_NONE) == SPELL_CAST_OK;
+
         return CanCast(bot, info, target, nullptr, friendUnit);
     }
 
@@ -282,6 +294,10 @@ namespace Animus::Curriculum::Encoding
         bool const stealthed = bot->HasStealthAura();
         bool const targetCasting = target && target->IsNonMeleeSpellCast(false);
         uint32 const castMs = info->CalcCastTime(bot);
+        // Shifting straight from one form to another: leave the one the seat is in, as the client does for a
+        // player, then cast. A cast the core then refuses has cost the form, which is what it costs a player too.
+        if (SpellInfo const* current = FormToDropFor(bot, info))
+            bot->RemoveAurasDueToSpell(current->Id);
         Spell* spell = new Spell(bot, info, TRIGGERED_NONE);
         if (spell->prepare(&targets) != SPELL_CAST_OK)
             return false;
@@ -289,6 +305,7 @@ namespace Animus::Curriculum::Encoding
         ++result.SpellCasts;
         result.HealsOnFull += onFullHealth ? 1 : 0;
         result.DefensiveCasts += def.Defensive ? 1 : 0;
+        result.BreathingCasts += def.WaterBreathing ? 1 : 0;
         if (def.Healing)
         {
             ++result.HealingCasts;
@@ -706,6 +723,16 @@ namespace Animus::Curriculum::Encoding
 
     void MoveTo(Player* bot, uint32 pointId, float x, float y, float z, float const* facing)
     {
+        struct Timed
+        {
+            std::chrono::steady_clock::time_point Started = std::chrono::steady_clock::now();
+            ~Timed()
+            {
+                MoveToCalls.fetch_add(1, std::memory_order_relaxed);
+                MoveToNs.fetch_add(uint64(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                    std::chrono::steady_clock::now() - Started).count()), std::memory_order_relaxed);
+            }
+        } timed;
         bot->GetMotionMaster()->Clear();
         if (!facing)
         {
@@ -810,12 +837,44 @@ namespace Animus::Curriculum::Encoding
             *yards = 0.0f;
         if (healthFraction)
             *healthFraction = 0.0f;
-        if (!bot->IsAlive() || bot->CanFly() || !bot->movespline->Finalized())
+        // Not in water: a seat holding still under the surface is swimming, not hanging in the air, and the lakebed
+        // twenty yards down is not a fall waiting to happen. Unit::IsInWater reads the terrain; Player::IsInWater
+        // is the cached flag the client would have sent.
+        if (!bot->IsAlive() || bot->CanFly() || !bot->movespline->Finalized() || bot->Unit::IsInWater())
             return false;
 
         float const ground = bot->GetMapHeight(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(), true,
             FALL_GROUND_SEARCH);
-        if (ground <= INVALID_HEIGHT || bot->GetPositionZ() - ground <= FALL_ABOVE)
+        if (ground <= INVALID_HEIGHT)
+            return false;
+
+        // Over water the surface is where a fall ends, not the bed under it: Map::GetHeight is blind to liquid, so
+        // a seat that has just broken the surface of a lake sixty yards deep read as sixty yards up in the air,
+        // and was handed a sixty-yard fall's damage -- every time it came up for air. That was the chain drill's
+        // "died without damage": a quarter of its seats, each one killed on the third or fourth breath. Within a
+        // step of the surface the seat is swimming, not hanging, and the game charges nothing for landing in deep
+        // water, so a real drop into it ends at the surface with the seat back in the water and nothing lost.
+        LiquidData const liquid = bot->GetMap()->GetLiquidData(bot->GetPhaseMask(), bot->GetPositionX(),
+            bot->GetPositionY(), ground, bot->GetCollisionHeight(), {});
+        bool const overWater = liquid.Status != LIQUID_MAP_NO_WATER && liquid.Level > ground
+            && (liquid.Flags & (MAP_LIQUID_TYPE_WATER | MAP_LIQUID_TYPE_OCEAN)) != 0;
+        if (overWater)
+        {
+            float const above = bot->GetPositionZ() - liquid.Level;
+            if (above <= 0.0f)
+                return false;
+            bot->GetMotionMaster()->Clear();
+            bot->DisableSpline();
+            bot->UpdatePosition(bot->GetPositionX(), bot->GetPositionY(), liquid.Level - SURFACE_SINK,
+                bot->GetOrientation());
+            if (above <= FALL_ABOVE)
+                return false;
+            if (yards)
+                *yards = above;
+            return true;
+        }
+
+        if (bot->GetPositionZ() - ground <= FALL_ABOVE)
             return false;
 
         // MoveFall remembers where the fall started (SetFallInformation); landing is Player::HandleFall, as for a

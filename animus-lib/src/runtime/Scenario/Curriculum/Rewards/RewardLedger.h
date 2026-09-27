@@ -79,6 +79,20 @@ namespace Animus::Curriculum
         Repeat,
         Hazard,
         HealingMana,
+        /// An instance boss fight lost with the boss part dead: the share of its health the fight took off it.
+        BossProgress,
+        /// Life outside the fight (the quest, gather and town stages).
+        Wasted,             // a press that did nothing in the world
+        QuestAccepted,
+        QuestCredit,        // objective counts as they land
+        QuestTurnIn,
+        GatherNode,
+        GatherSkillUp,
+        TownSold,
+        TownRepaired,
+        TownStocked,
+        TownEquipped,
+        TownDone,
         Count
     };
 

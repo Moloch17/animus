@@ -46,6 +46,9 @@ namespace Animus
 
         /// Episode info means are kept every this many finished episodes (EnvPool::LastEpisodeMeans).
         uint32 ReportEpisodes = 256;
+        /// AnimusForge.ResetOnMapThreads: a scenario whose resets stay on their map (Scenario::ResetsStayOnMap)
+        /// rebuilds each ended episode on the thread updating its map, not afterwards on the world thread.
+        bool ResetOnMapThreads = true;
 
         /// The classes the seats play (warrior, druid, ...); empty = every class. A class brings every role it
         /// can play with it -- there is one model per class, not per class and role.
@@ -57,6 +60,15 @@ namespace Animus
 
         /// Every character's level, or 0 for the curriculum's random levels.
         uint32 Level = 0;
+
+        /// How many Map objects a continent stage spreads its envs over (MapMgr::CreateContinentReplica), so a
+        /// continent is not one map and therefore one map task for the whole pool. 0 asks for the fewest the
+        /// phase cap allows: an env stands in one of the 31 phase bits its map has, so 31 envs per replica.
+        /// Sizing, like Envs or MapUpdate.Threads. A replica shares the continent's terrain, collision tree
+        /// and navmesh with the base map and loads grids only where its envs stand, so it costs the creatures
+        /// and gameobjects of those grids rather than a copy of the continent. At or below 31 envs the default
+        /// is one map, which is what a continent stage has always been.
+        uint32 ContinentReplicas = 0;
 
         /// Prefix of the curriculum tuning keys (CurriculumTuning::Load) and arena weights, with the trailing dot:
         /// "AnimusForge.Curriculum." for the forge, "Animus.Curriculum." for mod-animus.

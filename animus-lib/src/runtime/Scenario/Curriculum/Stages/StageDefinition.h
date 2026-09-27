@@ -50,6 +50,21 @@ namespace Animus::Curriculum
         Travel,         // a place to get to (ArenaDefinition::Flying for one best reached in the air)
         Flag,           // Warsong Gulch's rules between the two mirror seats: take the other's flag home
         Hazards,        // nothing to fight: ground to get off (HazardEncounter)
+        Instance,       // a real dungeon or raid boss in its own instance (InstanceEncounter, ArenaDefinition::Instance)
+        Quest,          // a quest of the level band, giver to turn-in, in the world's own zone (QuestEncounter)
+        Gather,         // a field of the band's herb and ore nodes, with the zone's creatures (GatherEncounter)
+        Town,           // a town's traders: sell, repair, restock, dress (TownEncounter)
+    };
+
+    /// Which real-instance ladder an arena climbs (InstanceBosses.cpp): five-man dungeons across the level bands, or
+    /// the ten-, twenty-five- and forty-man raids.
+    enum class InstanceLadder : uint8
+    {
+        None,
+        Dungeon,
+        Raid10,
+        Raid25,
+        Raid40,
     };
 
     enum class PullSchedule : uint8
@@ -76,9 +91,20 @@ namespace Animus::Curriculum
         SeatPlan Seats = SeatPlan::Solo;
         Opposition Against = Opposition::Creature;
         PullSchedule Schedule = PullSchedule::None;
-        bool Owner = false;             // a scripted owner the seats fight for
+        bool Owner = false;             // an owner the seats fight for
+        /// The owner is an agent of its own: one more row on the wire, after the seats (and the directors), which
+        /// the learner plays from a frozen checkpoint (its cast, stage.json `cast`) and never trains. A share of
+        /// the episodes (Owner.CastScriptedShare) keeps the scripted owner, which wanders and engages on a timer
+        /// -- the shape the companion's follow lesson was built on -- and every evaluation does: the yardstick
+        /// stays the owner it always was. Ignored unless Owner.
+        bool OwnerCast = false;
         bool PartyGroup = false;        // the owner and seats form a core group
         bool Pvp = false;               // against players: resilience gear, no resurrecting oneself
+        /// Opposition::Instance: the boss ladder this arena climbs. The rung fixes the map, the seats' level and
+        /// the difficulty; the stage's MapId and SpawnPoints are not used by this arena.
+        InstanceLadder Instance = InstanceLadder::None;
+        /// SeatPlan::Raid: how many seats the raid has (a multiple of GROUP_SEATS up to MAX_SEATS); 0 = MAX_SEATS.
+        uint32 RaidSeats = 0;
         uint32 EpisodeSeconds = 0;      // episode length; 0 = StageSettings::EpisodeSeconds
         /// Most scripted enemy players that ambush the owner (1 to this many, MAX_AMBUSHERS at most): mid-episode
         /// beside pulls, or from the start against Opposition::Ambush. 0 = none.
@@ -125,6 +151,9 @@ namespace Animus::Curriculum
         /// the Cheetah), not stopping, and not wandering off the path. Mounting is masked, not merely unpaid,
         /// because a masked action cannot be explored into and the lesson stays clean.
         bool OnFoot = false;
+        /// Travel: the objective may sit across water, and is chosen so that the way round is longer than the way
+        /// through. On a creature arena instead (stage8_duel's `lake`): the opponent stands in the water, so the
+        /// fight is a swimming one for whoever goes in after it.
         /// Travel: the objective may sit across water, and is chosen so that the way round is longer than the way
         /// through. Every other travel arena refuses an objective anywhere near water, which is why nothing in the
         /// curriculum had ever had to swim.
@@ -191,6 +220,21 @@ namespace Animus::Curriculum
         /// place in reach builds an ordinary trip and reports `ledge` 0, as a water arena reports `crossing` 0.
         /// Arriving means the objective's own floor (ARRIVE_SAME_FLOOR), or the lip above it would count.
         bool Ledges = false;
+        /// Travel, on foot: the objective is on the bed of a lake, under Travel.DiveDepthMin to DiveDepthMax yards
+        /// of water, Travel.DiveMin to DiveMax yards away. Arriving is standing on the bed beside it, which means
+        /// swimming down, and the deep ones cannot be reached on one breath: the core's breath timer and its
+        /// drowning damage (a fifth of the seat's health a second once the breath is spent) are the price, and
+        /// what the seat learns. A spawn point with no water that deep in reach builds an ordinary trip and
+        /// reports `dive` 0, as a water arena reports `crossing` 0.
+        bool Underwater = false;
+        /// Travel: the objective is a chain. Reaching one draws the next from where the seat stands, Travel.ChainMin
+        /// to ChainMax yards on, of the same kind as the arena's (a dive arena chains lakebeds), and the episode
+        /// runs to its clock rather than ending on arrival: what is measured is how many were reached and whether
+        /// the seat is alive at the end. Built for the breath: a chain of lakebeds keeps a seat under water for
+        /// longer than one breath lasts, so that coming up for air, or making the breath free with a spell, is a
+        /// decision with a price on both sides. A leg no place can be found for leaves the seat with nothing more
+        /// to reach for the rest of the clock (chain_broken).
+        bool Checkpoints = false;
 
         [[nodiscard]] uint32 SeatCount() const;
     };
@@ -220,14 +264,6 @@ namespace Animus::Curriculum
         /// (animus.bootstrap), which refuses loudly rather than fresh-initialising in silence, so a stage like
         /// this can sit in the middle of a chain when the run it is in allows it.
         bool NeedsStealth = false;
-        /// The feather-fall spells (Slow Fall, Levitate: ActionCatalog::Action::FeatherFall) are masked, so every
-        /// class learns the bare price of a drop before the classes that can make one free learn to. A drill's
-        /// setting: nothing else masks a spell a character knows.
-        bool FeatherFallMasked = false;
-        /// Played only by the classes whose kit has a feather-fall spell (StageScenario's CanFeatherFall), the way
-        /// NeedsStealth restricts the stealth drill. The same caveat applies: a checkpoint of a restricted stage
-        /// holds only the layouts it played, and animus.bootstrap refuses to seed the rest from it in silence.
-        bool NeedsFeatherFall = false;
         std::vector<BlockId> Blocks;    // in layout order: every block any of its arenas needs
         std::vector<ArenaDefinition> Arenas;
         bool InDefaultQueue = true;     // trained by an empty AnimusForge.Queue (false: only when named)
