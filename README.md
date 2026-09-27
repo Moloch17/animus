@@ -96,7 +96,28 @@ Game master commands, not available from the console; the addon does the same fo
 | `.animus reroll <race> <class>` | A new character of the same name |
 | `.animus list` | Your companion and whether its model is loaded |
 | `.animus stage list` | Every curriculum stage and its arenas: the names `Animus.Curriculum.Stage` accepts |
+| `.animus models` | Console too: every class's model for `Animus.Curriculum.Stage` and whether it loads, and if not the first manifest field that differs. Run it after copying models in, before anyone summons |
 | `.animus purge` | Administrator, console too: every account the module made (`ANIMUS<guid>`) deleted with its characters, every companion sent away unsaved, the module's table dropped |
+
+## Testing a model from the forge
+
+1. Export it on the forge: `forge export <scenario>` on its console, or by hand
+   `python -m animus.export --checkpoint runs/<scenario>/best.pt --out <dir> --layouts-dir <OutputDir>/layouts` (the
+   `layouts` directory itself, not the scenario's inside it: that gives the wrong names and no manifests).
+2. Copy every `<class>_<stage>.amdl` **with its `.json`** into `Animus.ModelDir`, and set `Animus.Curriculum.Stage` to
+   the stage they came from.
+3. The layered fields (`forge fieldworld all` → `apps/forge/probes/world/`) go in `Animus.Probe.Dir` (default
+   `<DataDir>/fields`; under Docker the data volume is read-only, so point the key at a mounted directory). Startup
+   logs `Animus ground probe: geometry from <dir>`.
+4. `.animus models` (console) must say every class loads.
+
+A movement stage's model (stages 1-7) travels to an objective. A companion's is its owner, so it walks, jumps, swims
+and flies to you with what it learned; the forge also tells a seat how much longer the walking route is than the
+straight line, which the module does not measure and gives as the straight line. Following, fighting beside you and
+the rest are the companion stage's (`stage16_companion`).
+
+A build outside Docker reads module configs from its compile-time config directory (`<install>/etc/modules`), not
+from beside `worldserver.conf`: a key that logs "Missing property" is a `mod_animus.conf` in the wrong place.
 
 ## Models
 
