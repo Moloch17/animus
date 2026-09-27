@@ -17,6 +17,7 @@
  */
 
 #include "CompanionParty.h"
+#include "ActionCatalog.h"
 #include "BotFactory.h"
 #include "Chat.h"
 #include "ClassAssets.h"
@@ -63,6 +64,14 @@ namespace
     constexpr float PULL_TIME_SCALE_MS = 60000.0f;
     constexpr float COMBAT_TIME_SCALE_MS = 60000.0f;
     constexpr float QUIET_TIME_SCALE_MS = 20000.0f;
+    /// A hidden target's time out of sight saturates here, as the forge's (StageScenario MAX_UNSEEN_TIME_MS).
+    constexpr float MAX_UNSEEN_TIME_MS = 20000.0f;
+
+    /// A breath, as the core times it (Player::HandleDrowning), which SeatView::BreathSpent is a fraction of.
+    uint32 BreathMs()
+    {
+        return std::max<uint32>(1000, sWorld->getIntConfig(CONFIG_WATER_BREATH_TIMER));
+    }
 
     /// Following the owner is the model's job (the companion block's follow press, re-aimed while it runs): nothing
     /// here leashes or teleports a companion that has fallen behind on the owner's map. Only a companion with no
@@ -604,6 +613,7 @@ void Animus::CompanionParty::Decide(Member& member, Player* bot, Player* owner, 
     member.LastPower = current;
 
     Unit* target = CurrentTarget(member, bot);
+    Track(member, bot, target, settings);
     member.Memory.Observe(bot, target, _nowMs);
     SeatView view = View(member, bot, owner, target, settings);
     // The durative action it is running: one press that stands for many decisions (rest, hold an interrupt, keep
@@ -627,8 +637,16 @@ void Animus::CompanionParty::Decide(Member& member, Player* bot, Player* owner, 
 
     SeatActionResult result;
     SeatEncoder::Apply(view, action, result);
+    // Steering is state, not a one-off order: what the feet and the head were told is what the next decision
+    // continues from.
+    member.HeldBearing = view.HeldBearing;
+    member.FacingMode = view.FacingMode;
+    member.Turning = view.Turning;
+    member.PitchTurning = view.PitchTurning;
+    member.Pitch = view.Pitch;
+    member.Facing = view.Facing;
     if (action > 0)
-        member.Memory.Press(layout, uint32(action), _nowMs, settings.Actions, bot, nullptr);
+        member.Memory.Press(layout, uint32(action), _nowMs, settings.Actions, bot, &member.KnownRanks);
     member.TargetSlot = view.TargetSlot;
     member.FriendSlot = view.FriendSlot;
     member.RankTier = view.RankTier;
@@ -677,6 +695,20 @@ Animus::Curriculum::SeatView Animus::CompanionParty::View(Member const& member, 
     view.Build = &member.Build;
     view.Memory = &member.Memory;
     view.Trail = &member.Trail;
+    view.Probe = &member.Probe;
+    view.HeldBearing = member.HeldBearing;
+    view.FacingMode = member.FacingMode;
+    view.Turning = member.Turning;
+    view.PitchTurning = member.PitchTurning;
+    view.Pitch = member.Pitch;
+    view.Facing = member.Facing;
+    view.MoveRate = member.MoveRate;
+    view.CloseRate = member.CloseRate;
+    view.SubmergedTime = member.SubmergedSinceMs && _nowMs > member.SubmergedSinceMs
+        ? float(_nowMs - member.SubmergedSinceMs) / 1000.0f : 0.0f;
+    view.BreathSpent = float(member.BreathSpentMs) / float(BreathMs());
+    view.KnownRanks = &member.KnownRanks;
+    view.JumpDropSearch = settings.Actions.JumpDropSearch;
     view.Options = settings.Options;
     view.NowMs = _nowMs;
     view.LastStepDamage = member.LastStepDamage;
@@ -762,7 +794,103 @@ Animus::Curriculum::SeatView Animus::CompanionParty::View(Member const& member, 
     if (layout.Has(BlockId::World))
         sLife->Sense(bot, view.World);
 
+    // What a player could not know, as the forge hides it from its seats: a target it cannot see is only where it
+    // was last seen, and enemies it cannot see are not in its view.
+    if (bot->IsAlive())
+    {
+        auto const hidden = [bot](Unit const* unit) { return unit && unit != bot && !bot->CanSeeOrDetect(unit); };
+        if (hidden(target))
+        {
+            view.HiddenTarget = target;
+            view.Target = nullptr;
+            view.TargetSeen = member.LastSeenGuid == target->GetGUID();
+            if (view.TargetSeen)
+            {
+                view.LastSeen = member.LastSeen;
+                view.TargetUnseenTime = std::min(1.0f, float(_nowMs - member.LastSeenMs) / MAX_UNSEEN_TIME_MS);
+            }
+        }
+        for (uint32 i = 0; i < view.EnemyCount; ++i)
+            if (hidden(view.Enemies[i]))
+                view.Enemies[i] = nullptr;
+        view.OpponentHidden = hidden(view.Opponent);
+    }
+
     return view;
+}
+
+void Animus::CompanionParty::Track(Member& member, Player* bot, Unit* target, Settings const& settings) const
+{
+    // The facing it steers by is its own, seeded from the character the first time: a default of 0 would aim it
+    // due east.
+    if (!member.FacingSeeded)
+    {
+        member.Facing = bot->GetOrientation();
+        member.FacingSeeded = true;
+    }
+
+    // In water, as the client would say: Player::SetInWater is only called from the movement opcode handler, and a
+    // companion sends none, so the core would think it dry for good -- and launch every swim at run speed.
+    LiquidData const liquid = bot->GetMap()->GetLiquidData(bot->GetPhaseMask(), bot->GetPositionX(),
+        bot->GetPositionY(), bot->GetPositionZ(), bot->GetCollisionHeight(), {});
+    bool const swimming = (liquid.Status & MAP_LIQUID_STATUS_SWIMMING) != 0;
+    bot->SetInWater(swimming);
+    bot->SetSwim(swimming);
+
+    // Breath, as the forge's seats keep it: spent under water, back ten times as fast above it, none spent under
+    // a water-breathing aura.
+    if (bot->IsUnderWater())
+    {
+        if (!member.SubmergedSinceMs)
+            member.SubmergedSinceMs = std::max<uint64>(1, _nowMs);
+        if (bot->HasWaterBreathingAura())
+            member.BreathSpentMs = 0;
+        else
+            member.BreathSpentMs += settings.DecisionMs;
+    }
+    else
+    {
+        member.SubmergedSinceMs = 0;
+        member.BreathSpentMs -= std::min(member.BreathSpentMs, 10 * settings.DecisionMs);
+    }
+
+    // Where its target was last seen.
+    if (target && bot->CanSeeOrDetect(target))
+    {
+        member.LastSeenGuid = target->GetGUID();
+        member.LastSeen.Relocate(target);
+        member.LastSeenMs = _nowMs;
+    }
+
+    // Whether its legs are getting anywhere (the forge's StageScenario::TrackMotion).
+    constexpr uint64 MARK_MS = 1000;
+    constexpr float RUN_SPEED = 7.0f;
+    float const x = bot->GetPositionX();
+    float const y = bot->GetPositionY();
+    if (member.MotionHasLast)
+        member.MotionTravelled += std::hypot(x - member.MotionLastX, y - member.MotionLastY);
+    member.MotionLastX = x;
+    member.MotionLastY = y;
+    member.MotionHasLast = true;
+
+    float const range = target ? bot->GetExactDist2d(target) : -1.0f;
+    if (!member.MotionMarkMs || _nowMs < member.MotionMarkMs)
+    {
+        member.MotionMarkMs = std::max<uint64>(1, _nowMs);
+        member.MotionMarkTravelled = member.MotionTravelled;
+        member.MotionMarkRange = range;
+        return;
+    }
+    if (_nowMs - member.MotionMarkMs < MARK_MS)
+        return;
+
+    float const seconds = float(_nowMs - member.MotionMarkMs) / 1000.0f;
+    member.MoveRate = (member.MotionTravelled - member.MotionMarkTravelled) / (seconds * RUN_SPEED);
+    member.CloseRate = member.MotionMarkRange >= 0.0f && range >= 0.0f
+        ? (member.MotionMarkRange - range) / (seconds * RUN_SPEED) : 0.0f;
+    member.MotionMarkMs = _nowMs;
+    member.MotionMarkTravelled = member.MotionTravelled;
+    member.MotionMarkRange = range;
 }
 
 void Animus::CompanionParty::RecordDamageDealt(ObjectGuid bot, ObjectGuid victim, uint32 damage)
@@ -1003,6 +1131,14 @@ bool Animus::CompanionParty::Talent(std::string_view name, uint32 talentId, bool
 
 void Animus::CompanionParty::RefreshBuild(Member& member, Player* bot) const
 {
+    // The highest rank it knows of each catalog spell, which the encoders ask for three times an action a decision;
+    // only a new build (talents, a level, trainer spells) changes it.
+    std::vector<ActionCatalog::Action> const& actions = member.L->Catalog().Actions();
+    member.KnownRanks.assign(actions.size(), nullptr);
+    for (ActionCatalog::Action const& action : actions)
+        if (action.Type == ActionCatalog::Kind::Spell)
+            member.KnownRanks[action.Index] = ActionCatalog::KnownRank(bot, action.FirstRank);
+
     TalentBuilder const& talents = *member.L->Assets->Talents;
     CompanionTalents::Snapshot const known = CompanionTalents::Take(bot);
 

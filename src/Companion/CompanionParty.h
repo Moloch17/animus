@@ -200,6 +200,39 @@ namespace Animus
             /// Where it has been (MovementTrail), sampled in place by the move block as a forge seat's is: the
             /// model plays with what it trained with. Mutable because it is a cache and View reads a const member.
             mutable Curriculum::MovementTrail Trail;
+            /// The ground around it, marched out and reused until it has moved or turned enough (the move block's
+            /// cache, as a forge seat's): read from the forge's layered fields (Animus.Probe.Source).
+            mutable Curriculum::GroundProbe Probe;
+            /// How it is steering, carried from one decision to the next as a forge seat's is: without it a held
+            /// bearing is forgotten before it is walked twice and the facing actions have nothing to act on.
+            uint8 HeldBearing = 0xFF;
+            uint8 FacingMode = 0xFF;
+            int8 Turning = 0;
+            int8 PitchTurning = 0;
+            float Pitch = 0.0f;
+            float Facing = 0.0f;
+            bool FacingSeeded = false;
+            /// Whether its legs are getting anywhere (SeatView::MoveRate, CloseRate), as the forge's TrackMotion
+            /// measures it: distance covered and the range to its target, marked about once a second.
+            float MotionLastX = 0.0f;
+            float MotionLastY = 0.0f;
+            bool MotionHasLast = false;
+            float MotionTravelled = 0.0f;
+            uint64 MotionMarkMs = 0;
+            float MotionMarkTravelled = 0.0f;
+            float MotionMarkRange = -1.0f;
+            float MoveRate = 0.0f;
+            float CloseRate = 0.0f;
+            /// Water as the core keeps it: when its head went under (0 while up), and the breath spent, running up
+            /// under water and back ten times as fast above it (Player::HandleDrowning).
+            uint64 SubmergedSinceMs = 0;
+            uint32 BreathSpentMs = 0;
+            /// Where its target was last seen, for a target that has since vanished (stealth, invisibility).
+            ObjectGuid LastSeenGuid;
+            Position LastSeen;
+            uint64 LastSeenMs = 0;
+            /// The highest rank it knows of each catalog spell, resolved when its build changes (RefreshBuild).
+            std::vector<SpellInfo const*> KnownRanks;
             MlpPolicy::State Policy;            // what its model carries between decisions (memory, goal)
             int32 Goal = Curriculum::NO_GOAL;   // ... the goal of it, as its teammates see it
             bool ModelErrorLogged = false;
@@ -228,6 +261,9 @@ namespace Animus
         void Decide(Member& member, Player* bot, Player* owner, MlpPolicy& policy, Settings const& settings);
         /// The forge's pull target: the selected enemy, else the nearest living one (which becomes the selection).
         [[nodiscard]] Unit* CurrentTarget(Member& member, Player* bot) const;
+        /// What the forge's seats keep between decisions and the client would otherwise tell the core: its facing,
+        /// in-water state, breath, the last sight of its target and the rates its legs cover ground at.
+        void Track(Member& member, Player* bot, Unit* target, Settings const& settings) const;
         [[nodiscard]] Curriculum::SeatView View(Member const& member, Player* bot, Player* owner, Unit* target,
         Settings const& settings) const;
         /// Potions, bandages, stones and food for the member, topped up (the forge stocks every episode).
