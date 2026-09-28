@@ -140,19 +140,20 @@ function(AnimusLibRequire dependent bundleDir)
   endforeach()
 
   # The ground probe reads the forge's layered fields and probe tables, which are zstd-compressed (LayeredField,
-  # ProbeBake). A stock core does not link zstd, so the library does: the static archive first, so the worldserver
-  # needs no libzstd at run time (install libzstd-dev, or zstd-devel, to build).
-  get_property(zstdLinked GLOBAL PROPERTY ANIMUS_LIB_ZSTD_LINKED)
-  if(NOT zstdLinked)
-    set_property(GLOBAL PROPERTY ANIMUS_LIB_ZSTD_LINKED TRUE)
-    find_path(ANIMUS_ZSTD_INCLUDE_DIR zstd.h)
-    find_library(ANIMUS_ZSTD_LIBRARY NAMES libzstd.a zstd)
-    if(NOT ANIMUS_ZSTD_INCLUDE_DIR OR NOT ANIMUS_ZSTD_LIBRARY)
-      message(FATAL_ERROR "animus-lib needs zstd for the ground probe's field files: install libzstd-dev (Debian, "
-        "Ubuntu) or zstd-devel (Fedora), or set ANIMUS_ZSTD_INCLUDE_DIR and ANIMUS_ZSTD_LIBRARY")
+  # ProbeBake). The library carries zstd itself (deps/zstd: the official single-file build), so a realm builds with
+  # nothing installed and no change to its core or its image. Its symbols are hidden: the MySQL client library links
+  # the system's libzstd, and a second, exported copy in the worldserver would stand in for it.
+  if(NOT TARGET animus_zstd)
+    add_library(animus_zstd STATIC "${bundleDir}/deps/zstd/zstd.c")
+    set_target_properties(animus_zstd PROPERTIES C_VISIBILITY_PRESET hidden POSITION_INDEPENDENT_CODE ON FOLDER "modules")
+    # zstd.h marks its API visibility("default") unless these are defined; empty, the preset above decides.
+    target_compile_definitions(animus_zstd PUBLIC ZSTDLIB_VISIBLE= ZSTDERRORLIB_VISIBLE= ZDICTLIB_VISIBLE=
+      ZSTDLIB_HIDDEN= ZDICTLIB_HIDDEN=)
+    target_include_directories(animus_zstd PUBLIC "${bundleDir}/deps/zstd")
+    if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+      target_compile_options(animus_zstd PRIVATE -O3 -w)
     endif()
-    target_include_directories(modules PRIVATE "${ANIMUS_ZSTD_INCLUDE_DIR}")
-    target_link_libraries(modules PRIVATE "${ANIMUS_ZSTD_LIBRARY}")
+    target_link_libraries(modules PRIVATE animus_zstd)
   endif()
 
   # The loader registers the training half's core hooks only when that half is compiled (animus_lib_loader.cpp).

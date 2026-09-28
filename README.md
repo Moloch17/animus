@@ -46,7 +46,8 @@ your players go to. A companion on a grid with no field keeps its last reading u
 logged once. `Animus.Probe.Source` must be the probe the models were trained with (their manifest names it; the
 forge's default is `geometry`).
 
-Building needs zstd (the field files are compressed): `libzstd-dev` on Debian and Ubuntu, `zstd-devel` on Fedora.
+The field files are zstd-compressed; the module carries zstd itself (`animus-lib/deps/zstd`, compiled in with its
+symbols hidden), so a realm needs nothing installed and no change to its core or its Docker image.
 
 ## Updating animus-lib
 

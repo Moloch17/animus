@@ -1,0 +1,6 @@
+zstd 1.5.7 (https://github.com/facebook/zstd, BSD licence: LICENSE), as its own single-file build makes it:
+build/single_file_libs/create_single_file_library.sh -> zstd.c; zstd.h and zstd_errors.h from lib/. Release tarball
+sha256 eb33e51f49a15e023950cd7825ca74a4a2b43db8354825ac24fc1b7ee09e6fa3.
+
+Compiled into the module (cmake/AnimusLibDependency.cmake) so a realm needs no zstd installed; its symbols are
+hidden, so it never stands in for the system libzstd that the MySQL client library links.
