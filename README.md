@@ -100,6 +100,15 @@ Game master commands, not available from the console; the addon does the same fo
 | `.animus models` | Console too: every class's model for `Animus.Curriculum.Stage` and whether it loads, and if not the first manifest field that differs. Run it after copying models in, before anyone summons |
 | `.animus purge` | Administrator, console too: every account the module made (`ANIMUS<guid>`) deleted with its characters, every companion sent away unsaved, the module's table dropped |
 
+## Dungeon party fill
+
+Entering a five-player dungeon alone, or as its group's leader, fills the group to five
+(`Animus.PartyFill.Enable`): a tank if nobody present can hold a pull, a healer if nobody can heal,
+then damage dealers. Each member's role is read off its talents, not its class, and your companion
+counts as a member. The new members are of your level and faction, are never saved, and stay behind
+when you leave the dungeon alive. They play with the configured stage's models, so they only tank and
+heal well with a stage trained for party combat.
+
 ## Testing a model from the forge
 
 1. Export it on the forge: `forge export <scenario>` on its console, or by hand

@@ -20,6 +20,7 @@
 #define ANIMUS_COMPANION_PARTY_H
 
 #include "CompanionRegistry.h"
+#include "ClassAssets.h"
 #include "CompanionTalents.h"
 #include "Layout.h"
 #include "MlpPolicy.h"
@@ -98,6 +99,14 @@ namespace Animus
         bool Add(Player* owner, Curriculum::Layout const& layout, uint8 race, std::string const& name,
             uint32 account, std::string& message);
 
+        /// A temporary party member (Animus.PartyFill): a character of `layout` and spec `specIndex`, the owner's level,
+        /// on no account and never saved -- it exists while the owner is in the dungeon it was made for, and goes with
+        /// RemoveMembers(true). It joins the owner's group and plays like a companion, but it is not the owner's
+        /// companion: the addon, `.animus list` and the one-companion rule never see it. False with `message` set
+        /// when refused.
+        bool AddFiller(Player* owner, Curriculum::Layout const& layout, uint8 race, std::string const& name,
+            uint32 account, uint8 specIndex, std::string& message);
+
         /// A companion character loaded from the database (CompanionLoader) joins: placed beside the owner, into
         /// the group, its build read off it, as `record` remembers it. False with `message` set when it could not
         /// be placed; the bot is then the caller's to discard.
@@ -114,6 +123,18 @@ namespace Animus
 
         /// Take every companion out of the group and the world.
         void DestroyAll();
+        /// Take out of the group and the world, unsaved, the temporary members (`temporary`) or the owner's own
+        /// companion (not `temporary`; Save it first to keep it).
+        void RemoveMembers(bool temporary);
+        /// The owner's own companions (not the temporary members): what "summoned" means.
+        [[nodiscard]] std::size_t Companions() const;
+        [[nodiscard]] bool HasFillers() const { return _members.size() > Companions(); }
+        /// What a member of the party can do (its Aptitude, as read off its build), if `bot` is one.
+        [[nodiscard]] Curriculum::Aptitude const* AptitudeOf(ObjectGuid bot) const;
+        /// A character's talents as a build of `assets`' tree (CompanionTalents::Take): a companion's, or a real
+        /// player's when the party is filled by role.
+        [[nodiscard]] static Curriculum::TalentBuilder::Build ReadBuild(Curriculum::ClassAssets const& assets,
+            Player* player);
 
         /// Take one companion, by name, out of the group and the world, saved first (Save). False with `message`
         /// set for a name that is not a companion's.
@@ -236,6 +257,7 @@ namespace Animus
             MlpPolicy::State Policy;            // what its model carries between decisions (memory, goal)
             int32 Goal = Curriculum::NO_GOAL;   // ... the goal of it, as its teammates see it
             bool ModelErrorLogged = false;
+            bool Temporary = false;             // a party filler (AddFiller), never saved
             bool Parked = false;                // out of the world while the owner flies or rides a vehicle
             /// The owner edited its talents, its pet's or its gear: LevelUp keeps them (and only spends the new
             /// points) instead of building the character again from scratch.

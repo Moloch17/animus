@@ -52,6 +52,11 @@ namespace Animus
         /// ("geometry"), its probe tables ("baked", fields where a grid has none) or live collision ("live") -- and
         /// the directory the field and table files are in. Load configures the stores from these, ahead of any
         /// layout: a model's manifest names its probe, so a model trained on the fields is refused under "live".
+        /// Animus.PartyFill.Enable: when a group's leader (or a player alone) enters a five-man dungeon, the group is
+        /// topped up to five with temporary members in the roles it lacks -- one to hold the pull, one to keep the
+        /// others up, the rest damage -- read off every member's talents, the owner's companion included.
+        bool PartyFill = true;
+
         std::string ProbeSource = "geometry";
         std::string ProbeDir;
         uint32 ProbeCacheGrids = 64;

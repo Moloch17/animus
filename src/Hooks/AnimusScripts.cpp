@@ -179,9 +179,13 @@ namespace
             { PLAYERHOOK_ON_LOGOUT, PLAYERHOOK_CAN_PLAYER_USE_PRIVATE_CHAT, PLAYERHOOK_ON_DELETE,
                 PLAYERHOOK_CAN_SEND_MAIL, PLAYERHOOK_CAN_GIVE_MAIL_REWARD_AT_GIVE_LEVEL,
                 PLAYERHOOK_ON_BEFORE_ACHI_COMPLETE, PLAYERHOOK_ON_PLAYER_QUEST_ACCEPT,
-                PLAYERHOOK_ON_QUEST_ABANDON }) { }
+                PLAYERHOOK_ON_QUEST_ABANDON, PLAYERHOOK_ON_MAP_CHANGED }) { }
 
         void OnPlayerLogout(Player* player) override { sAnimusMod->OnPlayerLogout(player); }
+
+        /// Into a five-player dungeon, the group is filled out to a tank, a healer and damage (Animus.PartyFill.Enable);
+        /// out of it, the temporary members stay behind.
+        void OnPlayerMapChanged(Player* player) override { sAnimusMod->OnPlayerMapChanged(player); }
 
         /// The owner's quests are its companions' too (Animus.Life.Quests): taken with the owner, dropped with it.
         void OnPlayerQuestAccept(Player* player, Quest const* quest) override

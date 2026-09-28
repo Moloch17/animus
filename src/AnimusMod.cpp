@@ -20,11 +20,13 @@
 #include "LifeService.h"
 #include "AccountMgr.h"
 #include "AnimusAddon.h"
+#include "BotAccounts.h"
 #include "BotFactory.h"
 #include "CharacterCache.h"
 #include "Chat.h"
 #include "CompanionLoader.h"
 #include "DatabaseEnv.h"
+#include "Group.h"
 #include "ClassAssets.h"
 #include "ClassProfile.h"
 #include "Log.h"
@@ -144,6 +146,21 @@ void Animus::AnimusMod::OnUpdate(uint32 diff)
 {
     CompanionLoader::Update();
 
+    if (!_pendingFill.empty())
+    {
+        std::vector<ObjectGuid> due;
+        for (auto& [owner, ms] : _pendingFill)
+            if ((ms -= int32(diff)) <= 0)
+                due.push_back(owner);
+        for (ObjectGuid const& owner : due)
+        {
+            _pendingFill.erase(owner);
+            Player* player = ObjectAccessor::FindPlayer(owner);
+            if (player && player->IsInWorld() && !player->IsBeingTeleported() && _config.Enable && _config.PartyFill)
+                FillParty(player);
+        }
+    }
+
     if (_parties.empty())
         return;
 
@@ -175,7 +192,7 @@ void Animus::AnimusMod::OnShutdown()
 Animus::CompanionParty* Animus::AnimusMod::PartyOf(Player* owner, std::string& message)
 {
     auto const party = _parties.find(owner->GetGUID());
-    if (party == _parties.end() || !party->second->Size())
+    if (party == _parties.end() || !party->second->Companions())
     {
         message = _registry.Find(owner->GetGUID()) ? "Your companion is not summoned." : "You have no companion.";
         return nullptr;
@@ -282,7 +299,8 @@ bool Animus::AnimusMod::Create(Player* owner, std::string name, std::string_view
 
     // Written as a login's character is. The save's statements exist on the asynchronous connection only, so the
     // transaction goes through the worker; a load that follows queues behind it there.
-    Player* bot = ObjectAccessor::FindConnectedPlayer(party->GetBotGUIDs().front());
+    // The member just added: the last, after any temporary ones the owner's dungeon already has.
+    Player* bot = ObjectAccessor::FindConnectedPlayer(party->GetBotGUIDs().back());
     CharacterDatabaseTransaction trans = CharacterDatabase.BeginTransaction();
     bot->SaveToDB(trans, true, false);
     CharacterDatabase.CommitTransaction(trans);
@@ -351,7 +369,7 @@ bool Animus::AnimusMod::Summon(Player* owner, std::string& message)
         return false;
     }
 
-    if (auto const party = _parties.find(owner->GetGUID()); party != _parties.end() && party->second->Size())
+    if (auto const party = _parties.find(owner->GetGUID()); party != _parties.end() && party->second->Companions())
     {
         message = "Your companion is already with you.";
         return false;
@@ -430,7 +448,7 @@ bool Animus::AnimusMod::Dismiss(Player* owner, std::string& message)
     if (!PartyOf(owner, message))
         return false;
 
-    SaveParty(owner->GetGUID());
+    PutAway(owner->GetGUID(), true);
     message = "Companion dismissed.";
     return true;
 }
@@ -458,7 +476,7 @@ bool Animus::AnimusMod::Rename(Player* owner, std::string name, std::string& mes
     std::string ignored;
     bool const wasOut = PartyOf(owner, ignored) != nullptr;
     if (wasOut)
-        SaveParty(owner->GetGUID());
+        PutAway(owner->GetGUID(), true);
 
     CompanionRegistry::Rename(*record, name);
     message = Acore::StringFormat("Your companion is now called {}.", name);
@@ -510,7 +528,7 @@ bool Animus::AnimusMod::Reroll(Player* owner, std::string_view race, std::string
 
     // The old character goes, unsaved (nothing of it is kept), and a new one of the same name takes its place.
     std::string const name = character->Name;
-    RemoveParty(owner->GetGUID());
+    PutAway(owner->GetGUID(), false);
     CompanionRegistry::DeleteCharacter(*record);
     _registry.Erase(owner->GetGUID(), false);
     LOG_INFO("module.animus", "{} rerolled companion {} as a {} {}", owner->GetName(), name, race, playerClass);
@@ -706,7 +724,219 @@ std::vector<std::string> Animus::AnimusMod::StageList() const
 
 void Animus::AnimusMod::OnPlayerLogout(Player* player)
 {
+    _filledInstance.erase(player->GetGUID());
+    _pendingFill.erase(player->GetGUID());
     SaveParty(player->GetGUID());
+}
+
+void Animus::AnimusMod::PutAway(ObjectGuid owner, bool save)
+{
+    auto const party = _parties.find(owner);
+    if (party == _parties.end())
+        return;
+    if (!party->second->HasFillers())
+    {
+        if (save)
+            SaveParty(owner);
+        else
+            RemoveParty(owner);
+        return;
+    }
+
+    // The companion goes; the temporary members stay with the owner until it leaves their dungeon.
+    if (CompanionRegistry::Record* record = _registry.Find(owner); record && save)
+    {
+        party->second->Save(*record);
+        _registry.Update(*record);
+    }
+    party->second->RemoveMembers(false);
+    std::erase_if(_partyByBot, [](auto const& entry) { return !entry.second->HasBot(entry.first); });
+}
+
+void Animus::AnimusMod::OnPlayerMapChanged(Player* player)
+{
+    if (!player || _partyByBot.contains(player->GetGUID()) || IsCompanion(player->GetGUID()))
+        return;
+
+    ObjectGuid const guid = player->GetGUID();
+    Map* map = player->GetMap();
+    bool const dungeon = map && map->IsDungeon() && !map->IsRaid();
+
+    // Leaving the dungeon the group was filled for, its temporary members go. Not as a ghost: releasing in a dungeon
+    // puts the owner outside at a graveyard, and it runs back in to its corpse.
+    if (auto const filled = _filledInstance.find(guid); filled != _filledInstance.end()
+        && (!dungeon || map->GetInstanceId() != filled->second) && player->IsAlive())
+    {
+        _filledInstance.erase(filled);
+        if (auto const party = _parties.find(guid); party != _parties.end() && party->second->HasFillers())
+        {
+            party->second->RemoveMembers(true);
+            std::erase_if(_partyByBot, [](auto const& entry) { return !entry.second->HasBot(entry.first); });
+            if (!party->second->Size())
+                RemoveParty(guid);
+            ChatHandler(player->GetSession()).SendSysMessage("Your temporary party members stay behind in the dungeon.");
+        }
+    }
+
+    if (_config.Enable && _config.PartyFill && dungeon && !_filledInstance.contains(guid))
+        _pendingFill[guid] = 2000;
+}
+
+std::string Animus::AnimusMod::FillerName()
+{
+    // Two or three syllables of a fantasy name, capitalized, that no character has and the core accepts.
+    static constexpr std::array<char const*, 24> FIRST = { "Ael", "Bra", "Cor", "Dra", "Eld", "Fen", "Gal", "Hal",
+        "Isa", "Jor", "Kel", "Lor", "Mar", "Nor", "Ora", "Pel", "Quin", "Ros", "Syl", "Tor", "Ul", "Val", "Wyn", "Zar" };
+    static constexpr std::array<char const*, 20> MIDDLE = { "a", "e", "i", "o", "an", "en", "ar", "or", "is", "el",
+        "ith", "on", "ra", "ri", "ul", "ae", "ia", "ed", "in", "ae" };
+    static constexpr std::array<char const*, 20> LAST = { "dor", "wyn", "ric", "las", "mir", "nor", "thas", "vin",
+        "ren", "dan", "sa", "ra", "lin", "gar", "mon", "thil", "ven", "rah", "dis", "mus" };
+    for (uint32 attempt = 0; attempt < 100; ++attempt)
+    {
+        std::string name = std::string(FIRST[urand(0, FIRST.size() - 1)]) + (urand(0, 1) ? MIDDLE[urand(0,
+            MIDDLE.size() - 1)] : "") + LAST[urand(0, LAST.size() - 1)];
+        if (name.size() > MAX_PLAYER_NAME)
+            continue;
+        if (ObjectMgr::CheckPlayerName(name) == CHAR_NAME_SUCCESS && !sObjectMgr->IsReservedName(name)
+            && !sCharacterCache->GetCharacterGuidByName(name))
+            return name;
+    }
+    return {};
+}
+
+void Animus::AnimusMod::FillParty(Player* owner)
+{
+    namespace Curriculum = Animus::Curriculum;
+    Map* map = owner->GetMap();
+    if (!map || !map->IsDungeon() || map->IsRaid())
+        return;
+
+    // The group's leader fills it (a player alone is its own), and only a five-player group.
+    Group* group = owner->GetGroup();
+    if (group && (!group->IsLeader(owner->GetGUID()) || group->isRaidGroup() || group->isBGGroup()))
+        return;
+    uint32 const members = group ? group->GetMembersCount() : 1;
+    if (members >= MAXGROUPSIZE)
+        return;
+
+    // What the group has: someone to hold the pull, someone to keep the others up. Every member is read off its
+    // talents -- companions and temporary members through their party, real players directly.
+    Curriculum::AptitudeDemand const tanks = Curriculum::AptitudeDemand::HoldsThePull();
+    Curriculum::AptitudeDemand const heals = Curriculum::AptitudeDemand::KeepsThemUp();
+    bool haveTank = false;
+    bool haveHealer = false;
+    auto const read = [&](Curriculum::Aptitude const& aptitude)
+    {
+        if (tanks.MetBy(aptitude))
+            haveTank = true;
+        else if (heals.MetBy(aptitude))
+            haveHealer = true;
+    };
+    std::vector<Player*> present;
+    if (group)
+    {
+        for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+            if (Player* member = ref->GetSource())
+                present.push_back(member);
+    }
+    else
+        present.push_back(owner);
+    for (Player* member : present)
+    {
+        if (auto const party = _partyByBot.find(member->GetGUID()); party != _partyByBot.end())
+        {
+            if (Curriculum::Aptitude const* aptitude = party->second->AptitudeOf(member->GetGUID()))
+                read(*aptitude);
+        }
+        else if (Curriculum::ClassProfile const* profile = Curriculum::ClassAssets::FindProfile(member->getClass()))
+        {
+            Curriculum::ClassAssets const& assets = Curriculum::ClassAssets::For(*profile);
+            read(Curriculum::Aptitude::Of(assets, CompanionParty::ReadBuild(assets, member), member));
+        }
+    }
+
+    std::vector<Curriculum::AptitudeDemand> roles;
+    if (!haveTank)
+        roles.push_back(tanks);
+    if (!haveHealer)
+        roles.push_back(heals);
+    while (roles.size() < MAXGROUPSIZE - members)
+        roles.push_back(Curriculum::AptitudeDemand::Anything());
+    roles.resize(std::min<std::size_t>(roles.size(), MAXGROUPSIZE - members));
+
+    std::unique_ptr<CompanionParty>& party = _parties[owner->GetGUID()];
+    if (!party)
+        party = std::make_unique<CompanionParty>(owner->GetGUID());
+
+    uint8 const level = uint8(owner->GetLevel());
+    std::vector<std::string> joined;
+    for (Curriculum::AptitudeDemand const& role : roles)
+    {
+        bool const damage = !role.Any();
+        // A class of the owner's faction that can take the role at this level, and a spec of it that does: for a
+        // damage seat, one that neither holds the pull nor heals.
+        struct Choice { uint8 Class; std::vector<uint8> Specs; std::vector<uint8> Races; };
+        std::vector<Choice> choices;
+        for (uint8 playerClass : Curriculum::ClassAssets::ClassesFor(level, role))
+        {
+            Curriculum::ClassProfile const* profile = Curriculum::ClassAssets::FindProfile(playerClass);
+            if (!profile)
+                continue;
+            Curriculum::ClassAssets const& assets = Curriculum::ClassAssets::For(*profile);
+            Choice choice{ playerClass, {}, {} };
+            for (uint8 race : assets.Races)
+                if (Player::TeamIdForRace(race) == owner->GetTeamId())
+                    choice.Races.push_back(race);
+            if (choice.Races.empty())
+                continue;
+            if (damage)
+            {
+                for (uint8 spec = 0; spec < assets.SpecAptitudes.size(); ++spec)
+                    if (!tanks.MetBy(assets.SpecAptitudes[spec]) && !heals.MetBy(assets.SpecAptitudes[spec]))
+                        choice.Specs.push_back(spec);
+            }
+            else
+                choice.Specs = assets.SpecsMeeting(role);
+            if (!choice.Specs.empty())
+                choices.push_back(std::move(choice));
+        }
+        if (choices.empty())
+            continue;
+
+        Choice const& choice = choices[urand(0, choices.size() - 1)];
+        Curriculum::ClassProfile const& profile = *Curriculum::ClassAssets::FindProfile(choice.Class);
+        Curriculum::Layout const& layout = LayoutFor(profile);
+        uint8 const spec = choice.Specs[urand(0, choice.Specs.size() - 1)];
+        std::string const name = FillerName();
+        if (name.empty())
+            break;
+        uint32 const account = BotAccounts::BASE + 800000 + (_nextFillerAccount++ % 100000);
+        std::string message;
+        if (!party->AddFiller(owner, layout, choice.Races[urand(0, choice.Races.size() - 1)], name, account, spec,
+            message))
+        {
+            LOG_ERROR("module.animus", "Filling {}'s party: {}", owner->GetName(), message);
+            break;
+        }
+        _partyByBot[party->GetBotGUIDs().back()] = party.get();
+        joined.push_back(Acore::StringFormat("{} ({} {}, {})", name, profile.Specs[spec].Name, profile.Name,
+            role.Any() ? (role.Feature == tanks.Feature ? "tank" : "healer") : "damage"));
+    }
+
+    if (!party->Size())
+    {
+        _parties.erase(owner->GetGUID());
+        return;
+    }
+    _filledInstance[owner->GetGUID()] = map->GetInstanceId();
+    if (!joined.empty())
+    {
+        std::string list;
+        for (std::string const& entry : joined)
+            list += (list.empty() ? "" : ", ") + entry;
+        ChatHandler(owner->GetSession()).SendSysMessage(Acore::StringFormat("Your party is filled for the dungeon: {}.",
+            list));
+    }
 }
 
 void Animus::AnimusMod::RecordDamage(Unit const* attacker, Unit const* victim, uint32 damage, DamageEffectType type)

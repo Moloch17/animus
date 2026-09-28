@@ -75,6 +75,9 @@ namespace Animus
         bool Reroll(Player* owner, std::string_view race, std::string_view playerClass, std::string& message);
         /// The owner character was deleted: their companion character and its account go too.
         void OnOwnerDeleted(ObjectGuid owner);
+        /// A player arrived on a map (Animus.PartyFill): a group's leader entering a five-man dungeon has the group
+        /// topped up by role; leaving it, the temporary members go.
+        void OnPlayerMapChanged(Player* player);
 
         /// Every account and character the module ever made, gone: companions out of the world unsaved, every
         /// `ANIMUS<guid>` account deleted with its characters (orphans of older runs included), the module's table
@@ -161,6 +164,12 @@ namespace Animus
             uint8& raceId, uint8& classId, std::string& message) const;
 
         void RemoveParty(ObjectGuid owner);
+        /// The owner's own companion out of the world -- saved first when `save` -- keeping any temporary members.
+        void PutAway(ObjectGuid owner, bool save);
+        /// Top the owner's group up to five in the roles it lacks, for the dungeon instance it is in.
+        void FillParty(Player* owner);
+        /// A name no character has, for a temporary member.
+        [[nodiscard]] static std::string FillerName();
         void RemoveAll();
 
         /// The layout of a profile at the configured stage, built on first use and kept (companions point at it).
@@ -173,6 +182,11 @@ namespace Animus
 
         std::unordered_map<ObjectGuid, std::unique_ptr<CompanionParty>> _parties;   // by owner
         std::unordered_map<ObjectGuid, CompanionParty*> _partyByBot;
+        std::unordered_map<ObjectGuid, uint32> _filledInstance;     // owner -> the dungeon instance filled for
+        /// Owners who entered a dungeon, and the milliseconds before their group is filled: not while the teleport
+        /// that brought them is still finishing, and after the group's other members have had a moment to arrive.
+        std::unordered_map<ObjectGuid, int32> _pendingFill;
+        uint32 _nextFillerAccount = 0;
     };
 }
 

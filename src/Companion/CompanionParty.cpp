@@ -111,7 +111,7 @@ Animus::CompanionParty::~CompanionParty() = default;
 bool Animus::CompanionParty::Add(Player* owner, Layout const& layout, uint8 race, std::string const& name,
     uint32 account, std::string& message)
 {
-    if (_members.size() >= MAX_COMPANIONS)
+    if (Companions() >= MAX_COMPANIONS)
     {
         message = "You already have a companion.";
         return false;
@@ -162,10 +162,47 @@ bool Animus::CompanionParty::Add(Player* owner, Layout const& layout, uint8 race
     return true;
 }
 
+bool Animus::CompanionParty::AddFiller(Player* owner, Layout const& layout, uint8 race, std::string const& name,
+    uint32 account, uint8 specIndex, std::string& message)
+{
+    ClassProfile const& profile = *layout.Profile;
+    ClassAssets const& assets = *layout.Assets;
+
+    BotFactory::BotSpec spec;
+    spec.Name = name;
+    spec.Race = race;
+    spec.Class = profile.Class;
+    spec.Gender = uint8(urand(GENDER_MALE, GENDER_FEMALE));
+    spec.Level = std::max<uint8>(owner->GetLevel(), assets.Kit->MinLevel());
+    spec.AccountId = account;
+
+    Player* bot = BotFactory::Create(spec);
+    if (!bot || !BotFactory::PlaceNear(bot, owner))
+    {
+        message = "A party member could not be created; see the server log.";
+        return false;
+    }
+
+    // Built as a companion is (Add), in the spec its role asked for, and never given a save timer: nothing of it
+    // reaches the database.
+    bot->InitTalentForLevel();
+    SeatCharacter::Configure(bot, layout, specIndex, false);
+    if (!Join(owner, bot, layout, specIndex, message))
+    {
+        BotFactory::Destroy(bot);
+        return false;
+    }
+
+    _members.back()->Temporary = true;
+    LOG_INFO("module.animus", "{}'s party filled with {} ({} {}), level {}", owner->GetName(), bot->GetName(),
+        profile.Specs[specIndex].Name, profile.Name, bot->GetLevel());
+    return true;
+}
+
 bool Animus::CompanionParty::Attach(Player* owner, Player* bot, Layout const& layout, Record const& record,
     std::string& message)
 {
-    if (_members.size() >= MAX_COMPANIONS)
+    if (Companions() >= MAX_COMPANIONS)
     {
         message = "You already have a companion.";
         return false;
@@ -265,7 +302,7 @@ void Animus::CompanionParty::Save(Record& record)
     for (std::unique_ptr<Member> const& member : _members)
     {
         Player* bot = FindBot(member->Bot);
-        if (!bot)
+        if (!bot || member->Temporary)
             continue;
 
         // The save's statements exist on the asynchronous connection only (a direct commit asserts on the first
@@ -1061,6 +1098,8 @@ std::vector<Animus::CompanionParty::Summary> Animus::CompanionParty::Summarize(M
     summaries.reserve(_members.size());
     for (std::unique_ptr<Member> const& member : _members)
     {
+        if (member->Temporary)
+            continue;
         std::string error;
         bool const loaded = models.Find(*member->L, error) != nullptr;
         summaries.push_back({ member->Name, member->L->Profile->Name, member->L->Profile->Specs[member->Spec].Name,
@@ -1077,6 +1116,37 @@ std::vector<std::string> Animus::CompanionParty::Describe(ModelLibrary& models) 
             companion.Class, companion.Spec, companion.ModelName, companion.Model,
             companion.Parked ? " (waiting for you to land)" : ""));
     return lines;
+}
+
+void Animus::CompanionParty::RemoveMembers(bool temporary)
+{
+    std::vector<std::unique_ptr<Member>> gone;
+    for (auto itr = _members.begin(); itr != _members.end();)
+    {
+        if ((*itr)->Temporary == temporary)
+        {
+            gone.push_back(std::move(*itr));
+            itr = _members.erase(itr);
+        }
+        else
+            ++itr;
+    }
+    for (std::unique_ptr<Member> const& member : gone)
+        Destroy(*member, nullptr);
+}
+
+std::size_t Animus::CompanionParty::Companions() const
+{
+    return std::size_t(std::count_if(_members.begin(), _members.end(),
+        [](std::unique_ptr<Member> const& member) { return !member->Temporary; }));
+}
+
+Animus::Curriculum::Aptitude const* Animus::CompanionParty::AptitudeOf(ObjectGuid bot) const
+{
+    for (std::unique_ptr<Member> const& member : _members)
+        if (member->Bot == bot)
+            return &member->Apt;
+    return nullptr;
 }
 
 void Animus::CompanionParty::DestroyAll()
@@ -1169,8 +1239,14 @@ void Animus::CompanionParty::RefreshBuild(Member& member, Player* bot) const
         if (action.Type == ActionCatalog::Kind::Spell)
             member.KnownRanks[action.Index] = ActionCatalog::KnownRank(bot, action.FirstRank);
 
-    TalentBuilder const& talents = *member.L->Assets->Talents;
-    CompanionTalents::Snapshot const known = CompanionTalents::Take(bot);
+    member.Build = ReadBuild(*member.L->Assets, bot);
+    member.Apt = Aptitude::Of(*member.L->Assets, member.Build, bot);
+}
+
+Animus::Curriculum::TalentBuilder::Build Animus::CompanionParty::ReadBuild(ClassAssets const& assets, Player* player)
+{
+    TalentBuilder const& talents = *assets.Talents;
+    CompanionTalents::Snapshot const known = CompanionTalents::Take(player);
 
     TalentBuilder::Build build;
     build.Ranks.assign(talents.Talents().size(), 0);
@@ -1187,9 +1263,7 @@ void Animus::CompanionParty::RefreshBuild(Member& member, Player* bot) const
         for (uint8 rank = 0; rank < itr->second; ++rank)
             build.Order.push_back({ i, rank });
     }
-
-    member.Build = std::move(build);
-    member.Apt = Aptitude::Of(*member.L->Assets, member.Build, bot);
+    return build;
 }
 
 bool Animus::CompanionParty::PetTalent(std::string_view name, uint32 talentId, bool learn, std::string& message)

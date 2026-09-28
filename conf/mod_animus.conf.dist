@@ -15,6 +15,19 @@
 
 Animus.Enable = 1
 
+#
+#    Animus.PartyFill.Enable
+#        Description: A player entering a five-player dungeon (alone, or as its group's leader) gets
+#                     its group filled to five: a tank and a healer if nobody present is one, then
+#                     damage. Roles are read off each member's talents, the player's companion
+#                     counts as a member, and the new members are of the player's level and faction.
+#                     They are temporary: never saved, and gone when the player leaves the dungeon
+#                     alive (a released ghost running back in keeps them).
+#        Default:     1 - (Enabled)
+#                     0 - (Disabled)
+
+Animus.PartyFill.Enable = 1
+
 ###################################################################################################
 # MODELS
 #
