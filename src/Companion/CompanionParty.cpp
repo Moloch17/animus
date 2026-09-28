@@ -680,7 +680,7 @@ void Animus::CompanionParty::Decide(Member& member, Player* bot, Player* owner, 
     member.HeldBearing = view.HeldBearing;
     member.FacingMode = view.FacingMode;
     member.TurnLeft = view.TurnLeft;
-    member.PitchTurning = view.PitchTurning;
+    member.PitchTarget = view.PitchTarget;
     member.Pitch = view.Pitch;
     member.Facing = view.Facing;
     if (action > 0)
@@ -738,7 +738,7 @@ Animus::Curriculum::SeatView Animus::CompanionParty::View(Member const& member, 
     view.FacingMode = member.FacingMode;
     view.TurnLeft = member.TurnLeft;
     view.Steering = &member.Steering;
-    view.PitchTurning = member.PitchTurning;
+    view.PitchTarget = member.PitchTarget;
     view.Pitch = member.Pitch;
     view.Facing = member.Facing;
     view.MoveRate = member.MoveRate;

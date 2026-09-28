@@ -419,7 +419,7 @@ Animus.Curriculum.Actions.Repeat = 0.02
 Animus.Curriculum.Actions.RepeatWindowMs = 10000
 #   presses of one action within the window that cost nothing
 Animus.Curriculum.Actions.RepeatFree = 3
-#   per turn chosen against one chosen within Options.JitterWindowMs, and per half turn a bearing pressed within it
+#   per turn or pitch chosen against one chosen within Options.JitterWindowMs, and per half turn a bearing pressed within it
 #   swings the feet round from the last one (training only: steering that does not commit)
 Animus.Curriculum.Actions.Jitter = 0.02
 #   how far below where a jump would come down the ground is looked for before the jump is refused (yards). The only
@@ -605,10 +605,10 @@ Animus.Curriculum.Options.MoveBearingMs = 3000
 #   the clock the seat observes runs out as the turn does. A turn is chosen whole (15, 45, 90 or 135 degrees either
 #   way, or about) and ends when it has turned, not on this.
 Animus.Curriculum.Options.MoveTurnMs = 250
-#   ... and how long a pitch keeps being held (ms): the length of a glance rather than of a journey. What it has
-#   tilted to is kept when it stops, the way a mouse leaves the camera where it was left.
-Animus.Curriculum.Options.MovePitchMs = 750
-#   ... and how soon after a turn or a bearing another that undoes it counts as jitter (ms; Actions.Jitter). The forge
+#   ... and the same for each 30-degree step of a chosen pitch (ms). A pitch is chosen whole (every 15 degrees from a
+#   60 degree dive to a 60 degree climb) and ends when it gets there.
+Animus.Curriculum.Options.MovePitchMs = 250
+#   ... and how soon after a turn, a pitch or a bearing another that undoes it counts as jitter (ms; Actions.Jitter). The forge
 #   charges it in training; nothing is charged in play, but the seat observes its turns as it was trained to
 Animus.Curriculum.Options.JitterWindowMs = 750
 

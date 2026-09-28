@@ -232,7 +232,7 @@ namespace Animus
             /// The last turn and bearing, which the move block keeps to tell a steady course from a wobble. Nothing
             /// is charged in play; kept so a model sees its turns as the forge's seats saw theirs.
             mutable Curriculum::SteerMemory Steering;
-            int8 PitchTurning = 0;
+            float PitchTarget = 0.0f;
             float Pitch = 0.0f;
             float Facing = 0.0f;
             bool FacingSeeded = false;
