@@ -26,10 +26,10 @@ They run the same encoding code as training, so a model sees and does exactly wh
    none, and never overwrites one; under Docker the container copies it to your config volume on its first start.
    AzerothCore reads a module's settings from the `.conf` only: without it every `Animus.*` key logs "Missing
    property" at startup.
-4. Models: installing copies the ones in `models/` (`stage16_companion`'s, one per class, each `.amdl` with its
-   `.json` manifest) to `<config dir>/modules/animus`, which reaches a Docker runtime image (only `bin/` and `etc/`
-   do). Companions play them by default (`Animus.Curriculum.Stage = stage16_companion`). Models you place by hand go
-   in `<DataDir>/animus`, which is searched first; the startup log names the directory used.
+4. Models: installing copies the ones in `models/` (exported from the forge, each `.amdl` with its `.json` manifest;
+   the repository ships none) to `<config dir>/modules/animus`, which reaches a Docker runtime image (only `bin/` and
+   `etc/` do). Companions play the stage `Animus.Curriculum.Stage` names (default `stage16_companion`). Models you
+   place by hand go in `<DataDir>/animus`, which is searched first; the startup log names the directory used.
 
 Don't build it into the forge core; a forge build disables it. Where the models come from, and how `DataDir` and the
 install step line up, is in
