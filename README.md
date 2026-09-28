@@ -8,7 +8,7 @@ changes, together with animus-lib (`animus-lib/`), the forge's curriculum runtim
   choose, on an account made for it, saved in the characters database between summons. It joins your party at your
   level and levels up with you, follows you through loading screens, into instances and onto transports, and plays
   its class model in every fight. It gets no mail and no achievements.
-- **The Animus addon** (`interface_addon/animus_addon/Animus`): the window players create, summon, rename and
+- **The Animus addon** (`interface_addon/Animus`): the window players create, summon, rename and
   manage it from.
 They run the same encoding code as training, so a model sees and does exactly what it trained on.
 
@@ -61,7 +61,7 @@ forge-only call only fails at link).
 
 ## The addon
 
-Players use the module through the Animus addon in `interface_addon/animus_addon/Animus`: copy that folder into
+Players use the module through the Animus addon in `interface_addon/Animus`: copy that folder into
 the client's `Interface/AddOns/` and type `/animus` (or click the minimap button). Until they have a companion the
 window creates one from a name, a race of their faction and a class that race can be; then it summons and
 dismisses it, renames it, or gives it a new race and class (a new character of the same name), and the unit menu
@@ -71,7 +71,7 @@ from your bags onto its character pane goes on it, with what it wore coming back
 the character.
 The addon talks to the module over addon whispers the player sends to themselves (prefix `Animus`), which need
 `AddonChannel = 1` in `worldserver.conf` (the default); no security is required. The messages are documented in
-[its README](interface_addon/animus_addon/Animus/README.md), for anyone writing another client.
+[its README](interface_addon/Animus/README.md), for anyone writing another client.
 
 ## Companions in the database
 
