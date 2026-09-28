@@ -228,7 +228,10 @@ namespace Animus
             /// bearing is forgotten before it is walked twice and the facing actions have nothing to act on.
             uint8 HeldBearing = 0xFF;
             uint8 FacingMode = 0xFF;
-            int8 Turning = 0;
+            float TurnLeft = 0.0f;
+            /// The last turn and bearing, which the move block keeps to tell a steady course from a wobble. Nothing
+            /// is charged in play; kept so a model sees its turns as the forge's seats saw theirs.
+            mutable Curriculum::SteerMemory Steering;
             int8 PitchTurning = 0;
             float Pitch = 0.0f;
             float Facing = 0.0f;
