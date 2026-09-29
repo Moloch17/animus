@@ -126,6 +126,7 @@ void Animus::AnimusConfig::Load()
     Curriculum::CurriculumTuning const curriculum = Curriculum::CurriculumTuning::Load("Animus.Curriculum.");
     CurriculumActions = curriculum.Actions;
     CurriculumOptions = curriculum.Options;
+    CurriculumDirector = curriculum.Director;
 
     Life.Enable = sConfigMgr->GetOption<bool>("Animus.Life.Enable", true);
     Life.Quests = sConfigMgr->GetOption<bool>("Animus.Life.Quests", true);

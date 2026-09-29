@@ -29,7 +29,7 @@
 namespace
 {
     constexpr char AMDL_MAGIC[4] = { 'A', 'M', 'D', 'L' };
-    constexpr uint32 AMDL_VERSION = 4;
+    constexpr uint32 AMDL_VERSION = 5;
 
     /// Guards against a corrupt header asking for gigabytes.
     constexpr uint32 MAX_LAYER_WIDTH = 1 << 16;
@@ -316,6 +316,47 @@ bool Animus::MlpPolicy::Load(std::string const& path, std::string const& scenari
         }
     }
 
+    // The director's sets.
+    uint8 hasSets = 0;
+    uint32 embed = 0;
+    SetEncoder members, enemies;
+    std::vector<float> poolWeight, poolBias;
+    std::vector<Pointer> pointers;
+    if (!reader.Read(hasSets))
+    {
+        error = Acore::StringFormat("{} is truncated before its sets", path);
+        return false;
+    }
+    if (hasSets)
+    {
+        bool ok = reader.Read(embed) && embed > 0 && embed <= MAX_LAYER_WIDTH;
+        for (SetEncoder* set : { &members, &enemies })
+            ok = ok && reader.Read(set->First) && reader.Read(set->Slots) && reader.Read(set->Width)
+                && reader.Read(set->Present) && set->Width <= MAX_LAYER_WIDTH && set->Present < set->Width
+                && set->First + set->Slots * set->Width <= obsDim
+                && reader.ReadFloats(set->W1, std::size_t(embed) * set->Width) && reader.ReadFloats(set->B1, embed)
+                && reader.ReadFloats(set->W2, std::size_t(embed) * embed) && reader.ReadFloats(set->B2, embed);
+        uint32 const adapterOut = layers.front().Out;
+        ok = ok && reader.ReadFloats(poolWeight, std::size_t(adapterOut) * 4 * embed)
+            && reader.ReadFloats(poolBias, adapterOut);
+        uint32 count = 0;
+        ok = ok && reader.Read(count) && count <= 16;
+        for (uint32 i = 0; ok && i < count; ++i)
+        {
+            Pointer pointer;
+            ok = reader.Read(pointer.First) && reader.Read(pointer.Over) && pointer.Over < 2
+                && reader.ReadFloats(pointer.Weight, std::size_t(embed) * featureWidth)
+                && reader.ReadFloats(pointer.Bias, embed)
+                && pointer.First + (pointer.Over ? enemies.Slots : members.Slots) <= numActions;
+            pointers.push_back(std::move(pointer));
+        }
+        if (!ok)
+        {
+            error = Acore::StringFormat("{} is truncated or inconsistent in its sets", path);
+            return false;
+        }
+    }
+
     if (!reader.AtEnd())
     {
         error = Acore::StringFormat("{} has trailing data", path);
@@ -362,6 +403,19 @@ bool Animus::MlpPolicy::Load(std::string const& path, std::string const& scenari
     _slowBiasIn = std::move(slowBiasIn);
     _slowBiasHidden = std::move(slowBiasHidden);
     _slowGates.assign(std::size_t(3) * slowSize, 0.0f);
+    _sets = hasSets != 0;
+    _embed = embed;
+    _members = std::move(members);
+    _enemies = std::move(enemies);
+    _poolWeight = std::move(poolWeight);
+    _poolBias = std::move(poolBias);
+    _pointers = std::move(pointers);
+    _memberCodes.assign(std::size_t(_members.Slots) * embed, 0.0f);
+    _enemyCodes.assign(std::size_t(_enemies.Slots) * embed, 0.0f);
+    _pooled.assign(std::size_t(4) * embed, 0.0f);
+    _setExtra.assign(_sets ? _layers.front().Out : 0, 0.0f);
+    _query.assign(embed, 0.0f);
+    _setHidden.assign(embed, 0.0f);
     _slowHiddenGates.assign(std::size_t(3) * slowSize, 0.0f);
     _slowOut.assign(slowSize, 0.0f);
     widest = std::max(widest, recurrentSize);
@@ -412,6 +466,13 @@ void Animus::MlpPolicy::Unload()
     _slowGates.clear();
     _slowHiddenGates.clear();
     _slowOut.clear();
+    _sets = false;
+    _embed = 0;
+    _members = SetEncoder();
+    _enemies = SetEncoder();
+    _poolWeight.clear();
+    _poolBias.clear();
+    _pointers.clear();
     _obsDim = 0;
     _numAgents = 0;
     _numActions = 0;
@@ -460,6 +521,59 @@ int32 Animus::MlpPolicy::Decide(float const* obs, uint8 const* mask, State* stat
     std::fill(in + _obsDim, in + _obsDim + _numAgents, 0.0f);
     in[_obsDim] = 1.0f;
 
+    // The director's sets: every slot through its set's encoder, the present ones pooled (mean and max) onto the
+    // first layer.
+    if (_sets)
+    {
+        uint32 const embed = _embed;
+        auto const encode = [&](SetEncoder const& set, std::vector<float>& codes, float* meanOut, float* maxOut)
+        {
+            std::vector<float>& hidden = _setHidden;
+            uint32 present = 0;
+            std::fill(meanOut, meanOut + embed, 0.0f);
+            std::fill(maxOut, maxOut + embed, -1.0f);
+            for (uint32 slot = 0; slot < set.Slots; ++slot)
+            {
+                float const* raw = obs + set.First + slot * set.Width;
+                float* code = codes.data() + std::size_t(slot) * embed;
+                for (uint32 row = 0; row < embed; ++row)
+                {
+                    float sum = set.B1[row];
+                    for (uint32 col = 0; col < set.Width; ++col)
+                        sum += set.W1[std::size_t(row) * set.Width + col] * raw[col];
+                    hidden[row] = std::tanh(sum);
+                }
+                for (uint32 row = 0; row < embed; ++row)
+                {
+                    float sum = set.B2[row];
+                    for (uint32 col = 0; col < embed; ++col)
+                        sum += set.W2[std::size_t(row) * embed + col] * hidden[col];
+                    code[row] = std::tanh(sum);
+                }
+                if (raw[set.Present] > 0.5f)
+                {
+                    ++present;
+                    for (uint32 row = 0; row < embed; ++row)
+                    {
+                        meanOut[row] += code[row];
+                        maxOut[row] = std::max(maxOut[row], code[row]);
+                    }
+                }
+            }
+            for (uint32 row = 0; row < embed; ++row)
+                meanOut[row] /= float(std::max<uint32>(1, present));
+        };
+        encode(_members, _memberCodes, _pooled.data(), _pooled.data() + embed);
+        encode(_enemies, _enemyCodes, _pooled.data() + 2 * embed, _pooled.data() + 3 * embed);
+        for (uint32 row = 0; row < _setExtra.size(); ++row)
+        {
+            float sum = _poolBias[row];
+            for (uint32 col = 0; col < 4 * embed; ++col)
+                sum += _poolWeight[std::size_t(row) * 4 * embed + col] * _pooled[col];
+            _setExtra[row] = sum;
+        }
+    }
+
     // Every layer but the action head, which reads the features the memory and the goal are applied to.
     std::size_t const trunkLayers = _layers.size() - 1;
     for (std::size_t index = 0; index < trunkLayers; ++index)
@@ -471,6 +585,8 @@ int32 Animus::MlpPolicy::Decide(float const* obs, uint8 const* mask, State* stat
             float sum = layer.Bias[row];
             for (uint32 col = 0; col < layer.In; ++col)
                 sum += weights[col] * in[col];
+            if (_sets && index == 0)
+                sum += _setExtra[row];
 
             out[row] = std::tanh(sum);
         }
@@ -617,11 +733,14 @@ int32 Animus::MlpPolicy::Decide(float const* obs, uint8 const* mask, State* stat
             {
                 if (block && targets > 1 && block[kind] <= 0.5f)
                     continue;
+                // No goal block (the director) with a goal space: only the first goal, which means none.
+                if (!block && targets > 1 && kind > 0)
+                    continue;
                 float const kindScore = dot(_kindWeight.data() + std::size_t(kind) * width, _kindBias[kind]);
                 for (uint32 target = 0; target < targets; ++target)
                 {
                     std::size_t const joint = std::size_t(kind) * targets + target;
-                    bool const allowed = joint == 0 || (_accepts[joint]
+                    bool const allowed = joint == 0 || (block != nullptr || targets <= 1) && (_accepts[joint]
                         && (!block || targets <= 1 || block[_goalCount + target] > 0.5f));
                     if (!allowed)
                         continue;
@@ -665,6 +784,27 @@ int32 Animus::MlpPolicy::Decide(float const* obs, uint8 const* mask, State* stat
                 sum += weights[col] * in[col];
 
             out[row] = sum;
+        }
+
+        // The director's per-slot actions: each slot's encoding against a query from the features.
+        for (Pointer const& pointer : _pointers)
+        {
+            for (uint32 row = 0; row < _embed; ++row)
+            {
+                float sum = pointer.Bias[row];
+                for (uint32 col = 0; col < head.In; ++col)
+                    sum += pointer.Weight[std::size_t(row) * head.In + col] * in[col];
+                _query[row] = sum;
+            }
+            SetEncoder const& set = pointer.Over ? _enemies : _members;
+            std::vector<float> const& codes = pointer.Over ? _enemyCodes : _memberCodes;
+            for (uint32 slot = 0; slot < set.Slots; ++slot)
+            {
+                float score = 0.0f;
+                for (uint32 row = 0; row < _embed; ++row)
+                    score += codes[std::size_t(slot) * _embed + row] * _query[row];
+                out[pointer.First + slot] = score;
+            }
         }
 
         std::swap(in, out);

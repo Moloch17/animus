@@ -410,6 +410,7 @@ Animus::CompanionParty::Status Animus::CompanionParty::Update(uint32 diff, Setti
             present.push_back(bot);
 
     UpdatePull(owner, present);
+    Direct(owner, settings, models, diff);
 
     for (std::unique_ptr<Member> const& member : _members)
         UpdateMember(*member, FindBot(member->Bot), owner, diff, settings, models);
@@ -528,9 +529,216 @@ void Animus::CompanionParty::UpdatePull(Player* owner, std::vector<Player*> cons
         member->TargetSlot = 0;
 }
 
+uint32 Animus::CompanionParty::DirectedSlot(ObjectGuid bot) const
+{
+    for (uint32 slot = 0; slot < _directed.size(); ++slot)
+        if (_directed[slot] == bot)
+            return slot;
+    return Curriculum::DirectorLayout::DIRECTOR_SEATS;
+}
+
+void Animus::CompanionParty::Direct(Player* owner, Settings const& settings, ModelLibrary& models, uint32 diff)
+{
+    namespace DL = Curriculum::DirectorLayout;
+    _sinceDirectorMs += diff;
+    if (_sinceDirectorMs < settings.DecisionMs)
+        return;
+    _sinceDirectorMs %= settings.DecisionMs;
+
+    // Who it commands: the companions in the world whose layouts read orders -- two or more, or there is no group.
+    std::array<Unit*, DL::DIRECTOR_SEATS> members{};
+    std::array<Member const*, DL::DIRECTOR_SEATS> of{};
+    uint32 own = 0;
+    for (std::unique_ptr<Member> const& member : _members)
+        if (Player* bot = FindBot(member->Bot); bot && bot->IsInWorld() && !member->Parked && member->L
+            && member->L->Has(Curriculum::BlockId::Order) && own < members.size())
+        {
+            of[own] = member.get();
+            members[own++] = bot;
+        }
+    std::string error;
+    MlpPolicy* policy = settings.DirectorLayout && own >= 2 ? models.Find(*settings.DirectorLayout, error) : nullptr;
+    if (!policy)
+    {
+        _directed.clear();
+        _orders = Curriculum::DirectorOrders();
+        return;
+    }
+    _directed.assign(own, ObjectGuid::Empty);
+    for (uint32 slot = 0; slot < own; ++slot)
+        _directed[slot] = members[slot]->GetGUID();
+
+    std::array<Unit*, Curriculum::PACK_SLOTS> enemies{};
+    uint32 const count = std::min<uint32>(uint32(_enemies.size()), Curriculum::PACK_SLOTS);
+    for (uint32 slot = 0; slot < count; ++slot)
+        enemies[slot] = ObjectAccessor::GetUnit(*owner, _enemies[slot]);
+
+    // Orders to the dead, or about the dead, end.
+    auto const alive = [&](ObjectGuid guid)
+    {
+        Unit const* unit = guid ? ObjectAccessor::GetUnit(*owner, guid) : nullptr;
+        return unit && unit->IsAlive();
+    };
+    if (_orders.Focus && !alive(_orders.Focus))
+    {
+        _orders.Focus.Clear();
+        _orders.Changed(_directorSteps);
+    }
+    for (uint32 slot = 0; slot < own; ++slot)
+    {
+        Curriculum::DirectorOrders::MemberOrder& order = _orders.Members[slot];
+        if (order.Kind != Curriculum::OrderKind::None && (!members[slot]->IsAlive()
+            || (order.Target && !alive(order.Target))))
+            order = Curriculum::DirectorOrders::MemberOrder();
+    }
+
+    Curriculum::DirectorRules::PrepareTurn(_orders, _directorSteps, members.data(), own, enemies.data(), count,
+        settings.Director.ClockDecisions, settings.Director.LowHealth);
+
+    // What it sees: the party and its enemies, from the world as it is (a companion's director sees what the party
+    // sees; there is no fog to remember through).
+    DL::DirectorView view;
+    view.Active = true;
+    view.MayCall = _orders.CallsLeft > 0;
+    view.CallsLeft = _orders.CallsLeft;
+    view.ByEvent = _orders.ByEvent;
+    view.Raid = own > Curriculum::GROUP_SEATS;
+    view.Groups = (own + Curriculum::GROUP_SEATS - 1) / Curriculum::GROUP_SEATS;
+    view.EpisodeTime = _enemies.empty() ? 0.0f : std::min(1.0f, float(_nowMs - _pullStartMs) / 300000.0f);
+    view.Posture = _orders.Posture;
+    view.Rally = _orders.Rally;
+    view.HasFocus = bool(_orders.Focus);
+    view.Anchor = _orders.Anchor;
+    view.Offset = _orders.Offset;
+    view.Ring = _orders.Ring;
+    view.PlacesAllowed = false;             // the module resolves no places
+    view.Address = _orders.Address;
+    view.AddressGroup = _orders.AddressGroup;
+    view.SinceCall = std::min(1.0f, float(_directorSteps - std::min(_directorSteps, _orders.CalledStep))
+        / DL::CALL_AGE_SCALE);
+
+    float centreX = 0.0f, centreY = 0.0f, health = 0.0f;
+    uint32 standing = 0;
+    for (uint32 slot = 0; slot < own; ++slot)
+        if (members[slot]->IsAlive())
+        {
+            centreX += members[slot]->GetPositionX();
+            centreY += members[slot]->GetPositionY();
+            ++standing;
+        }
+    if (standing)
+    {
+        centreX /= float(standing);
+        centreY /= float(standing);
+    }
+    float enemyX = 0.0f, enemyY = 0.0f;
+    uint32 seen = 0;
+    for (uint32 slot = 0; slot < count; ++slot)
+        if (enemies[slot])
+        {
+            enemyX += enemies[slot]->GetPositionX();
+            enemyY += enemies[slot]->GetPositionY();
+            ++seen;
+        }
+    float const axis = seen ? std::atan2(enemyY / float(seen) - centreY, enemyX / float(seen) - centreX) : 0.0f;
+    auto const place = [&](Unit const* unit, float& spread, float& sine, float& cosine)
+    {
+        float const dx = unit->GetPositionX() - centreX, dy = unit->GetPositionY() - centreY;
+        spread = std::min(1.0f, std::sqrt(dx * dx + dy * dy) / DL::DISTANCE_SCALE);
+        float const angle = std::atan2(dy, dx) - axis;
+        sine = std::sin(angle);
+        cosine = std::cos(angle);
+    };
+    Unit const* focus = _orders.Focus ? ObjectAccessor::GetUnit(*owner, _orders.Focus) : nullptr;
+
+    view.SeatCount = own;
+    for (uint32 slot = 0; slot < own; ++slot)
+    {
+        DL::DirectorView::SeatSlot& out = view.Seats[slot];
+        Player* bot = members[slot]->ToPlayer();
+        out.Present = true;
+        out.Alive = bot->IsAlive();
+        out.Health = bot->GetHealthPct() / 100.0f;
+        Powers const power = bot->getPowerType();
+        out.Power = bot->GetMaxPower(power) ? float(bot->GetPower(power)) / float(bot->GetMaxPower(power)) : 0.0f;
+        out.Apt = of[slot]->Apt;
+        out.InCombat = bot->IsInCombat();
+        out.Casting = bot->IsNonMeleeSpellCast(false, false, true);
+        place(bot, out.Spread, out.BearingSin, out.BearingCos);
+        out.Group = slot / Curriculum::GROUP_SEATS;
+        out.Addressed = _orders.Address != Curriculum::OrderSource::Side
+            && Curriculum::DirectorRules::Addressed(_orders, slot);
+        uint32 attackers = 0;
+        for (uint32 e = 0; e < count; ++e)
+            attackers += enemies[e] && enemies[e]->IsAlive() && enemies[e]->GetVictim() == bot ? 1 : 0;
+        out.Attacked = float(attackers) / float(Curriculum::PACK_SLOTS);
+        out.Order = _orders.Members[slot].Kind;
+        out.OrderAge = out.Order == Curriculum::OrderKind::None ? 0.0f : std::min(1.0f,
+            float(_directorSteps - std::min(_directorSteps, _orders.Members[slot].IssuedStep)) / DL::CALL_AGE_SCALE);
+        if (focus)
+        {
+            out.ToFocus = std::min(1.0f, bot->GetExactDist2d(focus) / DL::DISTANCE_SCALE);
+            out.OnFocus = bot->GetVictim() == focus;
+        }
+        if (out.Alive)
+            health += out.Health;
+    }
+    view.OwnStanding = float(standing) / float(own);
+    view.OwnHealth = standing ? health / float(standing) : 0.0f;
+
+    std::array<ObjectGuid, Curriculum::PACK_SLOTS> callable{};
+    view.EnemyCount = count;
+    float enemyHealth = 0.0f;
+    uint32 enemyStanding = 0;
+    for (uint32 slot = 0; slot < count; ++slot)
+    {
+        Unit* enemy = enemies[slot];
+        DL::DirectorView::EnemySlot& out = view.Enemies[slot];
+        if (!enemy)
+            continue;
+        out.Present = true;
+        out.Seen = true;
+        out.Alive = enemy->IsAlive();
+        out.Health = enemy->GetHealthPct() / 100.0f;
+        out.InCombat = enemy->IsInCombat();
+        out.Casting = enemy->IsNonMeleeSpellCast(false, false, true);
+        out.IsFocus = enemy->GetGUID() == _orders.Focus;
+        place(enemy, out.Spread, out.BearingSin, out.BearingCos);
+        uint32 ordered = 0;
+        for (uint32 m = 0; m < own; ++m)
+        {
+            out.OnSeat = out.OnSeat || enemy->GetVictim() == members[m];
+            ordered += _orders.Members[m].Kind != Curriculum::OrderKind::None
+                && _orders.Members[m].Target == enemy->GetGUID() ? 1 : 0;
+        }
+        out.Ordered = std::min(1.0f, float(ordered) / float(Curriculum::GROUP_SEATS));
+        if (out.Alive)
+        {
+            callable[slot] = enemy->GetGUID();
+            enemyHealth += out.Health;
+            ++enemyStanding;
+        }
+    }
+    view.EnemyStanding = count ? float(enemyStanding) / float(count) : 0.0f;
+    view.EnemyHealth = enemyStanding ? enemyHealth / float(enemyStanding) : 0.0f;
+
+    // Every decision, so its memory runs as a forge director's does; its call counts only on its turn.
+    _directorObs.assign(DL::OBS_COUNT, 0.0f);
+    _directorMask.assign(DL::ACTION_COUNT, 0);
+    DL::Observe(view, _directorObs.data(), _directorMask.data());
+    int32 const action = policy->Decide(_directorObs.data(), _directorMask.data(), &_directorState);
+    Curriculum::DirectorRules::Apply(_orders, _directorSteps, action, members.data(), own, callable.data(), count,
+        true);
+    ++_directorSteps;
+}
+
 void Animus::CompanionParty::StartEpisode(Player* owner)
 {
     _episodeStarted = true;
+    // A new fight: the director starts with nothing said and nothing remembered, as a forge episode does.
+    _orders = Curriculum::DirectorOrders();
+    _directorState.Clear();
+    _directorSteps = 0;
     _episodeStartMs = _nowMs;
     _pullsCleared = 0;
 
@@ -930,6 +1138,29 @@ Animus::Curriculum::SeatView Animus::CompanionParty::View(Member const& member, 
             if (hidden(view.Enemies[i]))
                 view.Enemies[i] = nullptr;
         view.OpponentHidden = hidden(view.Opponent);
+    }
+
+    // What the party's director asks of this companion (Direct), as a forge seat reads its side's order.
+    if (uint32 const slot = DirectedSlot(member.Bot); slot < _directed.size())
+    {
+        Curriculum::DirectorOrders::MemberOrder const& own = _orders.Members[slot];
+        SeatView::TeamOrder& order = view.Order;
+        order.Active = true;
+        order.Posture = _orders.Posture;
+        order.Rally = _orders.Rally;
+        order.Focus = _orders.Focus ? ObjectAccessor::GetUnit(*bot, _orders.Focus) : nullptr;
+        order.Kind = own.Kind;
+        order.Target = own.Target ? ObjectAccessor::GetUnit(*bot, own.Target) : nullptr;
+        order.Objective = own.Objective;
+        order.Source = own.Source;
+        order.Age = std::min(1.0f, float(_directorSteps - std::min(_directorSteps, own.IssuedStep))
+            / Curriculum::DirectorLayout::CALL_AGE_SCALE);
+        order.IsDuty = own.Kind == Curriculum::OrderKind::Interrupt || own.Kind == Curriculum::OrderKind::Control;
+        if (order.Focus && !bot->CanSeeOrDetect(order.Focus))
+        {
+            order.FocusUnseen = true;
+            order.Focus = nullptr;
+        }
     }
 
     return view;

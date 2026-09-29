@@ -26,6 +26,7 @@
 #include "MlpPolicy.h"
 #include "ObjectGuid.h"
 #include "CurriculumTuning.h"
+#include "DirectorOrders.h"
 #include "SeatMemory.h"
 #include "SeatView.h"
 #include "Supplies.h"
@@ -68,6 +69,10 @@ namespace Animus
             uint32 DecisionMs = 250;
             Curriculum::CurriculumTuning::ActionTuning Actions;     // pacing and locks, as the forge's seats have
             Curriculum::CurriculumTuning::OptionTuning Options;     // how long each durative action may run
+            /// The party's director (Component E): its tuning, and its layout when the stage has one. Null: the
+            /// party has no director, and each companion reads no order.
+            Curriculum::CurriculumTuning::DirectorTuning Director;
+            Curriculum::Layout const* DirectorLayout = nullptr;
         };
 
         /// What a companion is, for `.animus list` and the addon.
@@ -308,6 +313,12 @@ namespace Animus
         void LevelUp(Member& member, Player* bot, Player* owner) const;
         [[nodiscard]] uint8 LevelFor(Member const& member, Player* owner) const;
         void StartEpisode(Player* owner);
+        /// The party's director (Component E), once a decision: when it gets a turn (the forge's rules,
+        /// DirectorRules), what it sees of the party and its enemies, and the calls it makes. Only for two or more
+        /// companions whose layouts read orders, and only with the stage's director model there.
+        void Direct(Player* owner, Settings const& settings, ModelLibrary& models, uint32 diff);
+        /// A companion's slot among those the director commands, or DIRECTOR_SEATS when it is not one.
+        [[nodiscard]] uint32 DirectedSlot(ObjectGuid bot) const;
         static void Destroy(Player* bot);
         /// LevelUp for a companion the owner edited: talents and pet talents taken again at the new level, new
         /// points spent along the standard build, the owner's gear kept.
@@ -319,6 +330,15 @@ namespace Animus
         // The current pull, and the episode it belongs to.
         std::array<Unit*, Curriculum::PACK_SLOTS> _enemyUnits{};    // resolved this update
         std::vector<ObjectGuid> _enemies;                   // slot order
+        /// The director: the standing order and its turn, the companions it commands in slot order, its memory,
+        /// its decision count and clock, and its observation.
+        Curriculum::DirectorOrders _orders;
+        std::vector<ObjectGuid> _directed;
+        MlpPolicy::State _directorState;
+        uint32 _directorSteps = 0;
+        uint32 _sinceDirectorMs = 0;
+        std::vector<float> _directorObs;
+        std::vector<uint8> _directorMask;
         uint64 _nowMs = 0;
         uint64 _pullStartMs = 0;
         uint64 _episodeStartMs = 0;

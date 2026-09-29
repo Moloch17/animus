@@ -138,6 +138,26 @@ namespace Animus
         std::vector<float> _slowWeightIn, _slowWeightHidden, _slowBiasIn, _slowBiasHidden;
         std::vector<float> _slowGates, _slowHiddenGates, _slowOut;
 
+        /// The director's members and enemies as sets (the learner's DirectorSets): a shared encoder per set, their
+        /// pooled encodings added to the first layer, and pointer heads scoring the per-slot actions.
+        struct SetEncoder
+        {
+            uint32 First = 0, Slots = 0, Width = 0, Present = 0;
+            std::vector<float> W1, B1, W2, B2;
+        };
+        struct Pointer
+        {
+            uint32 First = 0;
+            uint32 Over = 0;                     // 0 members, 1 enemies
+            std::vector<float> Weight, Bias;
+        };
+        bool _sets = false;
+        uint32 _embed = 0;
+        SetEncoder _members, _enemies;
+        std::vector<float> _poolWeight, _poolBias;
+        std::vector<Pointer> _pointers;
+        std::vector<float> _memberCodes, _enemyCodes, _pooled, _setExtra, _query, _setHidden;   // scratch
+
         std::vector<float> _scratchA;
         std::vector<float> _scratchB;
         std::vector<float> _gates;        // the GRU's input part

@@ -29,6 +29,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <optional>
 #include <unordered_map>
 #include <vector>
 
@@ -174,11 +175,14 @@ namespace Animus
 
         /// The layout of a profile at the configured stage, built on first use and kept (companions point at it).
         Curriculum::Layout const& LayoutFor(Curriculum::ClassProfile const& profile);
+        /// The configured stage's director layout, or null when its arenas are not directed.
+        Curriculum::Layout const* DirectorLayout();
 
         AnimusConfig _config;
         ModelLibrary _models;
         CompanionRegistry _registry;
         std::unordered_map<std::string, Curriculum::Layout> _layouts;       // by model name
+        std::optional<Curriculum::Layout> _directorLayout;
 
         std::unordered_map<ObjectGuid, std::unique_ptr<CompanionParty>> _parties;   // by owner
         std::unordered_map<ObjectGuid, CompanionParty*> _partyByBot;

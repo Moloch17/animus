@@ -171,7 +171,7 @@ void Animus::AnimusMod::OnUpdate(uint32 diff)
     }
 
     CompanionParty::Settings const settings{ _config.CurriculumDecisionMs, _config.CurriculumActions,
-        _config.CurriculumOptions };
+        _config.CurriculumOptions, _config.CurriculumDirector, DirectorLayout() };
     std::vector<ObjectGuid> gone;
     for (auto const& [owner, party] : _parties)
         if (party->Update(diff, settings, _models) == CompanionParty::Status::Dismiss)
@@ -973,6 +973,21 @@ void Animus::AnimusMod::RemoveAll()
 {
     while (!_parties.empty())
         SaveParty(_parties.begin()->first);
+}
+
+Animus::Curriculum::Layout const* Animus::AnimusMod::DirectorLayout()
+{
+    // The stage's director, when its arenas are directed (a party, a dungeon, a raid): one layout for every party.
+    Curriculum::StageDefinition const* stage = Curriculum::FindStage(_config.CurriculumStage);
+    if (!stage || !stage->AnyArena([](Curriculum::ArenaDefinition const& arena) { return arena.DirectorLearned; }))
+        return nullptr;
+    if (!_directorLayout || _directorLayout->Stage != stage)
+    {
+        _directorLayout = Curriculum::Layout::BuildDirector(*stage);
+        LOG_INFO("module.animus", "Animus built the {} layout (obs {}, actions {})", _directorLayout->ModelName(),
+            _directorLayout->ObsDim, _directorLayout->NumActions);
+    }
+    return &*_directorLayout;
 }
 
 Animus::Curriculum::Layout const& Animus::AnimusMod::LayoutFor(Curriculum::ClassProfile const& profile)
