@@ -406,7 +406,7 @@ Animus::CompanionParty::Status Animus::CompanionParty::Update(uint32 diff, Setti
 
     std::vector<Player*> present;
     for (std::unique_ptr<Member> const& member : _members)
-        if (Player* bot = FindBot(member->Bot); bot->IsInWorld() && bot->GetMap() == owner->GetMap())
+        if (Player* bot = FindBot(member->Bot); bot && bot->IsInWorld() && bot->GetMap() == owner->GetMap())
             present.push_back(bot);
 
     UpdatePull(owner, present);
@@ -447,7 +447,7 @@ void Animus::CompanionParty::UpdatePull(Player* owner, std::vector<Player*> cons
 
     _enemyUnits.fill(nullptr);
     for (uint32 slot = 0; slot < _enemies.size(); ++slot)
-        if (Unit* enemy = ObjectAccessor::GetUnit(*owner, _enemies[slot]); enemy && enemy->IsInWorld()
+        if (Unit* enemy = Curriculum::Encoding::UnitThrough(*owner, _enemies[slot]); enemy && enemy->IsInWorld()
             && enemy->GetMap() == map)
             _enemyUnits[slot] = enemy;
 
@@ -571,12 +571,12 @@ void Animus::CompanionParty::Direct(Player* owner, Settings const& settings, Mod
     std::array<Unit*, Curriculum::PACK_SLOTS> enemies{};
     uint32 const count = std::min<uint32>(uint32(_enemies.size()), Curriculum::PACK_SLOTS);
     for (uint32 slot = 0; slot < count; ++slot)
-        enemies[slot] = ObjectAccessor::GetUnit(*owner, _enemies[slot]);
+        enemies[slot] = Curriculum::Encoding::UnitThrough(*owner, _enemies[slot]);
 
     // Orders to the dead, or about the dead, end.
     auto const alive = [&](ObjectGuid guid)
     {
-        Unit const* unit = guid ? ObjectAccessor::GetUnit(*owner, guid) : nullptr;
+        Unit const* unit = guid ? Curriculum::Encoding::UnitThrough(*owner, guid) : nullptr;
         return unit && unit->IsAlive();
     };
     if (_orders.Focus && !alive(_orders.Focus))
@@ -649,7 +649,7 @@ void Animus::CompanionParty::Direct(Player* owner, Settings const& settings, Mod
         sine = std::sin(angle);
         cosine = std::cos(angle);
     };
-    Unit const* focus = _orders.Focus ? ObjectAccessor::GetUnit(*owner, _orders.Focus) : nullptr;
+    Unit const* focus = _orders.Focus ? Curriculum::Encoding::UnitThrough(*owner, _orders.Focus) : nullptr;
 
     view.SeatCount = own;
     for (uint32 slot = 0; slot < own; ++slot)
@@ -1152,9 +1152,9 @@ Animus::Curriculum::SeatView Animus::CompanionParty::View(Member const& member, 
         order.Active = true;
         order.Posture = _orders.Posture;
         order.Rally = _orders.Rally;
-        order.Focus = _orders.Focus ? ObjectAccessor::GetUnit(*bot, _orders.Focus) : nullptr;
+        order.Focus = _orders.Focus ? Curriculum::Encoding::UnitThrough(*bot, _orders.Focus) : nullptr;
         order.Kind = own.Kind;
-        order.Target = own.Target ? ObjectAccessor::GetUnit(*bot, own.Target) : nullptr;
+        order.Target = own.Target ? Curriculum::Encoding::UnitThrough(*bot, own.Target) : nullptr;
         order.Objective = own.Objective;
         order.Source = own.Source;
         order.Age = std::min(1.0f, float(_directorSteps - std::min(_directorSteps, own.IssuedStep))
