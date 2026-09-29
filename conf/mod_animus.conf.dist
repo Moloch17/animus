@@ -425,6 +425,15 @@ Animus.Curriculum.Actions.RepeatFree = 3
 #   per turn or pitch chosen against one chosen within Options.JitterWindowMs, and per half turn a bearing pressed within it
 #   swings the feet round from the last one (training only: steering that does not commit)
 Animus.Curriculum.Actions.Jitter = 0.02
+#   presses with intent: every spell and step is judged against the goal the seat holds, and one that works against
+#   it is charged this (training only: nothing is charged in play)
+Animus.Curriculum.Actions.Aimless = 0.02
+#   every press but the no-op costs this in training
+Animus.Curriculum.Actions.Effort = 0.002
+#   per second moving in a fight while already at range, in training
+Animus.Curriculum.Actions.Fidget = 0.01
+#   how much a step must close or open the gap to the wanted range to be judged (yards)
+Animus.Curriculum.Actions.IntentSlackYards = 0.5
 #   how far below where a jump would come down the ground is looked for before the jump is refused (yards). The only
 #   limit on a drop: a landing this deep is a fall the seat may choose, and what it costs -- nothing with Slow Fall
 #   or Levitate, health past fourteen yards, death past about seventy -- is the seat's to learn. Only the void is

@@ -236,6 +236,11 @@ namespace Animus
             float Pitch = 0.0f;
             float Facing = 0.0f;
             bool FacingSeeded = false;
+            /// The facing clients have been shown (TurnShown): swung towards the decided one across the world
+            /// ticks of a decision, where the decision itself turns the seat in one step.
+            float ShownFacing = 0.0f;
+            bool ShownSeeded = false;
+            uint32 ShownSinceMs = 0;                // since the last facing packet
             /// Whether its legs are getting anywhere (SeatView::MoveRate, CloseRate), as the forge's TrackMotion
             /// measures it: distance covered and the range to its target, marked about once a second.
             float MotionLastX = 0.0f;
@@ -281,6 +286,8 @@ namespace Animus
 
         /// Refresh the pull: new enemies into free (or dead) slots, and the end of the pull.
         void UpdatePull(Player* owner, std::vector<Player*> const& bots);
+        /// Swing the facing clients see towards the decided one (cosmetic; see the definition).
+        static void TurnShown(Member& member, Player* bot, uint32 diff, Settings const& settings);
         void UpdateMember(Member& member, Player* bot, Player* owner, uint32 diff, Settings const& settings,
             ModelLibrary& models);
         void Decide(Member& member, Player* bot, Player* owner, MlpPolicy& policy, Settings const& settings);

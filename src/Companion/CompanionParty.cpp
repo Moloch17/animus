@@ -36,6 +36,7 @@
 #include "MlpPolicy.h"
 #include "ModelLibrary.h"
 #include "MotionMaster.h"
+#include "MoveBlock.h"
 #include "MoveSpline.h"
 #include "ObjectAccessor.h"
 #include "Pet.h"
@@ -48,6 +49,7 @@
 #include "TravelBlock.h"
 #include "StringFormat.h"
 #include "World.h"
+#include "WorldPacket.h"
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -55,6 +57,9 @@
 
 namespace
 {
+    /// The least time between two cosmetic facing packets for one companion (CompanionParty::TurnShown).
+    constexpr uint32 SHOWN_PACKET_MS = 100;
+
     using namespace Animus::Curriculum;
 
     /// A player character owns one companion. (The party keeps its seats: the model was trained with up to four.)
@@ -534,6 +539,47 @@ void Animus::CompanionParty::StartEpisode(Player* owner)
             Restock(*member, bot, owner);
 }
 
+void Animus::CompanionParty::TurnShown(Member& member, Player* bot, uint32 diff, Settings const& settings)
+{
+    // Cosmetic only: a decision turns a standing seat up to 45 degrees in one step (MoveBlock::TURN_RATE), and a
+    // standing turn reached clients only with the next run, as a snap. Clients are shown the turn swung across
+    // the world ticks at the same rate instead. The seat's own orientation -- what casts, facing checks and the
+    // next observation read -- is the decided one throughout, so play still matches training.
+    float const decided = bot->GetOrientation();
+    if (!member.ShownSeeded || !bot->IsAlive() || !bot->movespline->Finalized())
+    {
+        member.ShownFacing = decided;
+        member.ShownSeeded = true;
+        return;
+    }
+
+    float const left = Position::NormalizeOrientation(decided - member.ShownFacing + float(M_PI)) - float(M_PI);
+    if (std::fabs(left) < 0.01f)
+    {
+        member.ShownSinceMs = 0;
+        return;             // not turning: nothing is sent
+    }
+
+    float const step = Curriculum::MoveBlock::TURN_RATE * float(diff) / float(std::max<uint32>(1, settings.DecisionMs));
+    member.ShownFacing = Position::NormalizeOrientation(member.ShownFacing + std::clamp(left, -step, step));
+
+    // A few packets a decision at most, for realms with hundreds of companions: one every SHOWN_PACKET_MS while a
+    // turn is under way, and the last when it arrives.
+    member.ShownSinceMs += diff;
+    bool const arrived = std::fabs(left) <= step;
+    if (!arrived && member.ShownSinceMs < SHOWN_PACKET_MS)
+        return;
+    member.ShownSinceMs = 0;
+
+    // The shown angle goes out in an ordinary facing packet; the unit's orientation is put back at once.
+    bot->SetOrientation(member.ShownFacing);
+    WorldPacket data(MSG_MOVE_SET_FACING, 64);
+    data << bot->GetPackGUID();
+    bot->BuildMovementPacket(&data);
+    bot->SetOrientation(decided);
+    bot->SendMessageToSet(&data, false);
+}
+
 void Animus::CompanionParty::UpdateMember(Member& member, Player* bot, Player* owner, uint32 diff,
     Settings const& settings, ModelLibrary& models)
 {
@@ -549,6 +595,8 @@ void Animus::CompanionParty::UpdateMember(Member& member, Player* bot, Player* o
             BotFactory::TeleportNear(bot, owner);
         return;
     }
+
+    TurnShown(member, bot, diff, settings);
 
     bool const quiet = _enemies.empty() && !bot->IsInCombat();
 
@@ -657,6 +705,8 @@ void Animus::CompanionParty::Decide(Member& member, Player* bot, Player* owner, 
     // The durative action it is running: one press that stands for many decisions (rest, hold an interrupt, keep
     // range). SeatEncoder starts, runs and stops it as it does for a forge seat.
     view.Option = &member.Option;
+    // The goal it holds shapes what the core block offers, as it does for a forge seat (CoreBlock::GoalCloses).
+    view.Goal = member.Goal;
     SeatEncoder::Observe(view, member.Obs.data(), member.Mask.data());
 
     // Paced and locked actions, as a forge seat's mask has them.

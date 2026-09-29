@@ -339,6 +339,33 @@ namespace Animus::Curriculum
         uint32 TurnReversals = 0;
         float BearingFlips = 0.0f;
         uint32 PitchReversals = 0;
+        // Intent (ActionTuning::Aimless, Effort, Fidget, StageScenario::JudgePress): what is charged at the next
+        // reward, the episode's judged presses by verdict, and a movement press waiting for the reward to see
+        // whether it closed or opened the gap to where the goal wants the seat (MoveGap, yards; negative = none).
+        uint32 StepAimless = 0;
+        uint32 StepEffort = 0;
+        uint32 StepFidgetMs = 0;
+        uint32 AimlessPresses = 0;
+        uint32 EffortPresses = 0;
+        uint32 ServingPresses = 0;
+        uint32 JudgedPresses = 0;
+        uint32 FidgetMs = 0;
+        uint32 CombatMs = 0;
+        uint32 CombatPresses = 0;
+        float MoveGap = -1.0f;
+        bool PendingRepeat = false;             // this press was past the free ones; the verdict decides the charge
+        bool MoveRepeat = false;                // ... and it was a step, settled with the step's verdict
+        int8 FromBehind = -1;                   // the kit has a from-behind spell (1), not (0), not looked yet (-1)
+        // Following (CompanionBlock): runs started or re-aimed, decisions spent following, and the yards to the owner
+        // over them (sum, sum of squares, and how many were within the 3-6 yard band a player keeps).
+        uint32 FollowAims = 0;
+        uint32 FollowDecisions = 0;
+        float FollowDistanceSum = 0.0f;
+        float FollowDistanceSq = 0.0f;
+        uint32 FollowInBand = 0;
+        uint32 MoveStarts = 0;
+        bool WasMoving = false;
+        uint32 StoppedAtMs = 0;
 
         CombatTally Combat;
         RewardLedger Rewards;
@@ -450,6 +477,28 @@ namespace Animus::Curriculum
             TurnReversals = 0;
             BearingFlips = 0.0f;
             PitchReversals = 0;
+            StepAimless = 0;
+            StepEffort = 0;
+            StepFidgetMs = 0;
+            AimlessPresses = 0;
+            EffortPresses = 0;
+            ServingPresses = 0;
+            JudgedPresses = 0;
+            FidgetMs = 0;
+            CombatMs = 0;
+            CombatPresses = 0;
+            MoveGap = -1.0f;
+            PendingRepeat = false;
+            MoveRepeat = false;
+            FromBehind = -1;
+            FollowAims = 0;
+            FollowDecisions = 0;
+            FollowDistanceSum = 0.0f;
+            FollowDistanceSq = 0.0f;
+            FollowInBand = 0;
+            MoveStarts = 0;
+            WasMoving = false;
+            StoppedAtMs = 0;
             Combat = CombatTally();
             Rewards.ResetEpisode();
         }
