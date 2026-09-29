@@ -269,6 +269,10 @@ namespace Animus
             std::vector<SpellInfo const*> KnownRanks;
             MlpPolicy::State Policy;            // what its model carries between decisions (memory, goal)
             int32 Goal = Curriculum::NO_GOAL;   // ... the goal of it, as its teammates see it
+            /// The goal was already true when chosen (as a forge seat's, SeatState::GoalSatisfiedAtChoice): it is
+            /// held until the clock rather than ended, until it stops being true.
+            int32 GoalChecked = Curriculum::NO_GOAL;
+            bool GoalSatisfiedAtChoice = false;
             bool ModelErrorLogged = false;
             bool Temporary = false;             // a party filler (AddFiller), never saved
             bool Parked = false;                // out of the world while the owner flies or rides a vehicle

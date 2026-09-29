@@ -923,6 +923,10 @@ void Animus::CompanionParty::Decide(Member& member, Player* bot, Player* owner, 
         bool reached = false;
         bool possible = false;
         Curriculum::GoalBlock::Status(view, member.Goal, reached, possible);
+        // True already when it was chosen: held, not ended, as a forge seat's is (GoalBlock::Earned).
+        bool fresh = member.GoalChecked != member.Goal;
+        member.GoalChecked = member.Goal;
+        reached = Curriculum::GoalBlock::Earned(reached, fresh, member.GoalSatisfiedAtChoice);
         view.GoalEnded = reached || !possible;
         view.GoalReached = reached;
     }
