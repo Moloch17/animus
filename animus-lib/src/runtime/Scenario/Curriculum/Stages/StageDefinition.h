@@ -54,6 +54,16 @@ namespace Animus::Curriculum
         Quest,          // a quest of the level band, giver to turn-in, in the world's own zone (QuestEncounter)
         Gather,         // a field of the band's herb and ore nodes, with the zone's creatures (GatherEncounter)
         Town,           // a town's traders: sell, repair, restock, dress (TownEncounter)
+        Dummy,          // targets that do not fight back, or barely: the rotation drill (DummyEncounter)
+    };
+
+    /// What the rotation drill's dummy does (ArenaDefinition::Drill, Opposition::Dummy only).
+    enum class DummyDrill : uint8
+    {
+        Still,          // one dummy standing still: the rotation at its simplest
+        Moving,         // wandering dummies, more arriving to switch to
+        Hitting,        // one that hits back and can be killed: output while being hit, the tank's drill
+        Bleeding,       // a still dummy while damage lands on the seat: output while keeping itself up
     };
 
     /// Which real-instance ladder an arena climbs (InstanceBosses.cpp): five-man dungeons across the level bands, or
@@ -76,10 +86,13 @@ namespace Animus::Curriculum
     };
 
     /// Most arenas a stage can mix (the critic state has one column per arena).
-    constexpr uint32 MAX_ARENAS = 12;
+    constexpr uint32 MAX_ARENAS = 16;
 
     /// Most ambushers an arena can have; they take enemy slots the pulls leave free.
     constexpr uint32 MAX_AMBUSHERS = 2;
+
+    /// Most seats that quest alone beside two groups sharing a zone (ArenaDefinition::LoneSeats).
+    constexpr uint32 MAX_LONE_SEATS = 2;
 
     /// One situation an episode of a stage can be: who the seats are, what they fight, and how long it lasts. Every
     /// episode of a stage draws one of its arenas by weight, so one stage (and one policy) can train PvE and PvP
@@ -130,6 +143,12 @@ namespace Animus::Curriculum
         /// Seats a side in a Teams arena: 2 and 3 are the arena formats, 10 a battleground side. Ignored by
         /// every other seat plan.
         uint32 TeamSeats = TEAM_SEATS;
+        /// Two groups sharing a zone (a Teams arena that quests): this many more seats, after the sides', each
+        /// questing alone -- a group of its own with its own quest, no director and no teammates. The solo player a
+        /// group meets in the world, and the commonest claim to share a place with. Ignored by every other arena.
+        uint32 LoneSeats = 0;
+        /// Opposition::Dummy: what the dummy does. Ignored by every other arena.
+        DummyDrill Drill = DummyDrill::Still;
         /// Every pull contains a creature that puts something on the ground (OpponentPool::RandomHazardCaster),
         /// whatever rung the ladder is on. The pack ladder only reaches hazards at rung 3, so a class/role that
         /// stalls below it never meets one; this makes stepping out of a hazard learnable on its own.
@@ -191,6 +210,12 @@ namespace Animus::Curriculum
         /// ten class heads never found the flying mount. Only a Flying arena may set this.
         bool AirOnly = false;
         std::vector<Position> SpawnPoints{};
+        /// The map this arena's episodes are on, when it is not the stage's (0 = the stage's). A stage can then mix
+        /// ground on several maps -- Kalimdor and Outland, a PvP drill's instance and the world -- which is what
+        /// lets one stage replay a whole phase. An arena on a map of its own stands on its own SpawnPoints.
+        uint32 MapId = 0;
+        /// The lowest level this arena's characters may be, over the stage's MinLevel (flying needs 60).
+        uint8 MinLevel = 0;
         /// Ground kept back for evaluation: training never stands here. Empty means the arena has no control of
         /// its own, and evaluation runs on the same ground training does -- which measures nothing about whether
         /// the policy learned to read terrain or merely learned these particular banks.

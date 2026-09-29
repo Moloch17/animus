@@ -28,7 +28,7 @@ They run the same encoding code as training, so a model sees and does exactly wh
    property" at startup.
 4. Models: installing copies the ones in `models/` (exported from the forge, each `.amdl` with its `.json` manifest;
    the repository ships none) to `<config dir>/modules/animus`, which reaches a Docker runtime image (only `bin/` and
-   `etc/` do). Companions play the stage `Animus.Curriculum.Stage` names (default `stage16_companion`). Models you
+   `etc/` do). Companions play the stage `Animus.Curriculum.Stage` names (default `stage8_companion`). Models you
    place by hand go in `<DataDir>/animus`, which is searched first; the startup log names the directory used.
 
 Don't build it into the forge core; a forge build disables it. Where the models come from, and how `DataDir` and the
@@ -124,7 +124,7 @@ heal well with a stage trained for party combat.
 A movement stage's model (stages 1-7) travels to an objective. A companion's is its owner, so it walks, jumps, swims
 and flies to you with what it learned; the forge also tells a seat how much longer the walking route is than the
 straight line, which the module does not measure and gives as the straight line. Following, fighting beside you and
-the rest are the companion stage's (`stage16_companion`).
+the rest are the companion stage's (`stage8_companion`).
 
 A build outside Docker reads module configs from its compile-time config directory (`<install>/etc/modules`), not
 from beside `worldserver.conf`: a key that logs "Missing property" is a `mod_animus.conf` in the wrong place.
@@ -132,7 +132,7 @@ from beside `worldserver.conf`: a key that logs "Missing property" is a `mod_ani
 ## Models
 
 A companion plays `<class><stage suffix>.amdl` for `Animus.Curriculum.Stage` (`hunter_companion.amdl` for the default
-`stage16_companion`): one model per class, not per class and role -- the curriculum has no roles, and a model plays
+`stage8_companion`): one model per class, not per class and role -- the curriculum has no roles, and a model plays
 every build its class can have. A model loads only if its manifest is exactly the one this server builds for that
 layout, so the realm needs the curriculum revision the forge trained with, and the same world database and DBC data. A
 refused model is logged once and shown by `.animus list`, and its companion only follows you. Models load on first use

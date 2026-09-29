@@ -218,8 +218,13 @@ namespace Animus::Curriculum
             float QuestTurnIn = 10.0f;          // times the tier scale
             float QuestTimeout = 3.0f;          // the clock without a turn-in, less what was done, over the tier scale
             /// Quest credit a seat takes in a place another group holds (WorldCoordinator), per share of the quest:
-            /// the price of poaching. Small: the zone is shared, and a place held by nobody is fair.
-            float Poach = 0.5f;
+            /// the price of poaching. Small: the zone is shared, and a place held by nobody is fair. Against the
+            /// credit itself (QuestCredit 3.0 per share, times a tier scale of 1 or more) it takes back a twelfth
+            /// at most, so credit in a held place still pays -- going elsewhere is better when elsewhere will do,
+            /// but staying out of a place with anyone in it, or out of a fight shared with them, is never the
+            /// cheapest policy. A claim lapses ClaimHoldMs after its group stops working the place, so only a
+            /// place someone is actually working is held. It was 0.5 (a sixth) until the plan's review.
+            float Poach = 0.25f;
             /// How long a group holds a place it works (ms), and how near counts as working it (yards).
             uint32 ClaimHoldMs = 30000;
             float ClaimRadius = 25.0f;
@@ -667,6 +672,21 @@ namespace Animus::Curriculum
             float Max = 3.0f;
         } Hazards;
 
+        /// The rotation drill (Opposition::Dummy, DummyEncounter): output against targets that do not fight back.
+        struct DummyTuning
+        {
+            float HealthScale = 20.0f;          // a dummy's health, times its level's own: it outlives the episode
+            float HittingHealthScale = 4.0f;    // the one that hits back: a long fight, but one that can be won
+            float Damage = 1.0f;                // per the dummy's own (unscaled) health dealt: a kill's worth of output
+            float Kill = 2.0f;                  // the hitting dummy killed
+            float Death = 3.0f;
+            float Bleed = 0.012f;               // the bleeding drill: share of the seat's health lost a second, average
+            float Hurt = 0.3f;                  // ... per second, per share of the seat's health missing
+            float Resource = 0.5f;              // at the end, per share of the mana bar kept
+            uint32 AddEveryMs = 15000;          // the moving drill: another dummy about this often
+            uint32 MaxAdds = 2;
+        } Dummy;
+
         /// Resurrecting: a seat's own Soulstone or Reincarnation, and revives on allies (companion and party stages).
         struct ResurrectionTuning
         {
@@ -1045,6 +1065,16 @@ namespace Animus::Curriculum
             f("Hazards.Damage", tuning.Hazards.Damage);
             f("Hazards.Standing", tuning.Hazards.Standing);
             f("Hazards.Max", tuning.Hazards.Max);
+            f("Dummy.HealthScale", tuning.Dummy.HealthScale);
+            f("Dummy.HittingHealthScale", tuning.Dummy.HittingHealthScale);
+            f("Dummy.Damage", tuning.Dummy.Damage);
+            f("Dummy.Kill", tuning.Dummy.Kill);
+            f("Dummy.Death", tuning.Dummy.Death);
+            f("Dummy.Bleed", tuning.Dummy.Bleed);
+            f("Dummy.Hurt", tuning.Dummy.Hurt);
+            f("Dummy.Resource", tuning.Dummy.Resource);
+            f("Dummy.AddEveryMs", tuning.Dummy.AddEveryMs);
+            f("Dummy.MaxAdds", tuning.Dummy.MaxAdds);
             f("Options.MoveBearingMs", tuning.Options.MoveBearingMs);
             f("Options.MoveTurnMs", tuning.Options.MoveTurnMs);
             f("Options.MovePitchMs", tuning.Options.MovePitchMs);
