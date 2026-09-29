@@ -29,7 +29,7 @@
 namespace
 {
     constexpr char AMDL_MAGIC[4] = { 'A', 'M', 'D', 'L' };
-    constexpr uint32 AMDL_VERSION = 3;
+    constexpr uint32 AMDL_VERSION = 4;
 
     /// Guards against a corrupt header asking for gigabytes.
     constexpr uint32 MAX_LAYER_WIDTH = 1 << 16;
@@ -220,9 +220,45 @@ bool Animus::MlpPolicy::Load(std::string const& path, std::string const& scenari
         return false;
     }
 
+    // The predictions fed back, and the slow loop (Component P layer 2, Component D).
+    uint32 const featureWidth = layers.back().In;
+    uint32 foresightOutputs = 0;
+    std::vector<float> foresightWeight, foresightBias, feedbackWeight, feedbackBias;
+    if (!reader.Read(foresightOutputs) || foresightOutputs > MAX_LAYER_WIDTH)
+    {
+        error = Acore::StringFormat("{} is truncated before its predictions", path);
+        return false;
+    }
+    if (foresightOutputs && (!reader.ReadFloats(foresightWeight, std::size_t(foresightOutputs) * featureWidth)
+        || !reader.ReadFloats(foresightBias, foresightOutputs)
+        || !reader.ReadFloats(feedbackWeight, std::size_t(featureWidth) * foresightOutputs)
+        || !reader.ReadFloats(feedbackBias, featureWidth)))
+    {
+        error = Acore::StringFormat("{} is truncated in its predictions", path);
+        return false;
+    }
+    uint32 slowSize = 0;
+    std::vector<float> slowWeightIn, slowWeightHidden, slowBiasIn, slowBiasHidden;
+    if (!reader.Read(slowSize) || slowSize > MAX_LAYER_WIDTH)
+    {
+        error = Acore::StringFormat("{} is truncated before its slow loop", path);
+        return false;
+    }
+    if (slowSize && (!reader.ReadFloats(slowWeightIn, std::size_t(3) * slowSize * featureWidth)
+        || !reader.ReadFloats(slowWeightHidden, std::size_t(3) * slowSize * slowSize)
+        || !reader.ReadFloats(slowBiasIn, std::size_t(3) * slowSize)
+        || !reader.ReadFloats(slowBiasHidden, std::size_t(3) * slowSize)))
+    {
+        error = Acore::StringFormat("{} is truncated in its slow loop", path);
+        return false;
+    }
+
     uint32 goalCount = 0;
     uint32 goalTargets = 1;
     uint32 goalEvery = 0;
+    bool lookahead = false;
+    Factored success, duration;
+    float lookaheadWeight[2] = { 0.0f, 0.0f };
     std::vector<float> kindWeight, kindBias, targetWeight, targetBias, pair, kindEmbedding, targetEmbedding;
     std::vector<uint8> accepts;
     int32 goalBlockAt = -1;
@@ -236,10 +272,12 @@ bool Animus::MlpPolicy::Load(std::string const& path, std::string const& scenari
     if (goalCount)
     {
         uint32 const width = layers.back().In;
+        uint32 const goalWidth = slowSize ? slowSize : width;
         std::size_t const joint = std::size_t(goalCount) * goalTargets;
-        bool ok = reader.ReadFloats(kindWeight, std::size_t(goalCount) * width) && reader.ReadFloats(kindBias, goalCount);
+        bool ok = reader.ReadFloats(kindWeight, std::size_t(goalCount) * goalWidth)
+            && reader.ReadFloats(kindBias, goalCount);
         if (ok && goalTargets > 1)
-            ok = reader.ReadFloats(targetWeight, std::size_t(goalTargets) * width)
+            ok = reader.ReadFloats(targetWeight, std::size_t(goalTargets) * goalWidth)
                 && reader.ReadFloats(targetBias, goalTargets);
         ok = ok && reader.ReadFloats(pair, joint);
         if (ok)
@@ -250,6 +288,21 @@ bool Animus::MlpPolicy::Load(std::string const& path, std::string const& scenari
         ok = ok && reader.ReadFloats(kindEmbedding, std::size_t(goalCount) * width);
         if (ok && goalTargets > 1)
             ok = reader.ReadFloats(targetEmbedding, std::size_t(goalTargets) * width);
+        uint8 hasLookahead = 0;
+        ok = ok && reader.Read(hasLookahead);
+        lookahead = hasLookahead != 0;
+        auto const readFactored = [&](Factored& part)
+        {
+            bool read = reader.ReadFloats(part.KindWeight, std::size_t(goalCount) * goalWidth)
+                && reader.ReadFloats(part.KindBias, goalCount);
+            if (read && goalTargets > 1)
+                read = reader.ReadFloats(part.TargetWeight, std::size_t(goalTargets) * goalWidth)
+                    && reader.ReadFloats(part.TargetBias, goalTargets);
+            return read && reader.ReadFloats(part.Pair, joint);
+        };
+        if (ok && lookahead)
+            ok = readFactored(success) && readFactored(duration) && reader.Read(lookaheadWeight[0])
+                && reader.Read(lookaheadWeight[1]);
         if (!ok)
         {
             error = Acore::StringFormat("{} is truncated in its goals", path);
@@ -291,6 +344,26 @@ bool Animus::MlpPolicy::Load(std::string const& path, std::string const& scenari
     _kindEmbedding = std::move(kindEmbedding);
     _targetEmbedding = std::move(targetEmbedding);
     _targetScores.assign(goalTargets, 0.0f);
+    _lookahead = lookahead;
+    _success = std::move(success);
+    _duration = std::move(duration);
+    _lookaheadWeight[0] = lookaheadWeight[0];
+    _lookaheadWeight[1] = lookaheadWeight[1];
+    _foresightOutputs = foresightOutputs;
+    _foresightWeight = std::move(foresightWeight);
+    _foresightBias = std::move(foresightBias);
+    _feedbackWeight = std::move(feedbackWeight);
+    _feedbackBias = std::move(feedbackBias);
+    _predictions.assign(foresightOutputs, 0.0f);
+    _raw.assign(featureWidth, 0.0f);
+    _slowSize = slowSize;
+    _slowWeightIn = std::move(slowWeightIn);
+    _slowWeightHidden = std::move(slowWeightHidden);
+    _slowBiasIn = std::move(slowBiasIn);
+    _slowBiasHidden = std::move(slowBiasHidden);
+    _slowGates.assign(std::size_t(3) * slowSize, 0.0f);
+    _slowHiddenGates.assign(std::size_t(3) * slowSize, 0.0f);
+    _slowOut.assign(slowSize, 0.0f);
     widest = std::max(widest, recurrentSize);
     _scratchA.assign(widest, 0.0f);
     _scratchB.assign(widest, 0.0f);
@@ -321,6 +394,24 @@ void Animus::MlpPolicy::Unload()
     _targetScores.clear();
     _goalBlockAt = -1;
     _goalTargets = 1;
+    _lookahead = false;
+    _success = Factored();
+    _duration = Factored();
+    _foresightOutputs = 0;
+    _foresightWeight.clear();
+    _foresightBias.clear();
+    _feedbackWeight.clear();
+    _feedbackBias.clear();
+    _predictions.clear();
+    _raw.clear();
+    _slowSize = 0;
+    _slowWeightIn.clear();
+    _slowWeightHidden.clear();
+    _slowBiasIn.clear();
+    _slowBiasHidden.clear();
+    _slowGates.clear();
+    _slowHiddenGates.clear();
+    _slowOut.clear();
     _obsDim = 0;
     _numAgents = 0;
     _numActions = 0;
@@ -430,6 +521,28 @@ int32 Animus::MlpPolicy::Decide(float const* obs, uint8 const* mask, State* stat
         features = size;
     }
 
+    // The features before the predictions are fed back: what the goal head reads without a slow loop.
+    std::copy(in, in + features, _raw.begin());
+    if (_foresightOutputs)
+    {
+        for (uint32 row = 0; row < _foresightOutputs; ++row)
+        {
+            float const* weights = _foresightWeight.data() + std::size_t(row) * features;
+            float sum = _foresightBias[row];
+            for (uint32 col = 0; col < features; ++col)
+                sum += weights[col] * _raw[col];
+            _predictions[row] = sum;
+        }
+        for (uint32 row = 0; row < features; ++row)
+        {
+            float const* weights = _feedbackWeight.data() + std::size_t(row) * _foresightOutputs;
+            float sum = _feedbackBias[row];
+            for (uint32 col = 0; col < _foresightOutputs; ++col)
+                sum += weights[col] * _predictions[col];
+            in[row] += sum;
+        }
+    }
+
     if (_goalCount)
     {
         // A goal is chosen on its own clock, or at once when the goal block says the one held ended, and kept in
@@ -442,16 +555,61 @@ int32 Animus::MlpPolicy::Decide(float const* obs, uint8 const* mask, State* stat
         bool const choose = !state || state->Age % _goalEvery == 0 || ended;
         if (choose)
         {
+            // What the goal head reads: the slow loop stepped on the fed-back features, or the plain features.
+            float const* source = _raw.data();
+            uint32 width = features;
+            if (_slowSize)
+            {
+                uint32 const size = _slowSize;
+                std::vector<float>* slow = state ? &state->SlowMemory : nullptr;
+                if (slow && slow->size() != size)
+                    slow->assign(size, 0.0f);
+                float const* carried = slow ? slow->data() : nullptr;
+                for (uint32 row = 0; row < 3 * size; ++row)
+                {
+                    float const* input = _slowWeightIn.data() + std::size_t(row) * features;
+                    float sum = _slowBiasIn[row];
+                    for (uint32 col = 0; col < features; ++col)
+                        sum += input[col] * in[col];
+                    _slowGates[row] = sum;
+                    float const* hidden = _slowWeightHidden.data() + std::size_t(row) * size;
+                    float recurrent = _slowBiasHidden[row];
+                    if (carried)
+                        for (uint32 col = 0; col < size; ++col)
+                            recurrent += hidden[col] * carried[col];
+                    _slowHiddenGates[row] = recurrent;
+                }
+                for (uint32 row = 0; row < size; ++row)
+                {
+                    float const reset = Sigmoid(_slowGates[row] + _slowHiddenGates[row]);
+                    float const update = Sigmoid(_slowGates[size + row] + _slowHiddenGates[size + row]);
+                    float const candidate = std::tanh(_slowGates[2 * size + row] + reset * _slowHiddenGates[2 * size + row]);
+                    _slowOut[row] = (1.0f - update) * candidate + update * (carried ? carried[row] : 0.0f);
+                }
+                if (slow)
+                    std::copy(_slowOut.begin(), _slowOut.end(), slow->begin());
+                source = _slowOut.data();
+                width = size;
+            }
+
             auto const dot = [&](float const* weights, float bias)
             {
                 float sum = bias;
-                for (uint32 col = 0; col < features; ++col)
-                    sum += weights[col] * in[col];
+                for (uint32 col = 0; col < width; ++col)
+                    sum += weights[col] * source[col];
                 return sum;
+            };
+            auto const factored = [&](Factored const& part, uint32 kind, uint32 target)
+            {
+                float score = dot(part.KindWeight.data() + std::size_t(kind) * width, part.KindBias[kind])
+                    + part.Pair[std::size_t(kind) * targets + target];
+                if (targets > 1)
+                    score += dot(part.TargetWeight.data() + std::size_t(target) * width, part.TargetBias[target]);
+                return score;
             };
             for (uint32 target = 0; target < targets; ++target)
                 _targetScores[target] = targets > 1
-                    ? dot(_targetWeight.data() + std::size_t(target) * features, _targetBias[target]) : 0.0f;
+                    ? dot(_targetWeight.data() + std::size_t(target) * width, _targetBias[target]) : 0.0f;
 
             float best = -std::numeric_limits<float>::infinity();
             goal = 0;
@@ -459,7 +617,7 @@ int32 Animus::MlpPolicy::Decide(float const* obs, uint8 const* mask, State* stat
             {
                 if (block && targets > 1 && block[kind] <= 0.5f)
                     continue;
-                float const kindScore = dot(_kindWeight.data() + std::size_t(kind) * features, _kindBias[kind]);
+                float const kindScore = dot(_kindWeight.data() + std::size_t(kind) * width, _kindBias[kind]);
                 for (uint32 target = 0; target < targets; ++target)
                 {
                     std::size_t const joint = std::size_t(kind) * targets + target;
@@ -467,7 +625,10 @@ int32 Animus::MlpPolicy::Decide(float const* obs, uint8 const* mask, State* stat
                         && (!block || targets <= 1 || block[_goalCount + target] > 0.5f));
                     if (!allowed)
                         continue;
-                    float const score = kindScore + _targetScores[target] + _pair[joint];
+                    float score = kindScore + _targetScores[target] + _pair[joint];
+                    if (_lookahead)
+                        score += _lookaheadWeight[0] * factored(_success, kind, target)
+                            + _lookaheadWeight[1] * Sigmoid(factored(_duration, kind, target));
                     if (score > best)
                     {
                         best = score;

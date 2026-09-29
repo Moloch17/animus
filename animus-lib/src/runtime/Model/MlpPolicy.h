@@ -40,6 +40,7 @@ namespace Animus
         struct State
         {
             std::vector<float> Memory;      // the GRU's state; sized on first use
+            std::vector<float> SlowMemory;  // the two-clock seat's slow loop, stepped when a goal is chosen
             uint32 Goal = 0;
             uint32 Age = 0;                 // decisions the goal has been held, 0 = choose one now
 
@@ -47,6 +48,7 @@ namespace Animus
             void Clear()
             {
                 std::fill(Memory.begin(), Memory.end(), 0.0f);
+                std::fill(SlowMemory.begin(), SlowMemory.end(), 0.0f);
                 Goal = 0;
                 Age = 0;
             }
@@ -112,6 +114,29 @@ namespace Animus
         std::vector<float> _kindEmbedding;       // [K * features]
         std::vector<float> _targetEmbedding;     // [T * features]
         std::vector<float> _targetScores;        // scratch [T]
+
+        /// A score per (kind, target), built as the goal head's logits are (the learner's _Factored).
+        struct Factored
+        {
+            std::vector<float> KindWeight, KindBias, TargetWeight, TargetBias, Pair;
+        };
+        /// Goal-level lookahead (Component P, layer 3): the chance each goal is reached and how long it takes,
+        /// added to the goal logits by weight.
+        bool _lookahead = false;
+        Factored _success;
+        Factored _duration;
+        float _lookaheadWeight[2] = { 0.0f, 0.0f };
+
+        /// Predictions fed back (Component P, layer 2): the foresight head and its projection onto the features.
+        uint32 _foresightOutputs = 0;
+        std::vector<float> _foresightWeight, _foresightBias, _feedbackWeight, _feedbackBias;
+        std::vector<float> _predictions;         // scratch [F]
+        std::vector<float> _raw;                 // scratch: the features before the feedback
+
+        /// The two-clock seat's slow loop (a GRU over the fed-back features, stepped when a goal is chosen).
+        uint32 _slowSize = 0;
+        std::vector<float> _slowWeightIn, _slowWeightHidden, _slowBiasIn, _slowBiasHidden;
+        std::vector<float> _slowGates, _slowHiddenGates, _slowOut;
 
         std::vector<float> _scratchA;
         std::vector<float> _scratchB;

@@ -716,6 +716,7 @@ void Animus::CompanionParty::Decide(Member& member, Player* bot, Player* owner, 
         bool possible = false;
         Curriculum::GoalBlock::Status(view, member.Goal, reached, possible);
         view.GoalEnded = reached || !possible;
+        view.GoalReached = reached;
     }
     SeatEncoder::Observe(view, member.Obs.data(), member.Mask.data());
 
