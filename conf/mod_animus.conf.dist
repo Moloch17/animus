@@ -317,6 +317,11 @@ Animus.Curriculum.Life.QuestAccepted = 1.0
 Animus.Curriculum.Life.QuestCredit = 3.0
 Animus.Curriculum.Life.QuestTurnIn = 10.0
 Animus.Curriculum.Life.QuestTimeout = 3.0
+#   quest credit taken in a place another group holds, per share of the quest (training only)
+Animus.Curriculum.Life.Poach = 0.5
+#   how long a companion party holds a place it works (ms), and how near counts as working it (yards)
+Animus.Curriculum.Life.ClaimHoldMs = 30000
+Animus.Curriculum.Life.ClaimRadius = 25
 #   gathering: per node looted (times the tier scale), per skill point gained
 Animus.Curriculum.Life.GatherNode = 2.0
 Animus.Curriculum.Life.GatherSkillUp = 0.5

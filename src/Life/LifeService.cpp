@@ -18,6 +18,9 @@
 
 #include "LifeService.h"
 #include "QuestPlanner.h"
+#include "WorldCoordinator.h"
+#include "Group.h"
+#include <unordered_map>
 #include "AuctionHouseMgr.h"
 #include "Bag.h"
 #include "CellImpl.h"
@@ -207,6 +210,45 @@ void Animus::Life::LifeService::Sense(Player* bot, Curriculum::WorldView& world)
     {
         world.HasEnder = true;
         world.EnderAt = onGround(plan->TurnInPlaces.front());
+    }
+
+    // The world coordinator (Component F), one per map, shared by every companion party on it: a party working an
+    // objective's place holds it for a while; the journal shows which places another party holds, and assigns the
+    // nearest undone one nobody else holds. The party is its group (or the bot alone).
+    static std::unordered_map<uint32, Curriculum::WorldCoordinator> coordinators;
+    Curriculum::WorldCoordinator& coordinator = coordinators[bot->GetMapId()];
+    uint64 const now = GameTime::GetGameTimeMS().count();
+    coordinator.Expire(now);
+    Group const* group = bot->GetGroup();
+    uint32 const owner = group ? group->GetLeaderGUID().GetCounter() : bot->GetGUID().GetCounter();
+    Curriculum::CurriculumTuning::LifeTuning const tuning;
+    std::vector<Position> undone;
+    uint32 place = 0;
+    for (uint32 i = 0; i < Curriculum::WorldView::JOURNAL_OBJECTIVES; ++i)
+    {
+        Curriculum::WorldView::JournalObjective const& objective = world.Objectives[i];
+        if (!objective.Present || !objective.HasPlace || objective.Left <= 0.0f)
+            continue;
+        if (bot->GetExactDist2d(&objective.Place) <= tuning.ClaimRadius)
+            coordinator.Stake(owner, objective.Place, tuning.ClaimRadius, now, tuning.ClaimHoldMs);
+        undone.push_back(objective.Place);
+        if (place < Curriculum::WorldView::JOURNAL_PLACES)
+        {
+            Curriculum::WorldView::JournalPlace& journal = world.Places[place++];
+            journal.Present = true;
+            journal.Where = objective.Place;
+            journal.Objective = uint8(i);
+            journal.Claimed = coordinator.ClaimedByOther(owner, objective.Place, now);
+        }
+    }
+    std::sort(undone.begin(), undone.end(), [bot](Position const& a, Position const& b)
+    {
+        return bot->GetExactDist2d(&a) < bot->GetExactDist2d(&b);
+    });
+    if (Position const* assigned = coordinator.Assign(owner, undone, now))
+    {
+        world.HasAssignment = true;
+        world.Assignment = *assigned;
     }
 }
 
