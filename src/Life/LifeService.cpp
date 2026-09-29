@@ -17,6 +17,7 @@
  */
 
 #include "LifeService.h"
+#include "QuestPlanner.h"
 #include "AuctionHouseMgr.h"
 #include "Bag.h"
 #include "CellImpl.h"
@@ -147,6 +148,7 @@ void Animus::Life::LifeService::Sense(Player* bot, Curriculum::WorldView& world)
     // else the most progressed active one. The sim had one quest an episode; a companion carries the owner's log.
     world.QuestState = Curriculum::WorldView::QUEST_NONE;
     world.QuestProgress = 0.0f;
+    uint32 focus = 0;
     for (uint16 slot = 0; slot < MAX_QUEST_LOG_SIZE; ++slot)
     {
         uint32 const questId = bot->GetQuestSlotQuestId(slot);
@@ -157,6 +159,7 @@ void Animus::Life::LifeService::Sense(Player* bot, Curriculum::WorldView& world)
         {
             world.QuestState = Curriculum::WorldView::QUEST_COMPLETE;
             world.QuestProgress = 1.0f;
+            focus = questId;
             break;
         }
         if (status == QUEST_STATUS_INCOMPLETE)
@@ -166,8 +169,44 @@ void Animus::Life::LifeService::Sense(Player* bot, Curriculum::WorldView& world)
             {
                 world.QuestState = Curriculum::WorldView::QUEST_ACTIVE;
                 world.QuestProgress = progress;
+                focus = questId;
             }
         }
+    }
+
+    // The journal, from the same quest's plan (QuestPlanner): its objectives, what is left of each and where the
+    // world map puts them, and where it is handed in. A companion's places are the quest POI's, not spawns seen:
+    // it has no spawn table, and what it finds on the way is its memory's to keep.
+    Curriculum::QuestPlan const* plan = focus ? Curriculum::QuestPlanner::Instance().Plan(focus) : nullptr;
+    if (!plan || !plan->Supported)
+        return;
+    auto const onGround = [bot](Position const& place)
+    {
+        return Position(place.GetPositionX(), place.GetPositionY(), place.GetPositionZ() ? place.GetPositionZ()
+            : bot->GetPositionZ());
+    };
+    for (uint32 i = 0; i < plan->Objectives.size() && i < Curriculum::WorldView::JOURNAL_OBJECTIVES; ++i)
+    {
+        Curriculum::PlannedObjective const& planned = plan->Objectives[i];
+        Curriculum::WorldView::JournalObjective& objective = world.Objectives[i];
+        objective.Present = true;
+        objective.Kind = uint8(planned.Kind);
+        objective.Left = 1.0f - Curriculum::QuestPlanner::Progress(bot, *plan, i);
+        if (!planned.Places.empty() && planned.PoiMap == bot->GetMapId())
+        {
+            // The nearest of its areas.
+            Position const* best = &planned.Places.front();
+            for (Position const& place : planned.Places)
+                if (bot->GetExactDist2d(&place) < bot->GetExactDist2d(best))
+                    best = &place;
+            objective.HasPlace = true;
+            objective.Place = onGround(*best);
+        }
+    }
+    if (!plan->TurnInPlaces.empty() && plan->TurnInMap == bot->GetMapId())
+    {
+        world.HasEnder = true;
+        world.EnderAt = onGround(plan->TurnInPlaces.front());
     }
 }
 
