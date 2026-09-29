@@ -29,7 +29,7 @@
 namespace
 {
     constexpr char AMDL_MAGIC[4] = { 'A', 'M', 'D', 'L' };
-    constexpr uint32 AMDL_VERSION = 2;
+    constexpr uint32 AMDL_VERSION = 3;
 
     /// Guards against a corrupt header asking for gigabytes.
     constexpr uint32 MAX_LAYER_WIDTH = 1 << 16;
@@ -221,11 +221,13 @@ bool Animus::MlpPolicy::Load(std::string const& path, std::string const& scenari
     }
 
     uint32 goalCount = 0;
+    uint32 goalTargets = 1;
     uint32 goalEvery = 0;
-    std::vector<float> goalWeight;
-    std::vector<float> goalBias;
-    std::vector<float> goalEmbedding;
-    if (!reader.Read(goalCount) || !reader.Read(goalEvery) || goalCount > MAX_LAYER_WIDTH)
+    std::vector<float> kindWeight, kindBias, targetWeight, targetBias, pair, kindEmbedding, targetEmbedding;
+    std::vector<uint8> accepts;
+    int32 goalBlockAt = -1;
+    if (!reader.Read(goalCount) || !reader.Read(goalTargets) || !reader.Read(goalEvery)
+        || goalCount > MAX_LAYER_WIDTH || goalTargets == 0 || goalTargets > MAX_LAYER_WIDTH)
     {
         error = Acore::StringFormat("{} is truncated before its goals", path);
         return false;
@@ -234,11 +236,29 @@ bool Animus::MlpPolicy::Load(std::string const& path, std::string const& scenari
     if (goalCount)
     {
         uint32 const width = layers.back().In;
-        if (!reader.ReadFloats(goalWeight, std::size_t(goalCount) * width)
-            || !reader.ReadFloats(goalBias, goalCount)
-            || !reader.ReadFloats(goalEmbedding, std::size_t(goalCount) * width))
+        std::size_t const joint = std::size_t(goalCount) * goalTargets;
+        bool ok = reader.ReadFloats(kindWeight, std::size_t(goalCount) * width) && reader.ReadFloats(kindBias, goalCount);
+        if (ok && goalTargets > 1)
+            ok = reader.ReadFloats(targetWeight, std::size_t(goalTargets) * width)
+                && reader.ReadFloats(targetBias, goalTargets);
+        ok = ok && reader.ReadFloats(pair, joint);
+        if (ok)
+        {
+            accepts.resize(joint);
+            ok = reader.Read(reinterpret_cast<char*>(accepts.data()), joint) && reader.Read(goalBlockAt);
+        }
+        ok = ok && reader.ReadFloats(kindEmbedding, std::size_t(goalCount) * width);
+        if (ok && goalTargets > 1)
+            ok = reader.ReadFloats(targetEmbedding, std::size_t(goalTargets) * width);
+        if (!ok)
         {
             error = Acore::StringFormat("{} is truncated in its goals", path);
+            return false;
+        }
+        if (goalBlockAt >= 0 && uint32(goalBlockAt) + goalCount + goalTargets + 1 > obsDim)
+        {
+            error = Acore::StringFormat("{} puts its goal block at {}, past its {} observations", path, goalBlockAt,
+                obsDim);
             return false;
         }
     }
@@ -259,10 +279,18 @@ bool Animus::MlpPolicy::Load(std::string const& path, std::string const& scenari
     _memoryBiasIn = std::move(memoryBiasIn);
     _memoryBiasHidden = std::move(memoryBiasHidden);
     _goalCount = goalCount;
+    _goalTargets = goalTargets;
     _goalEvery = std::max<uint32>(1, goalEvery);
-    _goalWeight = std::move(goalWeight);
-    _goalBias = std::move(goalBias);
-    _goalEmbedding = std::move(goalEmbedding);
+    _kindWeight = std::move(kindWeight);
+    _kindBias = std::move(kindBias);
+    _targetWeight = std::move(targetWeight);
+    _targetBias = std::move(targetBias);
+    _pair = std::move(pair);
+    _accepts = std::move(accepts);
+    _goalBlockAt = goalBlockAt;
+    _kindEmbedding = std::move(kindEmbedding);
+    _targetEmbedding = std::move(targetEmbedding);
+    _targetScores.assign(goalTargets, 0.0f);
     widest = std::max(widest, recurrentSize);
     _scratchA.assign(widest, 0.0f);
     _scratchB.assign(widest, 0.0f);
@@ -282,9 +310,17 @@ void Animus::MlpPolicy::Unload()
     _memoryWeightHidden.clear();
     _memoryBiasIn.clear();
     _memoryBiasHidden.clear();
-    _goalWeight.clear();
-    _goalBias.clear();
-    _goalEmbedding.clear();
+    _kindWeight.clear();
+    _kindBias.clear();
+    _targetWeight.clear();
+    _targetBias.clear();
+    _pair.clear();
+    _accepts.clear();
+    _kindEmbedding.clear();
+    _targetEmbedding.clear();
+    _targetScores.clear();
+    _goalBlockAt = -1;
+    _goalTargets = 1;
     _obsDim = 0;
     _numAgents = 0;
     _numActions = 0;
@@ -307,7 +343,8 @@ std::string Animus::MlpPolicy::Describe() const
     }
 
     if (_goalCount)
-        shape += Acore::StringFormat(" ({} goals every {} decisions)", _goalCount, _goalEvery);
+        shape += Acore::StringFormat(" ({} goal kinds x {} targets every {} decisions)", _goalCount, _goalTargets,
+            _goalEvery);
 
     return shape;
 }
@@ -395,35 +432,66 @@ int32 Animus::MlpPolicy::Decide(float const* obs, uint8 const* mask, State* stat
 
     if (_goalCount)
     {
-        // A goal is chosen on its own clock and kept in between; its embedding is added to the features.
+        // A goal is chosen on its own clock, or at once when the goal block says the one held ended, and kept in
+        // between: the best (kind, target) the goal block offers and the kind accepts. Its kind's and target's
+        // embeddings are added to the features.
+        uint32 const targets = _goalTargets;
+        float const* block = _goalBlockAt >= 0 ? obs + _goalBlockAt : nullptr;
+        bool const ended = block && targets > 1 && block[_goalCount + targets] > 0.5f;
         uint32 goal = state ? state->Goal : 0;
-        if (!state || state->Age % _goalEvery == 0)
+        bool const choose = !state || state->Age % _goalEvery == 0 || ended;
+        if (choose)
         {
-            float best = -std::numeric_limits<float>::infinity();
-            for (uint32 candidate = 0; candidate < _goalCount; ++candidate)
+            auto const dot = [&](float const* weights, float bias)
             {
-                float const* weights = _goalWeight.data() + std::size_t(candidate) * features;
-                float sum = _goalBias[candidate];
+                float sum = bias;
                 for (uint32 col = 0; col < features; ++col)
                     sum += weights[col] * in[col];
+                return sum;
+            };
+            for (uint32 target = 0; target < targets; ++target)
+                _targetScores[target] = targets > 1
+                    ? dot(_targetWeight.data() + std::size_t(target) * features, _targetBias[target]) : 0.0f;
 
-                if (sum > best)
+            float best = -std::numeric_limits<float>::infinity();
+            goal = 0;
+            for (uint32 kind = 0; kind < _goalCount; ++kind)
+            {
+                if (block && targets > 1 && block[kind] <= 0.5f)
+                    continue;
+                float const kindScore = dot(_kindWeight.data() + std::size_t(kind) * features, _kindBias[kind]);
+                for (uint32 target = 0; target < targets; ++target)
                 {
-                    best = sum;
-                    goal = candidate;
+                    std::size_t const joint = std::size_t(kind) * targets + target;
+                    bool const allowed = joint == 0 || (_accepts[joint]
+                        && (!block || targets <= 1 || block[_goalCount + target] > 0.5f));
+                    if (!allowed)
+                        continue;
+                    float const score = kindScore + _targetScores[target] + _pair[joint];
+                    if (score > best)
+                    {
+                        best = score;
+                        goal = uint32(joint);
+                    }
                 }
             }
         }
 
         if (state)
         {
-            state->Age = state->Age % _goalEvery == 0 ? 1 : state->Age + 1;
+            state->Age = choose ? 1 : state->Age + 1;
             state->Goal = goal;
         }
 
-        float const* embedding = _goalEmbedding.data() + std::size_t(goal) * features;
+        float const* kindEmbedding = _kindEmbedding.data() + std::size_t(goal / targets) * features;
         for (uint32 col = 0; col < features; ++col)
-            in[col] += embedding[col];
+            in[col] += kindEmbedding[col];
+        if (targets > 1)
+        {
+            float const* targetEmbedding = _targetEmbedding.data() + std::size_t(goal % targets) * features;
+            for (uint32 col = 0; col < features; ++col)
+                in[col] += targetEmbedding[col];
+        }
     }
 
     {

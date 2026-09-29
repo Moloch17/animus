@@ -27,6 +27,7 @@
 #include "DatabaseEnv.h"
 #include "Creature.h"
 #include "EncoderSupport.h"
+#include "GoalBlock.h"
 #include "Group.h"
 #include "GroupMgr.h"
 #include "LifeService.h"
@@ -707,6 +708,15 @@ void Animus::CompanionParty::Decide(Member& member, Player* bot, Player* owner, 
     view.Option = &member.Option;
     // The goal it holds shapes what the core block offers, as it does for a forge seat (CoreBlock::GoalCloses).
     view.Goal = member.Goal;
+    // Ended as a forge seat's goal ends (GoalBlock::Status): reached, or no longer possible -- the model then
+    // chooses again at this decision rather than at its clock.
+    if (member.Goal != Curriculum::NO_GOAL)
+    {
+        bool reached = false;
+        bool possible = false;
+        Curriculum::GoalBlock::Status(view, member.Goal, reached, possible);
+        view.GoalEnded = reached || !possible;
+    }
     SeatEncoder::Observe(view, member.Obs.data(), member.Mask.data());
 
     // Paced and locked actions, as a forge seat's mask has them.

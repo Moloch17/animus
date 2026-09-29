@@ -72,7 +72,8 @@ namespace Animus
 
         /// Whether the model carries a memory or goals, so its caller must keep a State per seat.
         [[nodiscard]] bool HasMemory() const { return _recurrentSize != 0; }
-        [[nodiscard]] uint32 GoalCount() const { return _goalCount; }
+        [[nodiscard]] uint32 GoalCount() const { return _goalCount; }       // kinds; 0 without goals
+        [[nodiscard]] uint32 GoalTargets() const { return _goalTargets; }
 
     private:
         struct Layer
@@ -95,12 +96,22 @@ namespace Animus
         std::vector<float> _memoryBiasIn;        // [3R]
         std::vector<float> _memoryBiasHidden;    // [3R]
 
-        /// The goals: a head over the features, and what each adds to them.
-        uint32 _goalCount = 0;
+        /// The goals (the learner's GoalHead): a goal is kind * targets + target; its logit the kind's plus the
+        /// target's plus the pair's, masked by the goal block's columns and the accepts table; what it adds to
+        /// the features is its kind's embedding plus its target's.
+        uint32 _goalCount = 0;                   // kinds
+        uint32 _goalTargets = 1;
         uint32 _goalEvery = 0;
-        std::vector<float> _goalWeight;          // [G * features]
-        std::vector<float> _goalBias;            // [G]
-        std::vector<float> _goalEmbedding;       // [G * features]
+        std::vector<float> _kindWeight;          // [K * features]
+        std::vector<float> _kindBias;            // [K]
+        std::vector<float> _targetWeight;        // [T * features], empty with one target
+        std::vector<float> _targetBias;          // [T]
+        std::vector<float> _pair;                // [K * T]
+        std::vector<uint8> _accepts;             // [K * T]
+        int32 _goalBlockAt = -1;                 // the goal block's first observation column
+        std::vector<float> _kindEmbedding;       // [K * features]
+        std::vector<float> _targetEmbedding;     // [T * features]
+        std::vector<float> _targetScores;        // scratch [T]
 
         std::vector<float> _scratchA;
         std::vector<float> _scratchB;
