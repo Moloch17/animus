@@ -327,7 +327,7 @@ Animus.Curriculum.Instance.WingBoss = 25.0
 #   each dungeon boss killed on the way to the wing's last (times the tier scale)
 Animus.Curriculum.Instance.WingMidBoss = 8.0
 #   the whole route from the door to the last boss, paid as it is walked (x the tier scale)
-Animus.Curriculum.Instance.WingProgress = 20.0
+Animus.Curriculum.Instance.WingProgress = 60.0
 Animus.Curriculum.Instance.WingDeath = 3.0
 Animus.Curriculum.Instance.WingWipe = 5.0
 Animus.Curriculum.Instance.WingWipes = 1
