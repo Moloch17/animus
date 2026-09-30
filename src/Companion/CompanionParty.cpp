@@ -810,12 +810,36 @@ void Animus::CompanionParty::UpdateMember(Member& member, Player* bot, Player* o
 
     bool const quiet = _enemies.empty() && !bot->IsInCombat();
 
+    if (!bot->IsAlive() && member.L && member.L->Has(BlockId::Death)
+        && !bot->GetMap()->IsBattlegroundOrArena())
+    {
+        // A model with the death block plays its own death, as it trained to (DeathBlock): release, run back and
+        // rise, take the spirit healer, or accept a friend's resurrection.
+        member.DeadMs += diff;
+        std::string error;
+        MlpPolicy* policy = models.Find(*member.L, error);
+        member.SinceDecisionMs += diff;
+        if (policy && member.SinceDecisionMs >= settings.DecisionMs)
+        {
+            member.SinceDecisionMs %= settings.DecisionMs;
+            Decide(member, bot, owner, *policy, settings);
+        }
+        if (bot->IsAlive())
+        {
+            member.DeadMs = 0;
+            member.StepDamage.store(0, std::memory_order_relaxed);
+            member.StepDamageTaken.store(0, std::memory_order_relaxed);
+        }
+        return;
+    }
+
     if (!bot->IsAlive())
     {
         // A resurrection another companion cast is accepted, as a client does.
         if (bot->isResurrectRequested())
         {
             bot->ResurectUsingRequestData();
+            bot->clearResurrectRequestData();
             member.DeadMs = 0;
             return;
         }
@@ -1000,8 +1024,9 @@ void Animus::CompanionParty::Decide(Member& member, Player* bot, Player* owner, 
         if (member.Mask[action] && member.Memory.Paced(layout, action, _nowMs, settings.Actions))
             member.Mask[action] = 0;
 
-    // As a forge seat: nothing to act on between pulls unless the layout acts without a target (food, drink).
-    if (!target && !SeatEncoder::ActsWithoutTarget(*member.L))
+    // As a forge seat: nothing to act on between pulls unless the layout acts without a target (food, drink). The
+    // dead act on their own death.
+    if (!target && !SeatEncoder::ActsWithoutTarget(*member.L) && bot->IsAlive())
         return;
 
     int32 const action = policy.Decide(member.Obs.data(), member.Mask.data(), &member.Policy);
@@ -1027,6 +1052,14 @@ void Animus::CompanionParty::Decide(Member& member, Player* bot, Player* owner, 
 
     if (result.CallBeast && CallHunterBeast(bot, result.CallBeast))
         Encoding::StartCallBeastCooldown(bot);
+
+    // Its accept of a friend's resurrection (DeathBlock), taken as a client does. Nothing in the core clears the
+    // request afterwards (StageScenario::AcceptResurrections), so it is cleared here.
+    if (result.AcceptResurrection && bot->isResurrectRequested())
+    {
+        bot->ResurectUsingRequestData();
+        bot->clearResurrectRequestData();
+    }
 }
 
 Unit* Animus::CompanionParty::CurrentTarget(Member& member, Player* bot) const
@@ -1096,6 +1129,8 @@ Animus::Curriculum::SeatView Animus::CompanionParty::View(Member const& member, 
         ? std::min(1.0f, float(_nowMs - member.CombatStartMs) / COMBAT_TIME_SCALE_MS) : 0.0f;
     view.Supplies = member.Supplies;
     view.SelfResurrectAllowed = !bot->GetMap()->IsBattlegroundOrArena();
+    view.DeathRuns = member.L && member.L->Has(BlockId::Death) && !bot->GetMap()->IsBattlegroundOrArena();
+    view.DeadSeconds = bot->IsAlive() ? 0.0f : float(member.DeadMs) / 1000.0f;
 
     view.StableCount = uint32(std::min<std::size_t>(member.Stable.size(), STABLE_SLOTS));
     std::copy_n(member.Stable.begin(), view.StableCount, view.Stable.begin());
