@@ -321,9 +321,11 @@ Animus.Curriculum.Instance.StallGraceMs = 15000
 #   whole dungeon wings (the Wing ladder): each trash creature killed, each route waypoint reached and the wing's boss
 #   (x the rung), each seat's death and each wipe (/ the rung); a wipe stands the party up at the door and WingWipes
 #   of them end the episode; the route's points are WingWaypointYards apart along the door-to-boss path
-Animus.Curriculum.Instance.WingTrashKill = 0.3
-Animus.Curriculum.Instance.WingWaypoint = 0.2
-Animus.Curriculum.Instance.WingBoss = 10.0
+Animus.Curriculum.Instance.WingTrashKill = 1.0
+Animus.Curriculum.Instance.WingWaypoint = 1.0
+Animus.Curriculum.Instance.WingBoss = 25.0
+#   each dungeon boss killed on the way to the wing's last (times the tier scale)
+Animus.Curriculum.Instance.WingMidBoss = 8.0
 Animus.Curriculum.Instance.WingDeath = 3.0
 Animus.Curriculum.Instance.WingWipe = 5.0
 Animus.Curriculum.Instance.WingWipes = 3
