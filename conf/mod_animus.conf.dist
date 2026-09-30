@@ -365,6 +365,19 @@ Animus.Curriculum.Casting.Cancel = 0.05
 Animus.Curriculum.Goals.Reached = 0.05
 #   per change of a seat's goal (training only): Match is paid once per goal held, so without this churn was paid
 Animus.Curriculum.Goals.Switch = 0.03
+#   closing on the goal held, potential-based (Progress x (gamma x phi' - phi), phi in [-1, 0]): yards to its place
+#   over 60, the named enemy's health, the seat's own health and mana, the friend's health. Gamma is the learner's
+Animus.Curriculum.Goals.Progress = 0.5
+Animus.Curriculum.Goals.ProgressGamma = 0.999
+#   what reaching a goal is worth, by what it achieved (Reached stays for the kinds with no value of their own):
+#   a named enemy dead, one held in crowd control, Recover/Rest by the share of health and mana restored since the
+#   choice, a friend brought back up, a place reached, a corpse, node or objective done
+Animus.Curriculum.Goals.FightValue = 0.3
+Animus.Curriculum.Goals.ControlValue = 0.2
+Animus.Curriculum.Goals.RecoverValue = 1.0
+Animus.Curriculum.Goals.ProtectValue = 0.2
+Animus.Curriculum.Goals.TravelValue = 0.1
+Animus.Curriculum.Goals.WorldValue = 0.2
 #   every arena with a director, per decision a seat spends fighting the enemy its director called, while one is
 #   called and alive. Compliance shaping: an order is meant to be followed because following it wins fights, but a
 #   channel that correlates with nothing cannot bootstrap into that. stage17_arena ran 30M steps with the order
@@ -393,6 +406,12 @@ Animus.Curriculum.Director.PlaceFarYards = 60
 Animus.Curriculum.Director.ClockDecisions = 10
 #   below this share of its health a member counts as badly hurt, for the director's event
 Animus.Curriculum.Director.LowHealth = 0.25
+#   a member order stands this many decisions before the same source can replace it for free; one replaced sooner costs
+#   the director OrderChurn, and any live order it replaces costs OrderChange. Nothing stops the call: it learns to
+#   let orders stand
+Animus.Curriculum.Director.OrderHoldDecisions = 8
+Animus.Curriculum.Director.OrderChange = 0.01
+Animus.Curriculum.Director.OrderChurn = 0.03
 Animus.Curriculum.Support.SelfHealing = 0.5
 #   per fraction of the mana pool spent on healing. Healing is worth what it restores for what it costs, and the cost
 #   was never priced: an effective heal of 3% of a health bar cost the same as one of 20%, so choosing a cheaper rank
@@ -437,6 +456,30 @@ Animus.Curriculum.Actions.Jitter = 0.02
 #   presses with intent: every spell and step is judged against the goal the seat holds, and one that works against
 #   it is charged this (training only: nothing is charged in play)
 Animus.Curriculum.Actions.Aimless = 0.02
+#   aimless presses by cause, each its own price (StageScenario::JudgePress): harm on an enemy the goal does not
+#   name, an area spell missing it, casting under Position once in range, harm under a goal that is not fighting
+#   with nothing attacking, help on someone else while fighting, a step away from where the goal wants the seat,
+#   selecting or sending the pet at an enemy the goal does not name when it is hurting nobody, eating or drinking
+#   with that resource nearly full, a trap with nothing near, an aspect/stance/form changed with nothing changed (and
+#   back within ten seconds), a ranged seat moving about a fight it could stand and shoot in
+Animus.Curriculum.Actions.Aimless.OffFocus = 0.02
+Animus.Curriculum.Actions.Aimless.AoeMissed = 0.02
+Animus.Curriculum.Actions.Aimless.InRangeCast = 0.02
+Animus.Curriculum.Actions.Aimless.UnprovokedHarm = 0.02
+Animus.Curriculum.Actions.Aimless.HelpOffGoal = 0.02
+Animus.Curriculum.Actions.Aimless.StepAway = 0.02
+Animus.Curriculum.Actions.Aimless.TargetSwitch = 0.04
+Animus.Curriculum.Actions.Aimless.PetOffGoal = 0.04
+Animus.Curriculum.Actions.Aimless.ConsumeNotNeeded = 0.03
+Animus.Curriculum.Actions.Aimless.TrapNoEnemy = 0.03
+Animus.Curriculum.Actions.Aimless.ModeFlip = 0.03
+Animus.Curriculum.Actions.Aimless.ModeReverse = 0.06
+Animus.Curriculum.Actions.Aimless.NeedlessMove = 0.02
+#   every aspect, stance, form or presence changed; every food or drink consumed
+Animus.Curriculum.Actions.ModeSwitch = 0.01
+Animus.Curriculum.Actions.SupplySpent = 0.02
+#   health (eating) or mana (drinking) at or above which consuming is ConsumeNotNeeded
+Animus.Curriculum.Actions.ConsumeFullPct = 85
 #   every press but the no-op costs this in training
 Animus.Curriculum.Actions.Effort = 0.002
 #   per second moving in a fight while already at range, in training
@@ -705,11 +748,13 @@ Animus.Curriculum.Owner.PulledThreat = 0.004
 #   per decision in combat while the owner is not
 Animus.Curriculum.Owner.SoloFight = 0.01
 #   per decision out of combat beyond FollowFarDistance
-Animus.Curriculum.Owner.FollowFar = 0.002
+Animus.Curriculum.Owner.FollowFar = 0.004
 #   per decision out of combat within FollowNearDistance
-Animus.Curriculum.Owner.FollowNear = 0.0005
-Animus.Curriculum.Owner.FollowFarDistance = 25.0
-Animus.Curriculum.Owner.FollowNearDistance = 12.0
+Animus.Curriculum.Owner.FollowNear = 0.002
+Animus.Curriculum.Owner.FollowFarDistance = 15.0
+Animus.Curriculum.Owner.FollowNearDistance = 6.0
+#   per decision and yard the companion trails a moving owner past FollowNearDistance (up to 20)
+Animus.Curriculum.Owner.FollowTrail = 0.001
 Animus.Curriculum.Owner.Death = 15.0
 
 #

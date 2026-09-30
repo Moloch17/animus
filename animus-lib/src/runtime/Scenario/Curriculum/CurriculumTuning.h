@@ -278,6 +278,23 @@ namespace Animus::Curriculum
             /// switch costs a little more than a match earns, so changing goal has to be worth it on the stage's own
             /// terms -- which is what committing to a plan means.
             float Switch = 0.03f;
+            /// Progress toward the goal held (potential-based, so it cannot be farmed): Progress x (gamma x phi' -
+            /// phi) every decision, phi in [-1, 0] per kind -- the yards left to its place (over 60), the named
+            /// enemy's health, the seat's own health and mana for Recover and Rest, the friend's health for Protect.
+            /// A goal chosen and walked away from costs what closing on it pays. ProgressGamma is the learner's gamma.
+            float Progress = 0.5f;
+            float ProgressGamma = 0.999f;
+            /// What reaching a goal is worth, by what it achieved (paid once, in place of Reached, which stays for
+            /// the kinds that have no value of their own): a named enemy dead, one held in crowd control, a friend
+            /// brought back up, a place reached, a corpse, node or objective done. Recover and Rest pay by the share
+            /// of health and mana they restored since the goal was chosen. A flat 0.05 against episode returns of
+            /// 10-50 made choosing well nearly worthless: in groups 3-8% of chosen goals were reached.
+            float FightValue = 0.3f;
+            float ControlValue = 0.2f;
+            float RecoverValue = 1.0f;
+            float ProtectValue = 0.2f;
+            float TravelValue = 0.1f;
+            float WorldValue = 0.2f;
         } Goals;
 
         /// The director's orders (TeamOrder), in every arena that has one.
@@ -366,6 +383,13 @@ namespace Animus::Curriculum
             uint32 ClockDecisions = 10;
             /// Below this share of its health a member counts as badly hurt, for the event.
             float LowHealth = 0.25f;
+            /// A member order stands this long (decisions; 8 is 2 s) before the same source can replace it for
+            /// free: one replaced sooner costs the director OrderChurn, on top of OrderChange for any live order it
+            /// replaces. Not a rule -- nothing stops the call -- so the director learns to let orders stand; the
+            /// raid director gave each member about 9,500 orders an episode at the start of stage12.
+            uint32 OrderHoldDecisions = 8;
+            float OrderChange = 0.01f;
+            float OrderChurn = 0.03f;
         } Director;
 
         /// Looking after itself and its friends, in every stage.
@@ -440,6 +464,30 @@ namespace Animus::Curriculum
             /// models found ~180 actions a minute with 18-21% of decisions serving the chosen goal (2026-09-28):
             /// abilities pressed without intent. The goal is the reason for a press; this is what makes it one.
             float Aimless = 0.02f;
+            /// Aimless by its cause (StageState's AimlessCause), each its own price so the trial can raise one
+            /// without the rest. The ones in-game testing of the four-phase models saw most start higher: a
+            /// companion drinking at full mana, laying traps with nothing near, dancing between aspects, and
+            /// moving about a fight it could stand and shoot in (2026-09-29); switching targets and sending the
+            /// pet at enemies the goal does not name (6.5 times over-represented in the aimless-heavy episodes).
+            float AimlessOffFocus = 0.02f;
+            float AimlessAoeMissed = 0.02f;
+            float AimlessInRangeCast = 0.02f;
+            float AimlessUnprovokedHarm = 0.02f;
+            float AimlessHelpOffGoal = 0.02f;
+            float AimlessStepAway = 0.02f;
+            float AimlessTargetSwitch = 0.04f;
+            float AimlessPetOffGoal = 0.04f;
+            float AimlessConsumeNotNeeded = 0.03f;
+            float AimlessTrapNoEnemy = 0.03f;
+            float AimlessModeFlip = 0.03f;
+            float AimlessModeReverse = 0.06f;
+            float AimlessNeedlessMove = 0.02f;
+            /// Every aspect, stance, form or presence changed, justified or not: a change has to be worth something.
+            float ModeSwitch = 0.01f;
+            /// Every food or drink consumed: a supply spent at full health is gone when it is needed.
+            float SupplySpent = 0.02f;
+            /// Resource at or above which eating (health) or drinking (mana) is ConsumeNotNeeded.
+            float ConsumeFullPct = 85.0f;
             /// A small price on every press but the no-op, a tenth of an aimless one: when nothing needs doing,
             /// doing nothing wins. A held bearing keeps walking and a cast keeps casting without another press.
             float Effort = 0.002f;
@@ -618,10 +666,14 @@ namespace Animus::Curriculum
             float PulledThreat = 0.004f;        // damage dealers and healers beside a TANK owner: per enemy on
                                                 // the bot, per decision; not charged beside any other owner
             float SoloFight = 0.01f;            // per decision in combat while the owner is not
-            float FollowFar = 0.002f;           // per decision out of combat beyond FollowFarDistance
-            float FollowNear = 0.0005f;         // per decision out of combat within FollowNearDistance
-            float FollowFarDistance = 25.0f;
-            float FollowNearDistance = 12.0f;
+            // Staying close: in-game testing of the four-phase models found companions trailing about 16 yards
+            // where a player keeps 3-6 (2026-09-29). Near is now the band a player keeps, far starts where a
+            // player would call it lost, and a moving owner charges every yard it is trailed by past the band.
+            float FollowFar = 0.004f;           // per decision out of combat beyond FollowFarDistance
+            float FollowNear = 0.002f;          // per decision out of combat within FollowNearDistance
+            float FollowFarDistance = 15.0f;
+            float FollowNearDistance = 6.0f;
+            float FollowTrail = 0.001f;         // per decision and yard past FollowNearDistance while the owner moves
             float Death = 15.0f;                // per owner death, every seat: more than the seat's own (GauntletDeath)
         } Owner;
 
@@ -956,6 +1008,22 @@ namespace Animus::Curriculum
             f("Actions.RepeatFree", tuning.Actions.RepeatFree);
             f("Actions.Jitter", tuning.Actions.Jitter);
             f("Actions.Aimless", tuning.Actions.Aimless);
+            f("Actions.Aimless.OffFocus", tuning.Actions.AimlessOffFocus);
+            f("Actions.Aimless.AoeMissed", tuning.Actions.AimlessAoeMissed);
+            f("Actions.Aimless.InRangeCast", tuning.Actions.AimlessInRangeCast);
+            f("Actions.Aimless.UnprovokedHarm", tuning.Actions.AimlessUnprovokedHarm);
+            f("Actions.Aimless.HelpOffGoal", tuning.Actions.AimlessHelpOffGoal);
+            f("Actions.Aimless.StepAway", tuning.Actions.AimlessStepAway);
+            f("Actions.Aimless.TargetSwitch", tuning.Actions.AimlessTargetSwitch);
+            f("Actions.Aimless.PetOffGoal", tuning.Actions.AimlessPetOffGoal);
+            f("Actions.Aimless.ConsumeNotNeeded", tuning.Actions.AimlessConsumeNotNeeded);
+            f("Actions.Aimless.TrapNoEnemy", tuning.Actions.AimlessTrapNoEnemy);
+            f("Actions.Aimless.ModeFlip", tuning.Actions.AimlessModeFlip);
+            f("Actions.Aimless.ModeReverse", tuning.Actions.AimlessModeReverse);
+            f("Actions.Aimless.NeedlessMove", tuning.Actions.AimlessNeedlessMove);
+            f("Actions.ModeSwitch", tuning.Actions.ModeSwitch);
+            f("Actions.SupplySpent", tuning.Actions.SupplySpent);
+            f("Actions.ConsumeFullPct", tuning.Actions.ConsumeFullPct);
             f("Actions.Effort", tuning.Actions.Effort);
             f("Actions.Fidget", tuning.Actions.Fidget);
             f("Actions.IntentSlackYards", tuning.Actions.IntentSlackYards);
@@ -963,6 +1031,14 @@ namespace Animus::Curriculum
 
             f("Goals.Reached", tuning.Goals.Reached);
             f("Goals.Switch", tuning.Goals.Switch);
+            f("Goals.Progress", tuning.Goals.Progress);
+            f("Goals.ProgressGamma", tuning.Goals.ProgressGamma);
+            f("Goals.FightValue", tuning.Goals.FightValue);
+            f("Goals.ControlValue", tuning.Goals.ControlValue);
+            f("Goals.RecoverValue", tuning.Goals.RecoverValue);
+            f("Goals.ProtectValue", tuning.Goals.ProtectValue);
+            f("Goals.TravelValue", tuning.Goals.TravelValue);
+            f("Goals.WorldValue", tuning.Goals.WorldValue);
 
             f("Order.Focus", tuning.Order.Focus);
             f("Order.PlaceMatch", tuning.Order.PlaceMatch);
@@ -981,6 +1057,9 @@ namespace Animus::Curriculum
             f("Director.PlaceNearYards", tuning.Director.PlaceNearYards);
             f("Director.PlaceFarYards", tuning.Director.PlaceFarYards);
             f("Director.ClockDecisions", tuning.Director.ClockDecisions);
+            f("Director.OrderHoldDecisions", tuning.Director.OrderHoldDecisions);
+            f("Director.OrderChange", tuning.Director.OrderChange);
+            f("Director.OrderChurn", tuning.Director.OrderChurn);
             f("Director.LowHealth", tuning.Director.LowHealth);
 
             f("Support.SelfHealing", tuning.Support.SelfHealing);
@@ -1095,6 +1174,7 @@ namespace Animus::Curriculum
             f("Owner.SoloFight", tuning.Owner.SoloFight);
             f("Owner.FollowFar", tuning.Owner.FollowFar);
             f("Owner.FollowNear", tuning.Owner.FollowNear);
+            f("Owner.FollowTrail", tuning.Owner.FollowTrail);
             f("Owner.FollowFarDistance", tuning.Owner.FollowFarDistance);
             f("Owner.FollowNearDistance", tuning.Owner.FollowNearDistance);
             f("Owner.Death", tuning.Owner.Death);
