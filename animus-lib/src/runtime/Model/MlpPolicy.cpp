@@ -29,7 +29,7 @@
 namespace
 {
     constexpr char AMDL_MAGIC[4] = { 'A', 'M', 'D', 'L' };
-    constexpr uint32 AMDL_VERSION = 6;
+    constexpr uint32 AMDL_VERSION = 7;
 
     /// Guards against a corrupt header asking for gigabytes.
     constexpr uint32 MAX_LAYER_WIDTH = 1 << 16;
@@ -260,6 +260,7 @@ bool Animus::MlpPolicy::Load(std::string const& path, std::string const& scenari
     Factored success, duration;
     float lookaheadWeight[2] = { 0.0f, 0.0f };
     std::vector<float> kindWeight, kindBias, targetWeight, targetBias, pair, kindEmbedding, targetEmbedding;
+    std::vector<float> kindScale, targetScale;
     std::vector<uint8> accepts;
     int32 goalBlockAt = -1;
     uint32 goalSlots = 1;
@@ -311,6 +312,10 @@ bool Animus::MlpPolicy::Load(std::string const& path, std::string const& scenari
             ok = reader.ReadFloats(slotBias, std::size_t(goalSlots - 1) * goalWidth)
                 && reader.ReadFloats(drawn, (joint + 1) * goalWidth) && reader.ReadFloats(noneBias, goalSlots - 1)
                 && reader.Read(gate);
+        // Version 7: the goal's scale on the action head's features (FiLM).
+        ok = ok && reader.ReadFloats(kindScale, std::size_t(goalCount) * width);
+        if (ok && goalTargets > 1)
+            ok = reader.ReadFloats(targetScale, std::size_t(goalTargets) * width);
         if (!ok)
         {
             error = Acore::StringFormat("{} is truncated in its goals", path);
@@ -395,6 +400,8 @@ bool Animus::MlpPolicy::Load(std::string const& path, std::string const& scenari
     _goalBlockAt = goalBlockAt;
     _kindEmbedding = std::move(kindEmbedding);
     _targetEmbedding = std::move(targetEmbedding);
+    _kindScale = std::move(kindScale);
+    _targetScale = std::move(targetScale);
     _targetScores.assign(goalTargets, 0.0f);
     _lookahead = lookahead;
     _success = std::move(success);
@@ -467,6 +474,8 @@ void Animus::MlpPolicy::Unload()
     _accepts.clear();
     _kindEmbedding.clear();
     _targetEmbedding.clear();
+    _kindScale.clear();
+    _targetScale.clear();
     _targetScores.clear();
     _goalBlockAt = -1;
     _goalTargets = 1;
@@ -877,24 +886,28 @@ int32 Animus::MlpPolicy::Decide(float const* obs, uint8 const* mask, State* stat
             state->Queue = queue;
         }
 
-        // The goals' embeddings on the features the action head reads: the primary's, and the secondary's through
-        // the gate.
-        auto const embed = [&](int32 goal, float scale)
+        // The goals on the features the action head reads: features x (1 + scale) + embedding, the primary's and
+        // the secondary's through the gate (GoalEmbedding.condition).
+        auto const value = [&](std::vector<float> const& kind, std::vector<float> const& target, int32 goal,
+            uint32 col)
         {
-            float const* kindEmbedding = _kindEmbedding.data() + std::size_t(goal / int32(targets)) * features;
-            for (uint32 col = 0; col < features; ++col)
-                in[col] += scale * kindEmbedding[col];
+            float v = kind[std::size_t(goal / int32(targets)) * features + col];
             if (targets > 1)
-            {
-                float const* targetEmbedding = _targetEmbedding.data()
-                    + std::size_t(goal % int32(targets)) * features;
-                for (uint32 col = 0; col < features; ++col)
-                    in[col] += scale * targetEmbedding[col];
-            }
+                v += target[std::size_t(goal % int32(targets)) * features + col];
+            return v;
         };
-        embed(primary, 1.0f);
-        if (paired && secondary >= 0)
-            embed(secondary, _gate);
+        bool const second = paired && secondary >= 0;
+        for (uint32 col = 0; col < features; ++col)
+        {
+            float scale = value(_kindScale, _targetScale, primary, col);
+            float shift = value(_kindEmbedding, _targetEmbedding, primary, col);
+            if (second)
+            {
+                scale += _gate * value(_kindScale, _targetScale, secondary, col);
+                shift += _gate * value(_kindEmbedding, _targetEmbedding, secondary, col);
+            }
+            in[col] = in[col] * (1.0f + scale) + shift;
+        }
     }
 
     {

@@ -123,6 +123,8 @@ namespace Animus
         int32 _goalBlockAt = -1;                 // the goal block's first observation column
         std::vector<float> _kindEmbedding;       // [K * features]
         std::vector<float> _targetEmbedding;     // [T * features]
+        std::vector<float> _kindScale;           // [K * features] the goal's scale on the features (format 7)
+        std::vector<float> _targetScale;         // [T * features]
         std::vector<float> _targetScores;        // scratch [T]
 
         /// A score per (kind, target), built as the goal head's logits are (the learner's _Factored).
