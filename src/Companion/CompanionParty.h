@@ -273,6 +273,20 @@ namespace Animus
             /// held until the clock rather than ended, until it stops being true.
             int32 GoalChecked = Curriculum::NO_GOAL;
             bool GoalSatisfiedAtChoice = false;
+            /// The secondary goal it holds beside the primary (two goals and a queue), checked as the primary is.
+            int32 Goal2 = Curriculum::NO_GOAL;
+            int32 Goal2Checked = Curriculum::NO_GOAL;
+            bool Goal2SatisfiedAtChoice = false;
+            /// The primary its director's order sets (OrderGoals.h), NO_GOAL without one.
+            int32 OrderGoal = Curriculum::NO_GOAL;
+            /// What the goal block's event and hindsight columns are measured against, as a forge seat's
+            /// (StageScenario::ObserveGoalSignals): the enemy slots alive, the fight's size, low health, the owner
+            /// attacked, and whether it was below Recover's line.
+            std::array<uint8, Curriculum::PACK_SLOTS> EnemySeenAlive{};
+            uint32 EventEnemies = 0;
+            bool EventLow = false;
+            bool EventOwnerAttacked = false;
+            bool BelowRecover = false;
             bool ModelErrorLogged = false;
             bool Temporary = false;             // a party filler (AddFiller), never saved
             bool Parked = false;                // out of the world while the owner flies or rides a vehicle
@@ -283,6 +297,8 @@ namespace Animus
         };
 
         [[nodiscard]] Member* Find(std::string_view name) const;
+        /// The goal block's event and hindsight columns for a member, as a forge seat's.
+        static void ObserveGoalSignals(Member& member, Curriculum::SeatView& view, Player* bot, Player* owner);
         /// A member for a bot in the world: what Add and Attach share once the character is beside the owner.
         bool Join(Player* owner, Player* bot, Curriculum::Layout const& layout, uint8 spec, std::string& message);
         /// A member's bot resolved and in the world, else null with `message` set.

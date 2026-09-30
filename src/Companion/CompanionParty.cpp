@@ -17,6 +17,7 @@
  */
 
 #include "CompanionParty.h"
+#include "OrderGoals.h"
 #include "ActionCatalog.h"
 #include "BotFactory.h"
 #include "Chat.h"
@@ -879,6 +880,44 @@ void Animus::CompanionParty::UpdateMember(Member& member, Player* bot, Player* o
     Decide(member, bot, owner, *policy, settings);
 }
 
+void Animus::CompanionParty::ObserveGoalSignals(Member& member, Curriculum::SeatView& view, Player* bot,
+    Player* owner)
+{
+    // As a forge seat's (StageScenario::ObserveGoalSignals): what it achieved since the last decision whatever it
+    // pursued -- an enemy in one of its slots killed, else its health and mana back past Recover's line -- and
+    // the event that makes the model choose again now: newly below the escape line, more enemies in the fight,
+    // the owner newly attacked.
+    std::array<uint8, Curriculum::PACK_SLOTS> alive{};
+    uint32 enemies = 0;
+    for (uint32 slot = 0; slot < view.EnemyCount && slot < Curriculum::PACK_SLOTS; ++slot)
+        if (Unit const* enemy = view.Enemies[slot]; enemy && enemy->IsAlive())
+        {
+            alive[slot] = 1;
+            if (enemy->IsInCombat())
+                ++enemies;
+        }
+    view.Achieved = Curriculum::NO_GOAL;
+    for (uint32 slot = 0; slot < Curriculum::PACK_SLOTS && view.Achieved == Curriculum::NO_GOAL; ++slot)
+        if (member.EnemySeenAlive[slot] && !alive[slot])
+            view.Achieved = Curriculum::MakeGoal(Curriculum::SeatGoal::Fight, Curriculum::GOAL_TARGET_ENEMY_FIRST + slot);
+    uint32 const maxMana = bot->GetMaxPower(POWER_MANA);
+    float const resource = std::min(bot->GetHealthPct() / 100.0f,
+        maxMana ? float(bot->GetPower(POWER_MANA)) / float(maxMana) : 1.0f);
+    bool const below = resource < 0.8f;
+    if (view.Achieved == Curriculum::NO_GOAL && member.BelowRecover && !below && !bot->IsInCombat())
+        view.Achieved = Curriculum::MakeGoal(Curriculum::SeatGoal::Recover, Curriculum::GOAL_TARGET_NONE);
+    member.EnemySeenAlive = alive;
+    member.BelowRecover = below;
+
+    bool const low = bot->GetHealthPct() < 35.0f;
+    bool const ownerAttacked = owner && owner->IsAlive() && !owner->getAttackers().empty();
+    view.GoalEvent = (low && !member.EventLow) || enemies > member.EventEnemies
+        || (ownerAttacked && !member.EventOwnerAttacked);
+    member.EventLow = low;
+    member.EventEnemies = enemies;
+    member.EventOwnerAttacked = ownerAttacked;
+}
+
 void Animus::CompanionParty::Decide(Member& member, Player* bot, Player* owner, MlpPolicy& policy,
     Settings const& settings)
 {
@@ -914,22 +953,44 @@ void Animus::CompanionParty::Decide(Member& member, Player* bot, Player* owner, 
     // The durative action it is running: one press that stands for many decisions (rest, hold an interrupt, keep
     // range). SeatEncoder starts, runs and stops it as it does for a forge seat.
     view.Option = &member.Option;
-    // The goal it holds shapes what the core block offers, as it does for a forge seat (CoreBlock::GoalCloses).
-    view.Goal = member.Goal;
-    // Ended as a forge seat's goal ends (GoalBlock::Status): reached, or no longer possible -- the model then
-    // chooses again at this decision rather than at its clock.
-    if (member.Goal != Curriculum::NO_GOAL)
+    // Under its director, a member or group order is its primary goal (OrderGoals.h), as a forge seat's is under a
+    // learned director; the model reads it from the goal block and holds it.
+    member.OrderGoal = Curriculum::NO_GOAL;
+    if (view.Order.Active && view.Order.Kind != Curriculum::OrderKind::None
+        && view.Order.Source != Curriculum::OrderSource::Side)
+    {
+        int32 enemySlot = -1;
+        for (uint32 slot = 0; slot < view.EnemyCount && slot < Curriculum::PACK_SLOTS && enemySlot < 0; ++slot)
+            if (view.Enemies[slot] && view.Enemies[slot] == view.Order.Target)
+                enemySlot = int32(slot);
+        member.OrderGoal = Curriculum::OrderGoal(view.Order.Kind, enemySlot, view.Order.Objective);
+    }
+    int32 const primary = member.OrderGoal != Curriculum::NO_GOAL ? member.OrderGoal : member.Goal;
+    // The goals it holds shape what the core block offers, as they do for a forge seat (CoreBlock::GoalCloses).
+    view.Goal = primary;
+    view.Goal2 = member.Goal2 != primary ? member.Goal2 : Curriculum::NO_GOAL;
+    view.OrderGoal = member.OrderGoal;
+    // Ended as a forge seat's goals end (GoalBlock::Status): reached, or no longer possible -- the model then
+    // promotes its queue or chooses again at this decision rather than at its clock, and drops a secondary.
+    auto const ended = [&view](int32 goal, int32& checked, bool& satisfied, bool& reachedOut)
     {
         bool reached = false;
         bool possible = false;
-        Curriculum::GoalBlock::Status(view, member.Goal, reached, possible);
+        Curriculum::GoalBlock::Status(view, goal, reached, possible);
         // True already when it was chosen: held, not ended, as a forge seat's is (GoalBlock::Earned).
-        bool fresh = member.GoalChecked != member.Goal;
-        member.GoalChecked = member.Goal;
-        reached = Curriculum::GoalBlock::Earned(reached, fresh, member.GoalSatisfiedAtChoice);
-        view.GoalEnded = reached || !possible;
-        view.GoalReached = reached;
+        bool fresh = checked != goal;
+        checked = goal;
+        reachedOut = Curriculum::GoalBlock::Earned(reached, fresh, satisfied);
+        return reachedOut || !possible;
+    };
+    if (primary != Curriculum::NO_GOAL)
+        view.GoalEnded = ended(primary, member.GoalChecked, member.GoalSatisfiedAtChoice, view.GoalReached);
+    if (view.Goal2 != Curriculum::NO_GOAL)
+    {
+        bool reached = false;
+        view.Goal2Ended = ended(view.Goal2, member.Goal2Checked, member.Goal2SatisfiedAtChoice, reached);
     }
+    ObserveGoalSignals(member, view, bot, owner);
     SeatEncoder::Observe(view, member.Obs.data(), member.Mask.data());
 
     // Paced and locked actions, as a forge seat's mask has them.
@@ -944,7 +1005,8 @@ void Animus::CompanionParty::Decide(Member& member, Player* bot, Player* owner, 
 
     int32 const action = policy.Decide(member.Obs.data(), member.Mask.data(), &member.Policy);
     // What it is pursuing, for its teammates to see, as a forge party seat's goal reaches the others.
-    member.Goal = policy.GoalCount() ? int32(member.Policy.Goal) : Curriculum::NO_GOAL;
+    member.Goal = policy.GoalCount() ? policy.PrimaryOf(member.Policy) : Curriculum::NO_GOAL;
+    member.Goal2 = policy.GoalCount() ? policy.SecondaryOf(member.Policy) : Curriculum::NO_GOAL;
 
     SeatActionResult result;
     SeatEncoder::Apply(view, action, result);

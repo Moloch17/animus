@@ -29,7 +29,7 @@
 namespace
 {
     constexpr char AMDL_MAGIC[4] = { 'A', 'M', 'D', 'L' };
-    constexpr uint32 AMDL_VERSION = 5;
+    constexpr uint32 AMDL_VERSION = 6;
 
     /// Guards against a corrupt header asking for gigabytes.
     constexpr uint32 MAX_LAYER_WIDTH = 1 << 16;
@@ -262,6 +262,9 @@ bool Animus::MlpPolicy::Load(std::string const& path, std::string const& scenari
     std::vector<float> kindWeight, kindBias, targetWeight, targetBias, pair, kindEmbedding, targetEmbedding;
     std::vector<uint8> accepts;
     int32 goalBlockAt = -1;
+    uint32 goalSlots = 1;
+    std::vector<float> slotBias, drawn, noneBias;
+    float gate = 0.0f;
     if (!reader.Read(goalCount) || !reader.Read(goalTargets) || !reader.Read(goalEvery)
         || goalCount > MAX_LAYER_WIDTH || goalTargets == 0 || goalTargets > MAX_LAYER_WIDTH)
     {
@@ -303,12 +306,20 @@ bool Animus::MlpPolicy::Load(std::string const& path, std::string const& scenari
         if (ok && lookahead)
             ok = readFactored(success) && readFactored(duration) && reader.Read(lookaheadWeight[0])
                 && reader.Read(lookaheadWeight[1]);
+        ok = ok && reader.Read(goalSlots) && goalSlots >= 1 && goalSlots <= 8;
+        if (ok && goalSlots > 1)
+            ok = reader.ReadFloats(slotBias, std::size_t(goalSlots - 1) * goalWidth)
+                && reader.ReadFloats(drawn, (joint + 1) * goalWidth) && reader.ReadFloats(noneBias, goalSlots - 1)
+                && reader.Read(gate);
         if (!ok)
         {
             error = Acore::StringFormat("{} is truncated in its goals", path);
             return false;
         }
-        if (goalBlockAt >= 0 && uint32(goalBlockAt) + goalCount + goalTargets + 1 > obsDim)
+        // The goal block's columns: kinds, targets, ended, reached, and with two goals the secondary ending, the
+        // event, the director's primary and what was achieved.
+        uint32 const blockWidth = goalCount + goalTargets + 2 + (goalSlots > 1 ? 3 + 2 * (goalCount + goalTargets) : 0);
+        if (goalBlockAt >= 0 && uint32(goalBlockAt) + blockWidth > obsDim)
         {
             error = Acore::StringFormat("{} puts its goal block at {}, past its {} observations", path, goalBlockAt,
                 obsDim);
@@ -390,6 +401,12 @@ bool Animus::MlpPolicy::Load(std::string const& path, std::string const& scenari
     _duration = std::move(duration);
     _lookaheadWeight[0] = lookaheadWeight[0];
     _lookaheadWeight[1] = lookaheadWeight[1];
+    _goalSlots = goalCount ? goalSlots : 1;
+    _slotBias = std::move(slotBias);
+    _drawn = std::move(drawn);
+    _noneBias = std::move(noneBias);
+    _gate = gate;
+    _shifted.assign(slowSize ? slowSize : featureWidth, 0.0f);
     _foresightOutputs = foresightOutputs;
     _foresightWeight = std::move(foresightWeight);
     _foresightBias = std::move(foresightBias);
@@ -429,6 +446,11 @@ bool Animus::MlpPolicy::Load(std::string const& path, std::string const& scenari
 void Animus::MlpPolicy::Unload()
 {
     _layers.clear();
+    _goalSlots = 1;
+    _slotBias.clear();
+    _drawn.clear();
+    _noneBias.clear();
+    _shifted.clear();
     _scratchA.clear();
     _scratchB.clear();
     _gates.clear();
@@ -507,6 +529,18 @@ namespace
     {
         return 1.0f / (1.0f + std::exp(-value));
     }
+}
+
+int32 Animus::MlpPolicy::PrimaryOf(State const& state) const
+{
+    std::size_t const count = std::size_t(_goalCount) * _goalTargets;
+    return _goalSlots > 1 ? int32(state.Goal / (count + 1)) : int32(state.Goal);
+}
+
+int32 Animus::MlpPolicy::SecondaryOf(State const& state) const
+{
+    std::size_t const count = std::size_t(_goalCount) * _goalTargets;
+    return _goalSlots > 1 ? int32(state.Goal % (count + 1)) - 1 : -1;
 }
 
 int32 Animus::MlpPolicy::Decide(float const* obs, uint8 const* mask, State* state)
@@ -661,14 +695,47 @@ int32 Animus::MlpPolicy::Decide(float const* obs, uint8 const* mask, State* stat
 
     if (_goalCount)
     {
-        // A goal is chosen on its own clock, or at once when the goal block says the one held ended, and kept in
-        // between: the best (kind, target) the goal block offers and the kind accepts. Its kind's and target's
-        // embeddings are added to the features.
+        // The goal decision (the learner's LayoutActor.decide_goals, greedy). With two goals and a queue: an ended
+        // secondary is dropped, an ended primary is replaced by the queue's head without a choice, a choice comes on
+        // the clock, on an ended primary with nothing queued, or on the goal block's event, and the director's order
+        // is the primary whatever was held or drawn. Each is the best (kind, target) its mask allows.
         uint32 const targets = _goalTargets;
+        std::size_t const count = std::size_t(_goalCount) * targets;
+        bool const paired = _goalSlots > 1;
         float const* block = _goalBlockAt >= 0 ? obs + _goalBlockAt : nullptr;
-        bool const ended = block && targets > 1 && block[_goalCount + targets] > 0.5f;
-        uint32 goal = state ? state->Goal : 0;
-        bool const choose = !state || state->Age % _goalEvery == 0 || ended;
+        uint32 const base = _goalCount + targets;
+        bool const ended = block && targets > 1 && block[base] > 0.5f;
+        bool const secondaryEnded = paired && block && targets > 1 && block[base + 2] > 0.5f;
+        bool const event = paired && block && targets > 1 && block[base + 3] > 0.5f;
+        bool const fromOrder = paired && block && targets > 1 && block[base + 4] > 0.5f;
+        int32 orderGoal = 0;
+        if (fromOrder)
+        {
+            uint32 kind = 0;
+            uint32 target = 0;
+            for (uint32 k = 1; k < _goalCount; ++k)
+                if (block[base + 5 + k] > block[base + 5 + kind])
+                    kind = k;
+            for (uint32 t = 1; t < targets; ++t)
+                if (block[base + 5 + _goalCount + t] > block[base + 5 + _goalCount + target])
+                    target = t;
+            orderGoal = int32(kind * targets + target);
+        }
+
+        uint32 const held = state ? state->Goal : 0;
+        int32 primary = paired ? int32(held / (count + 1)) : int32(held);
+        int32 secondary = paired ? int32(held % (count + 1)) - 1 : -1;
+        std::array<int32, 2> queue = state ? state->Queue : std::array<int32, 2>{ -1, -1 };
+        if (secondaryEnded)
+            secondary = -1;
+        bool promoted = false;
+        if (paired && ended && queue[0] >= 0)
+        {
+            primary = queue[0];
+            queue = { queue[1], -1 };
+            promoted = true;
+        }
+        bool const choose = !state || state->Age % _goalEvery == 0 || (ended && !promoted) || event;
         if (choose)
         {
             // What the goal head reads: the slow loop stepped on the fed-back features, or the plain features.
@@ -699,7 +766,8 @@ int32 Animus::MlpPolicy::Decide(float const* obs, uint8 const* mask, State* stat
                 {
                     float const reset = Sigmoid(_slowGates[row] + _slowHiddenGates[row]);
                     float const update = Sigmoid(_slowGates[size + row] + _slowHiddenGates[size + row]);
-                    float const candidate = std::tanh(_slowGates[2 * size + row] + reset * _slowHiddenGates[2 * size + row]);
+                    float const candidate = std::tanh(_slowGates[2 * size + row]
+                        + reset * _slowHiddenGates[2 * size + row]);
                     _slowOut[row] = (1.0f - update) * candidate + update * (carried ? carried[row] : 0.0f);
                 }
                 if (slow)
@@ -708,70 +776,125 @@ int32 Animus::MlpPolicy::Decide(float const* obs, uint8 const* mask, State* stat
                 width = size;
             }
 
-            auto const dot = [&](float const* weights, float bias)
+            auto const dot = [&](float const* reads, float const* weights, float bias)
             {
                 float sum = bias;
                 for (uint32 col = 0; col < width; ++col)
-                    sum += weights[col] * source[col];
+                    sum += weights[col] * reads[col];
                 return sum;
             };
             auto const factored = [&](Factored const& part, uint32 kind, uint32 target)
             {
-                float score = dot(part.KindWeight.data() + std::size_t(kind) * width, part.KindBias[kind])
+                float score = dot(source, part.KindWeight.data() + std::size_t(kind) * width, part.KindBias[kind])
                     + part.Pair[std::size_t(kind) * targets + target];
                 if (targets > 1)
-                    score += dot(part.TargetWeight.data() + std::size_t(target) * width, part.TargetBias[target]);
+                    score += dot(source, part.TargetWeight.data() + std::size_t(target) * width,
+                        part.TargetBias[target]);
                 return score;
             };
-            for (uint32 target = 0; target < targets; ++target)
-                _targetScores[target] = targets > 1
-                    ? dot(_targetWeight.data() + std::size_t(target) * width, _targetBias[target]) : 0.0f;
-
-            float best = -std::numeric_limits<float>::infinity();
-            goal = 0;
-            for (uint32 kind = 0; kind < _goalCount; ++kind)
+            // The best goal from `reads`: the primary (lookahead, block and accepts; the first always allowed), or a
+            // later slot (its own mask; -1 when none scores best).
+            auto const best = [&](float const* reads, uint32 slot) -> int32
             {
-                if (block && targets > 1 && block[kind] <= 0.5f)
-                    continue;
-                // No goal block (the director) with a goal space: only the first goal, which means none.
-                if (!block && targets > 1 && kind > 0)
-                    continue;
-                float const kindScore = dot(_kindWeight.data() + std::size_t(kind) * width, _kindBias[kind]);
                 for (uint32 target = 0; target < targets; ++target)
+                    _targetScores[target] = targets > 1
+                        ? dot(reads, _targetWeight.data() + std::size_t(target) * width, _targetBias[target]) : 0.0f;
+                float top = slot ? _noneBias[slot - 1] : -std::numeric_limits<float>::infinity();
+                int32 chosen = slot ? -1 : 0;
+                for (uint32 kind = 0; kind < _goalCount; ++kind)
                 {
-                    std::size_t const joint = std::size_t(kind) * targets + target;
-                    bool const allowed = joint == 0 || (block != nullptr || targets <= 1) && (_accepts[joint]
-                        && (!block || targets <= 1 || block[_goalCount + target] > 0.5f));
-                    if (!allowed)
+                    // The kinds the block offers (the primary and the secondary; a queued goal is for later), and with
+                    // no goal block (the director) only the first goal for the primary and none after it.
+                    if (block && targets > 1 && slot <= 1 && block[kind] <= 0.5f)
                         continue;
-                    float score = kindScore + _targetScores[target] + _pair[joint];
-                    if (_lookahead)
-                        score += _lookaheadWeight[0] * factored(_success, kind, target)
-                            + _lookaheadWeight[1] * Sigmoid(factored(_duration, kind, target));
-                    if (score > best)
+                    if (!block && targets > 1 && (slot || kind > 0))
+                        continue;
+                    float const kindScore = dot(reads, _kindWeight.data() + std::size_t(kind) * width,
+                        _kindBias[kind]);
+                    for (uint32 target = 0; target < targets; ++target)
                     {
-                        best = score;
-                        goal = uint32(joint);
+                        std::size_t const joint = std::size_t(kind) * targets + target;
+                        bool const present = !block || targets <= 1 || slot > 1 || block[_goalCount + target] > 0.5f;
+                        bool const allowed = (!slot && joint == 0)
+                            || ((block != nullptr || targets <= 1) && _accepts[joint] && present);
+                        if (!allowed)
+                            continue;
+                        float score = kindScore + _targetScores[target] + _pair[joint];
+                        if (_lookahead && !slot)
+                            score += _lookaheadWeight[0] * factored(_success, kind, target)
+                                + _lookaheadWeight[1] * Sigmoid(factored(_duration, kind, target));
+                        if (score > top)
+                        {
+                            top = score;
+                            chosen = int32(joint);
+                        }
                     }
                 }
+                return chosen;
+            };
+
+            int32 const drawnPrimary = best(source, 0);
+            primary = drawnPrimary;
+            if (paired)
+            {
+                // Each later slot reads the features plus its bias plus what was drawn before it (the director's
+                // primary in place of the drawn one where it gave one).
+                std::array<int32, 8> before{};
+                uint32 drawnCount = 0;
+                before[drawnCount++] = fromOrder ? orderGoal : drawnPrimary;
+                std::array<int32, 8> slots{};
+                for (uint32 slot = 1; slot < _goalSlots && slot < slots.size(); ++slot)
+                {
+                    float const* bias = _slotBias.data() + std::size_t(slot - 1) * width;
+                    for (uint32 col = 0; col < width; ++col)
+                        _shifted[col] = source[col] + bias[col];
+                    for (uint32 index = 0; index < drawnCount; ++index)
+                    {
+                        float const* row = _drawn.data() + std::size_t(before[index] + 1) * width;
+                        for (uint32 col = 0; col < width; ++col)
+                            _shifted[col] += row[col];
+                    }
+                    slots[slot] = best(_shifted.data(), slot);
+                    before[drawnCount++] = slots[slot];
+                }
+                secondary = slots[1];
+                queue = { _goalSlots > 2 ? slots[2] : -1, _goalSlots > 3 ? slots[3] : -1 };
             }
+        }
+        if (paired)
+        {
+            if (fromOrder)
+                primary = orderGoal;
+            if (secondary == primary)
+                secondary = -1;
         }
 
         if (state)
         {
             state->Age = choose ? 1 : state->Age + 1;
-            state->Goal = goal;
+            state->Goal = paired ? uint32(std::size_t(primary) * (count + 1) + std::size_t(secondary + 1))
+                : uint32(primary);
+            state->Queue = queue;
         }
 
-        float const* kindEmbedding = _kindEmbedding.data() + std::size_t(goal / targets) * features;
-        for (uint32 col = 0; col < features; ++col)
-            in[col] += kindEmbedding[col];
-        if (targets > 1)
+        // The goals' embeddings on the features the action head reads: the primary's, and the secondary's through
+        // the gate.
+        auto const embed = [&](int32 goal, float scale)
         {
-            float const* targetEmbedding = _targetEmbedding.data() + std::size_t(goal % targets) * features;
+            float const* kindEmbedding = _kindEmbedding.data() + std::size_t(goal / int32(targets)) * features;
             for (uint32 col = 0; col < features; ++col)
-                in[col] += targetEmbedding[col];
-        }
+                in[col] += scale * kindEmbedding[col];
+            if (targets > 1)
+            {
+                float const* targetEmbedding = _targetEmbedding.data()
+                    + std::size_t(goal % int32(targets)) * features;
+                for (uint32 col = 0; col < features; ++col)
+                    in[col] += scale * targetEmbedding[col];
+            }
+        };
+        embed(primary, 1.0f);
+        if (paired && secondary >= 0)
+            embed(secondary, _gate);
     }
 
     {

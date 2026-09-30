@@ -21,6 +21,7 @@
 
 #include "Define.h"
 #include <algorithm>
+#include <array>
 #include <string>
 #include <vector>
 
@@ -41,8 +42,12 @@ namespace Animus
         {
             std::vector<float> Memory;      // the GRU's state; sized on first use
             std::vector<float> SlowMemory;  // the two-clock seat's slow loop, stepped when a goal is chosen
+            /// The goal held; with two goals (GoalSlots() > 1) the pair, primary * (count + 1) + secondary + 1, as the
+            /// learner's goal_pair: PrimaryOf and SecondaryOf read it.
             uint32 Goal = 0;
             uint32 Age = 0;                 // decisions the goal has been held, 0 = choose one now
+            /// The goals queued behind the pair held (-1: none), promoted when the primary ends.
+            std::array<int32, 2> Queue{ -1, -1 };
 
             /// Nothing remembered and no goal: a new fight starts here.
             void Clear()
@@ -51,6 +56,7 @@ namespace Animus
                 std::fill(SlowMemory.begin(), SlowMemory.end(), 0.0f);
                 Goal = 0;
                 Age = 0;
+                Queue = { -1, -1 };
             }
         };
 
@@ -76,6 +82,10 @@ namespace Animus
         [[nodiscard]] bool HasMemory() const { return _recurrentSize != 0; }
         [[nodiscard]] uint32 GoalCount() const { return _goalCount; }       // kinds; 0 without goals
         [[nodiscard]] uint32 GoalTargets() const { return _goalTargets; }
+        [[nodiscard]] uint32 GoalSlots() const { return _goalSlots; }        // 1: one goal; more: two and a queue
+        /// The primary and secondary goal a state holds (kind * targets + target; the secondary -1 for none).
+        [[nodiscard]] int32 PrimaryOf(State const& state) const;
+        [[nodiscard]] int32 SecondaryOf(State const& state) const;
 
     private:
         struct Layer
@@ -126,6 +136,16 @@ namespace Animus
         Factored _success;
         Factored _duration;
         float _lookaheadWeight[2] = { 0.0f, 0.0f };
+
+        /// Two goals and a queue (format 6, the learner's GoalHead slots): each slot after the primary reads the
+        /// features plus its bias plus what was drawn before it, and can say none; the secondary adds its
+        /// embedding to the action head's features through the gate.
+        uint32 _goalSlots = 1;
+        std::vector<float> _slotBias;            // [(S - 1) * goal width]
+        std::vector<float> _drawn;               // [(K * T + 1) * goal width], goal + 1 (0: none)
+        std::vector<float> _noneBias;            // [S - 1]
+        float _gate = 0.0f;
+        std::vector<float> _shifted;             // scratch [goal width]
 
         /// Predictions fed back (Component P, layer 2): the foresight head and its projection onto the features.
         uint32 _foresightOutputs = 0;
