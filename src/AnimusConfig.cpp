@@ -112,7 +112,7 @@ void Animus::AnimusConfig::Load()
 
     // The stage whose models the module ships (models/<class>_companion.amdl). A name that is not a stage falls back
     // to it, and it to the first stage, since LayoutFor builds the layout of whatever is named here.
-    constexpr std::string_view DEFAULT_STAGE = "stage8_companion";
+    constexpr std::string_view DEFAULT_STAGE = "stage8_party";
     CurriculumStage = sConfigMgr->GetOption<std::string>("Animus.Curriculum.Stage", std::string(DEFAULT_STAGE));
     if (!Curriculum::FindStage(CurriculumStage))
     {

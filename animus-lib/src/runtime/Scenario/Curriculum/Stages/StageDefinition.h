@@ -75,6 +75,8 @@ namespace Animus::Curriculum
         Raid10,
         Raid25,
         Raid40,
+        /// Whole dungeon wings (next-run plan 5.3): from the wing's door to its last boss, the trash alive.
+        Wing,
     };
 
     enum class PullSchedule : uint8
@@ -101,6 +103,11 @@ namespace Animus::Curriculum
     {
         std::string Name;               // unique in the stage: episode info, stage.json, tuning keys
         uint32 Weight = 1;              // share of episodes; <TuningPrefix>Arena.<stage>.<name>.Weight
+        /// The share at the end of the stage's budget, reached linearly from Weight as training goes (the
+        /// learner's PROGRESS): an arena weighted up as the skills it needs come in -- whole dungeon wings in the
+        /// party stage. -1 keeps Weight throughout. Evaluation draws by the final weights.
+        /// <TuningPrefix>Arena.<stage>.<name>.WeightFinal
+        int32 WeightFinal = -1;
         SeatPlan Seats = SeatPlan::Solo;
         Opposition Against = Opposition::Creature;
         PullSchedule Schedule = PullSchedule::None;
@@ -163,6 +170,11 @@ namespace Animus::Curriculum
         /// rising rung and neither reading could be ruled out. Overridden per arena by
         /// `<TuningPrefix>Arena.<stage>.<arena>.MaxRung`.
         int32 MaxRung = -1;
+        /// **Commanded goals** (next-run plan, 3.4): the sim gives the seat its primary goal -- a random one of those
+        /// the goal block offers, every COMMAND_EVERY decisions or when it ends -- as a director's order is given, so
+        /// the learner holds it without its goal head being trained on it. Paid only by the goal's own terms beside
+        /// the stage's: the fast loop learns to follow a goal before the slow loop learns to choose one.
+        bool CommandedGoals = false;
         /// Travel: the objective is far enough that flying beats riding (the stage's map must allow flight).
         bool Flying = false;
         /// Travel: no mount may be summoned, so the trip is made on the seat's own legs. What is left to learn
