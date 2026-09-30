@@ -803,9 +803,9 @@ int32 Animus::MlpPolicy::Decide(float const* obs, uint8 const* mask, State* stat
                 int32 chosen = slot ? -1 : 0;
                 for (uint32 kind = 0; kind < _goalCount; ++kind)
                 {
-                    // The kinds the block offers (the primary and the secondary; a queued goal is for later), and with
-                    // no goal block (the director) only the first goal for the primary and none after it.
-                    if (block && targets > 1 && slot <= 1 && block[kind] <= 0.5f)
+                    // The kinds the block offers, for every slot (a queued goal too, as the learner draws it), and
+                    // with no goal block (the director) only the first goal for the primary and none after it.
+                    if (block && targets > 1 && block[kind] <= 0.5f)
                         continue;
                     if (!block && targets > 1 && (slot || kind > 0))
                         continue;
@@ -814,7 +814,7 @@ int32 Animus::MlpPolicy::Decide(float const* obs, uint8 const* mask, State* stat
                     for (uint32 target = 0; target < targets; ++target)
                     {
                         std::size_t const joint = std::size_t(kind) * targets + target;
-                        bool const present = !block || targets <= 1 || slot > 1 || block[_goalCount + target] > 0.5f;
+                        bool const present = !block || targets <= 1 || block[_goalCount + target] > 0.5f;
                         bool const allowed = (!slot && joint == 0)
                             || ((block != nullptr || targets <= 1) && _accepts[joint] && present);
                         if (!allowed)

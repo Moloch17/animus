@@ -400,7 +400,7 @@ Animus.Curriculum.Casting.Cancel = 0.05
 #   so a goal head cannot collapse into one goal, rather than paying for play the stage's own terms already price
 Animus.Curriculum.Goals.Reached = 0.05
 #   per change of a seat's goal (training only): Match is paid once per goal held, so without this churn was paid
-Animus.Curriculum.Goals.Switch = 0.03
+Animus.Curriculum.Goals.Switch = 0.1
 #   closing on the goal held, potential-based (Progress x (gamma x phi' - phi), phi in [-1, 0]): yards to its place
 #   over 60, the named enemy's health, the seat's own health and mana, the friend's health. Gamma is the learner's
 Animus.Curriculum.Goals.Progress = 0.5
@@ -492,7 +492,7 @@ Animus.Curriculum.Actions.RepeatWindowMs = 10000
 Animus.Curriculum.Actions.RepeatFree = 3
 #   per turn or pitch chosen against one chosen within Options.JitterWindowMs, and per half turn a bearing pressed within it
 #   swings the feet round from the last one (training only: steering that does not commit)
-Animus.Curriculum.Actions.Jitter = 0.02
+Animus.Curriculum.Actions.Jitter = 0.05
 #   presses with intent: every spell and step is judged against the goal the seat holds, and one that works against
 #   it is charged this (training only: nothing is charged in play)
 Animus.Curriculum.Actions.Aimless = 0.02
@@ -714,7 +714,7 @@ Animus.Curriculum.Options.MoveTurnMs = 250
 Animus.Curriculum.Options.MovePitchMs = 250
 #   ... and how soon after a turn, a pitch or a bearing another that undoes it counts as jitter (ms; Actions.Jitter). The forge
 #   charges it in training; nothing is charged in play, but the seat observes its turns as it was trained to
-Animus.Curriculum.Options.JitterWindowMs = 750
+Animus.Curriculum.Options.JitterWindowMs = 1500
 
 #   ... and how long a companion's follow keeps after the owner before it lapses (ms). One press runs the seat to
 #   just behind the owner and keeps re-aiming that run at where the owner is now; it ends on its own when the seat
