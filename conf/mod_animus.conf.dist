@@ -53,11 +53,11 @@ Animus.ModelDir = "animus"
 #        Description: Which curriculum stage's models class companions play. A companion summoned
 #                     before a ".reload config" keeps its stage. A name that is not a stage falls
 #                     back to the default.
-#        Default:     "stage8_party" - the models this module ships (models/, one per class)
-#                     Any stage of ".animus stage list" (stage1_move ... stage19_ship), with that
+#        Default:     "stage6_party" - the models this module ships (models/, one per class)
+#                     Any stage of ".animus stage list" (stage1_move ... stage18_ship), with that
 #                     stage's models in Animus.ModelDir
 
-Animus.Curriculum.Stage = "stage8_party"
+Animus.Curriculum.Stage = "stage6_party"
 
 #
 #    Animus.Curriculum.DecisionMs
@@ -420,7 +420,7 @@ Animus.Curriculum.Goals.SecondaryShare = 0.5
 Animus.Curriculum.Goals.Secondary = 0.002
 #   every arena with a director, per decision a seat spends fighting the enemy its director called, while one is
 #   called and alive. Compliance shaping: an order is meant to be followed because following it wins fights, but a
-#   channel that correlates with nothing cannot bootstrap into that. stage15_arena ran 30M steps with the order
+#   channel that correlates with nothing cannot bootstrap into that. stage12_arena ran 30M steps with the order
 #   paying nothing and order_focus_kept sat at chance the whole way, so the director's calls changed nothing in the
 #   world and it never left exploration. The same job Goals.Reached does for the goal head; anneal towards 0 once
 #   order_focus_kept holds up without it. The director itself never earns this -- it is taken back out of its own
@@ -842,7 +842,7 @@ Animus.Curriculum.Opponent.TankChance = 20
 
 #
 #    Animus.Curriculum.Evade.*
-#        Getting away from a fight that cannot be won (stage13_escape's evade and hide arenas). Time spent unseen is
+#        Getting away from a fight that cannot be won (stage10_escape's evade and hide arenas). Time spent unseen is
 #        counted and never paid -- paid seconds out of sight are earned by standing in the far corner. What is
 #        paid is the transition out of contact, once a break, with a cooldown.
 
@@ -855,7 +855,7 @@ Animus.Curriculum.Evade.EscapeMs = 8000
 
 #
 #    Animus.Curriculum.Stealth.*
-#        Stalking (stage14_stealth): closing on someone while stealthed and unseen, and holding there. The one
+#        Stalking (stage11_stealth): closing on someone while stealthed and unseen, and holding there. The one
 #        reward in the curriculum paid per decision rather than on a transition, and capped for it. Time unseen
 #        is still never paid -- the distance condition is what makes this a skill, since detection is a check
 #        the seat is losing the whole time it stands inside the band.
@@ -873,7 +873,7 @@ Animus.Curriculum.Stealth.OpenerWindowMs = 6000
 
 #
 #    Animus.Curriculum.Ambush.*
-#        Scripted enemy players who ambush the owner (stage19_ship's ambush arena, and stage18_world_shared's ganks).
+#        Scripted enemy players who ambush the owner (stage18_ship's ambush arena, and stage17_world_shared's ganks).
 #        Their class, role and level follow the Opponent.* chances and spread.
 
 #   beside pulls: they arrive at a random time between these, in ms (at most 3/4 into the episode)
