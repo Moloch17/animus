@@ -411,7 +411,7 @@ void Animus::BotFactory::DestroyUnplaced(Player* bot)
     delete session;
 }
 
-WorldSession* Animus::BotFactory::Destroy(Player* bot, bool keepSession)
+WorldSession* Animus::BotFactory::Destroy(Player* bot, bool keepSession, bool forget)
 {
     WorldSession* session = bot->GetSession();
     ObjectGuid const guid = bot->GetGUID();
@@ -450,7 +450,8 @@ WorldSession* Animus::BotFactory::Destroy(Player* bot, bool keepSession)
             "first", bot->GetName(), bot->GetTeleportDest().GetMapId(), bot->GetTeleportDest().GetPositionX(),
             bot->GetTeleportDest().GetPositionY(), bot->GetTeleportDest().GetPositionZ());
 
-    sCharacterCache->DeleteCharacterCacheEntry(guid, bot->GetName());
+    if (forget)
+        sCharacterCache->DeleteCharacterCacheEntry(guid, bot->GetName());
 
     // Removes the player from its map, drops its social list and deletes it; false = no SaveToDB.
     session->LogoutPlayer(false);

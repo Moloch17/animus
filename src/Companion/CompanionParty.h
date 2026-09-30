@@ -323,7 +323,8 @@ namespace Animus
         void Direct(Player* owner, Settings const& settings, ModelLibrary& models, uint32 diff);
         /// A companion's slot among those the director commands, or DIRECTOR_SEATS when it is not one.
         [[nodiscard]] uint32 DirectedSlot(ObjectGuid bot) const;
-        static void Destroy(Player* bot);
+        /// Out of the group and logged out; `forget` drops the character from the cache as well (BotFactory::Destroy).
+        static void Destroy(Player* bot, bool forget);
         /// LevelUp for a companion the owner edited: talents and pet talents taken again at the new level, new
         /// points spent along the standard build, the owner's gear kept.
         void LevelUpEdited(Member& member, Player* bot, Player* owner) const;

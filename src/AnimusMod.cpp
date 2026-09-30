@@ -115,6 +115,27 @@ namespace
             list += (list.empty() ? "" : ", ") + std::string(entry.Name);
         return list;
     }
+
+    /// The companion character's cache entry. A character that left the cache but not the database (a companion
+    /// put away by a build that still forgot it) is read back from its row and cached again; null only when the
+    /// character is really gone.
+    CharacterCacheEntry const* CharacterOf(ObjectGuid bot)
+    {
+        if (CharacterCacheEntry const* character = sCharacterCache->GetCharacterCacheByGuid(bot))
+            return character;
+
+        QueryResult const result = CharacterDatabase.Query(
+            "SELECT name, account, race, gender, class, level FROM characters WHERE guid = {}", bot.GetCounter());
+        if (!result)
+            return nullptr;
+
+        Field const* fields = result->Fetch();
+        sCharacterCache->AddCharacterCacheEntry(bot, fields[1].Get<uint32>(), fields[0].Get<std::string>(),
+            fields[3].Get<uint8>(), fields[2].Get<uint8>(), fields[4].Get<uint8>(), fields[5].Get<uint8>());
+        LOG_INFO("module.animus", "Companion {} ({}) was missing from the character cache; read back from the "
+            "database", fields[0].Get<std::string>(), bot.ToString());
+        return sCharacterCache->GetCharacterCacheByGuid(bot);
+    }
 }
 
 Animus::AnimusMod* Animus::AnimusMod::Instance()
@@ -387,7 +408,7 @@ bool Animus::AnimusMod::Summon(Player* owner, std::string& message)
         return false;
     }
 
-    CharacterCacheEntry const* character = sCharacterCache->GetCharacterCacheByGuid(record->Bot);
+    CharacterCacheEntry const* character = CharacterOf(record->Bot);
     if (!character)
     {
         message = "Your companion's character is gone; create a new one.";
@@ -511,7 +532,7 @@ bool Animus::AnimusMod::Reroll(Player* owner, std::string_view race, std::string
     if (!ResolveRaceClass(owner, race, playerClass, raceId, classId, message))
         return false;
 
-    CharacterCacheEntry const* character = sCharacterCache->GetCharacterCacheByGuid(record->Bot);
+    CharacterCacheEntry const* character = CharacterOf(record->Bot);
     if (!character)
     {
         message = "Your companion's character is gone; create a new one.";
@@ -628,7 +649,7 @@ Animus::AnimusMod::Companion Animus::AnimusMod::Describe(Player* owner)
 {
     Companion companion;
     CompanionRegistry::Record const* record = _registry.Find(owner->GetGUID());
-    CharacterCacheEntry const* character = record ? sCharacterCache->GetCharacterCacheByGuid(record->Bot) : nullptr;
+    CharacterCacheEntry const* character = record ? CharacterOf(record->Bot) : nullptr;
     if (!character)
         return companion;
 

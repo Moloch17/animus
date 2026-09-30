@@ -125,8 +125,9 @@ namespace Animus::BotFactory
     bool TeleportWithinMap(Player* bot, Position const& pos);
 
     /// Log the bot out without saving and drop its instance bind. Deletes the session unless
-    /// keepSession, in which case it is returned for the next Create.
-    WorldSession* Destroy(Player* bot, bool keepSession = false);
+    /// keepSession, in which case it is returned for the next Create. A forgotten bot also leaves the character
+    /// cache; a companion, whose character stays in the database to be summoned again, is not forgotten.
+    WorldSession* Destroy(Player* bot, bool keepSession = false, bool forget = true);
 
     /// Delete a Create()d bot that was never placed on a map (and its session).
     void DestroyUnplaced(Player* bot);

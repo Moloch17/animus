@@ -1479,7 +1479,9 @@ void Animus::CompanionParty::Destroy(Member& member, Player* owner)
     if (!bot)
         return;
 
-    Destroy(bot);
+    // The owner's companion keeps its character (and its place in the character cache) to be summoned again; a
+    // temporary member is gone for good.
+    Destroy(bot, member.Temporary);
 }
 
 Animus::CompanionParty::Member* Animus::CompanionParty::Find(std::string_view name) const
@@ -1645,7 +1647,7 @@ bool Animus::CompanionParty::Pet(std::string_view name, PetView& view, std::stri
     return true;
 }
 
-void Animus::CompanionParty::Destroy(Player* bot)
+void Animus::CompanionParty::Destroy(Player* bot, bool forget)
 {
     LOG_INFO("module.animus", "Removing companion {} ({})", bot->GetName(), bot->GetGUID().ToString());
 
@@ -1653,5 +1655,5 @@ void Animus::CompanionParty::Destroy(Player* bot)
     if (Group* group = bot->GetGroup())
         group->RemoveMember(bot->GetGUID());
 
-    BotFactory::Destroy(bot);
+    BotFactory::Destroy(bot, false, forget);
 }
