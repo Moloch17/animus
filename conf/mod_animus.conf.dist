@@ -199,12 +199,12 @@ Animus.Curriculum.Raid.DamagePerGroup = 0.15
 #   tanks (party and raid, where no owner encounter pays it): per enemy on the tank, per decision
 Animus.Curriculum.Raid.TankHold = 0.006
 #   raid healers: per group member above 50% health per decision, the same charged per member below 35%
-Animus.Curriculum.Raid.KeepUp = 0.004
+Animus.Curriculum.Raid.KeepUp = 0.0002
 #   raid damage dealers: own damage as a share of the level's damage scale, times this
 Animus.Curriculum.Raid.Output = 0.5
 #   party and raid: per decision in a fight with an enemy within IdleReach yards and nothing served, neutral,
 #   damaging or healing for IdleMs (ms)
-Animus.Curriculum.Raid.Idle = 0.01
+Animus.Curriculum.Raid.Idle = 0.001
 Animus.Curriculum.Raid.IdleMs = 4000
 Animus.Curriculum.Raid.IdleReach = 40.0
 
@@ -350,7 +350,7 @@ Animus.Curriculum.Life.QuestCredit = 3.0
 Animus.Curriculum.Life.QuestTurnIn = 10.0
 Animus.Curriculum.Life.QuestTimeout = 3.0
 #   per decision a complete quest is not handed in
-Animus.Curriculum.Life.CompleteHeld = 0.002
+Animus.Curriculum.Life.CompleteHeld = 0.0003
 #   training only: a quest item's source that dies without it rolls its loot again, up to this many times (0: off)
 Animus.Curriculum.Life.DropRerolls = 50
 #   quest credit taken in a place another group holds, per share of the quest (training only)
@@ -521,7 +521,7 @@ Animus.Curriculum.Actions.SupplySpent = 0.02
 #   health (eating) or mana (drinking) at or above which consuming is ConsumeNotNeeded
 Animus.Curriculum.Actions.ConsumeFullPct = 85
 #   every press but the no-op costs this in training
-Animus.Curriculum.Actions.Effort = 0.002
+Animus.Curriculum.Actions.Effort = 0.004
 #   per second moving in a fight while already at range, in training
 Animus.Curriculum.Actions.Fidget = 0.01
 #   how much a step must close or open the gap to the wanted range to be judged (yards)
