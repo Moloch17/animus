@@ -899,7 +899,8 @@ void Animus::CompanionParty::ObserveGoalSignals(Member& member, Curriculum::Seat
     view.Achieved = Curriculum::NO_GOAL;
     for (uint32 slot = 0; slot < Curriculum::PACK_SLOTS && view.Achieved == Curriculum::NO_GOAL; ++slot)
         if (member.EnemySeenAlive[slot] && !alive[slot])
-            view.Achieved = Curriculum::MakeGoal(Curriculum::SeatGoal::Fight, Curriculum::GOAL_TARGET_ENEMY_FIRST + slot);
+            view.Achieved = Curriculum::MakeGoal(Curriculum::SeatGoal::Fight,
+                Curriculum::GOAL_TARGET_ENEMY_FIRST + slot);
     uint32 const maxMana = bot->GetMaxPower(POWER_MANA);
     float const resource = std::min(bot->GetHealthPct() / 100.0f,
         maxMana ? float(bot->GetPower(POWER_MANA)) / float(maxMana) : 1.0f);
