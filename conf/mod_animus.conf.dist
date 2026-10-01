@@ -337,31 +337,24 @@ Animus.Curriculum.Instance.WingStall = 0.1
 Animus.Curriculum.Instance.WingStallGraceMs = 60000
 Animus.Curriculum.Instance.WingTimeout = 30.0
 Animus.Curriculum.Instance.WingWaypointYards = 30
-#   support that eases off with success: assist = 1 - (running route share of training runs / WingMastery), 0 in
-#   evaluation; the party is WingLevelLift x assist levels above the dungeon's range, WingWipesExtra x assist more
-#   wipes stand up at the door, and a seat's goal is set by its role's rule with chance WingInstruct x assist (the
-#   healer protects whoever is under WingInstructHeal % health); WingMasteryRate is the running share's step per run
-Animus.Curriculum.Instance.WingMastery = 0.5
-Animus.Curriculum.Instance.WingMasteryRate = 0.02
-Animus.Curriculum.Instance.WingLevelLift = 8.0
-Animus.Curriculum.Instance.WingWipesExtra = 4.0
-Animus.Curriculum.Instance.WingInstruct = 0.8
+#   the support ladder: each rung fixes the dungeon script's share of seats, the level lift, the wipes to spare and the
+#   hint weight; WingProbe of training runs are probes (no script, no hints) and only they measure the policy: after
+#   WingRungRuns probes making WingRungStep of the rung's other runs' progress (at least WingRungFloor) it steps down,
+#   and back up if the probes fall below WingRungFallback of what they made when the rung was stepped onto
+Animus.Curriculum.Instance.WingProbe = 0.2
+Animus.Curriculum.Instance.WingRungRuns = 40
+Animus.Curriculum.Instance.WingRungStep = 0.8
+Animus.Curriculum.Instance.WingRungFloor = 0.3
+Animus.Curriculum.Instance.WingRungFallback = 0.5
 Animus.Curriculum.Instance.WingInstructHeal = 70.0
 #   log a line for each wipe in a whole dungeon: where, what was fighting the party, who died in what order
 Animus.Curriculum.Instance.WingTrace = 1
 #   per second for each hostile creature on the party beyond WingCrowdFree (a pack): a pull run into the next
 Animus.Curriculum.Instance.WingCrowd = 0.05
 Animus.Curriculum.Instance.WingCrowdFree = 4
-#   the support is gone by WingAssistEnd of the stage's budget whatever was earned; the learner imitates the scripted
-#   fight's press (a hint every seat gets) with weight WingHint x the support
-Animus.Curriculum.Instance.WingAssistEnd = 0.8
-Animus.Curriculum.Instance.WingHint = 1.0
 #   1: the route visits every pack in the instance, side bosses and all, before the last boss; per second a seat
 #   other than the tank is further than WingStrayYards from it, WingStray
 Animus.Curriculum.Instance.WingFullClear = 1
-#   the share of seats the dungeon script plays at the start (x the support's ease), gone by WingScriptEnd of the budget
-Animus.Curriculum.Instance.WingScript = 1.0
-Animus.Curriculum.Instance.WingScriptEnd = 0.6
 #   a dead seat nobody has raised WingRiseMs (ms) after the fight ends rises at the door and walks back to the group
 Animus.Curriculum.Instance.WingRiseMs = 30000
 #   1: a closed door opens by itself when a seat reaches it out of a fight; 0: the seats open the way with the crowd
