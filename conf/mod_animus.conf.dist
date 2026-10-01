@@ -347,6 +347,8 @@ Animus.Curriculum.Instance.WingLevelLift = 5.0
 Animus.Curriculum.Instance.WingWipesExtra = 4.0
 Animus.Curriculum.Instance.WingInstruct = 0.8
 Animus.Curriculum.Instance.WingInstructHeal = 70.0
+#   log a line for each wipe in a whole dungeon: where, what was fighting the party, who died in what order
+Animus.Curriculum.Instance.WingTrace = 1
 
 #
 #    Animus.Curriculum.Life.*
