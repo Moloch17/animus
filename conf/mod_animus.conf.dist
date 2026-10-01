@@ -352,6 +352,10 @@ Animus.Curriculum.Instance.WingTrace = 1
 #   per second for each hostile creature on the party beyond WingCrowdFree (a pack): a pull run into the next
 Animus.Curriculum.Instance.WingCrowd = 0.05
 Animus.Curriculum.Instance.WingCrowdFree = 4
+#   the support is gone by WingAssistEnd of the stage's budget whatever was earned; the learner imitates the scripted
+#   fight's press (a hint every seat gets) with weight WingHint x the support
+Animus.Curriculum.Instance.WingAssistEnd = 0.6
+Animus.Curriculum.Instance.WingHint = 1.0
 
 #
 #    Animus.Curriculum.Life.*
