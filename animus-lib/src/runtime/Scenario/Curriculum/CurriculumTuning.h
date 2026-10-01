@@ -261,7 +261,7 @@ namespace Animus::Curriculum
             /// seat is instructed with chance WingInstruct x a (its goal set by its role's rule, unlearned).
             float WingMastery = 0.5f;
             float WingMasteryRate = 0.02f;      // the running share's step per finished training run
-            float WingLevelLift = 5.0f;
+            float WingLevelLift = 8.0f;
             float WingWipesExtra = 4.0f;
             float WingInstruct = 0.8f;
             /// The instructed healer protects whoever is below this health share.
@@ -282,6 +282,10 @@ namespace Animus::Curriculum
             /// of the budget: parties see the whole dungeon before they can clear it themselves.
             float WingScript = 1.0f;
             float WingScriptEnd = 0.4f;
+            /// A dead seat nobody has raised this long after the fight ends rises at the door and walks back.
+            uint32 WingRiseMs = 30000;
+            /// 1: a closed door opens by itself when a seat reaches it out of a fight (before the use action existed).
+            uint32 WingAutoDoors = 0;
             /// Per second a seat other than the tank is further than WingStrayYards from it (both alive): stay with the
             /// leader.
             float WingStray = 0.02f;
@@ -1133,6 +1137,8 @@ namespace Animus::Curriculum
             f("Instance.WingFullClear", tuning.Instance.WingFullClear);
             f("Instance.WingScript", tuning.Instance.WingScript);
             f("Instance.WingScriptEnd", tuning.Instance.WingScriptEnd);
+            f("Instance.WingRiseMs", tuning.Instance.WingRiseMs);
+            f("Instance.WingAutoDoors", tuning.Instance.WingAutoDoors);
             f("Instance.WingStray", tuning.Instance.WingStray);
             f("Instance.WingStrayYards", tuning.Instance.WingStrayYards);
             f("Life.StepCost", tuning.Life.StepCost);

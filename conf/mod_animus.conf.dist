@@ -343,7 +343,7 @@ Animus.Curriculum.Instance.WingWaypointYards = 30
 #   healer protects whoever is under WingInstructHeal % health); WingMasteryRate is the running share's step per run
 Animus.Curriculum.Instance.WingMastery = 0.5
 Animus.Curriculum.Instance.WingMasteryRate = 0.02
-Animus.Curriculum.Instance.WingLevelLift = 5.0
+Animus.Curriculum.Instance.WingLevelLift = 8.0
 Animus.Curriculum.Instance.WingWipesExtra = 4.0
 Animus.Curriculum.Instance.WingInstruct = 0.8
 Animus.Curriculum.Instance.WingInstructHeal = 70.0
@@ -362,6 +362,11 @@ Animus.Curriculum.Instance.WingFullClear = 1
 #   the share of seats the dungeon script plays at the start (x the support's ease), gone by WingScriptEnd of the budget
 Animus.Curriculum.Instance.WingScript = 1.0
 Animus.Curriculum.Instance.WingScriptEnd = 0.4
+#   a dead seat nobody has raised WingRiseMs (ms) after the fight ends rises at the door and walks back to the group
+Animus.Curriculum.Instance.WingRiseMs = 30000
+#   1: a closed door opens by itself when a seat reaches it out of a fight; 0: the seats open the way with the crowd
+#   block's use action (levers, buttons, the cannon, doors)
+Animus.Curriculum.Instance.WingAutoDoors = 0
 Animus.Curriculum.Instance.WingStray = 0.02
 Animus.Curriculum.Instance.WingStrayYards = 25.0
 

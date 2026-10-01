@@ -21,13 +21,17 @@
 
 #include "Block.h"
 
+class GameObject;
+class Player;
+
 namespace Animus::Curriculum
 {
     /// What is on the party past the pack block's PACK_SLOTS enemies, and the pack ahead: a whole dungeon's fights
     /// had a median of eight creatures on the party (2026-10-01), half of them out of sight of a seat that saw four.
     /// Counts over every creature on the party, the next CROWD_SLOTS of them one by one, and the nearest pack not yet
     /// in the fight. A separate block, so the blocks built on PACK_SLOTS keep their sizes and their seeded weights. No
-    /// actions: what it shows is fought through the pack block's slots, and stopped short of by the feet.
+    /// actions but one, using what opens the way on (a lever, the cannon): what it shows is fought through the pack
+    /// block's slots, and stopped short of by the feet.
     class CrowdBlock final : public Block
     {
     public:
@@ -44,7 +48,18 @@ namespace Animus::Curriculum
             OBS_AHEAD_SIN       = 8,    // its bearing in the seat's own frame
             OBS_AHEAD_COS       = 9,
             OBS_IS_TANK         = 10,   // this seat is the one the party's crowd is counted against
-            OBS_SLOT_FIRST      = 11
+            OBS_OBJECT_PRESENT  = 11,   // the nearest thing the party can use (a lever, a button, the cannon, a door)
+            OBS_OBJECT_DISTANCE = 12,   // / 40 yd
+            OBS_OBJECT_SIN      = 13,
+            OBS_OBJECT_COS      = 14,
+            OBS_OBJECT_DOOR     = 15,   // it is a door (else a lever, a button or the like)
+            OBS_TANK_PRESENT    = 16,   // the party's tank (the one the party block follows), alive, and not this seat
+            OBS_TANK_DISTANCE   = 17,   // / 100 yd
+            OBS_TANK_SIN        = 18,
+            OBS_TANK_COS        = 19,
+            OBS_TANK_TARGET_FIRST = 20, // one-hot over the pack block's slots: the enemy the tank is on
+            OBS_BEHIND          = OBS_TANK_TARGET_FIRST + PACK_SLOTS,   // its place on the route is behind the party
+            OBS_SLOT_FIRST      = OBS_BEHIND + 1
         };
 
         enum SlotFeature : uint32
@@ -61,10 +76,34 @@ namespace Animus::Curriculum
             SLOT_FEATURES       = 9
         };
 
+        enum Action : uint32
+        {
+            /// Use the nearest usable thing within reach: pull a lever, press a button, fire the cannon, open a door.
+            ACTION_USE_OBJECT   = 0,
+            /// Walk the server's path to the seat's objective: the next point of the route, or for a seat other than
+            /// the tank the route back towards it. Smooth, pathed movement the script uses and a seat can learn,
+            /// where held bearings zig-zagged and walked into walls (2026-10-01).
+            ACTION_ADVANCE      = 1,
+            /// Walk the server's path to the nearest usable thing (a lever, the cannon).
+            ACTION_APPROACH_OBJECT = 2,
+            ACTION_COUNT        = 3
+        };
+
+        /// The item a lock is opened with (LOCK_KEY_ITEM), or 0: the Deadmines' cannon takes the Defias Gunpowder.
+        [[nodiscard]] static uint32 KeyOf(GameObject const* object);
+        /// Whether `bot` can use `object` as it stands: a key it needs is carried.
+        [[nodiscard]] static bool CanUse(Player const* bot, GameObject const* object);
+
         [[nodiscard]] BlockId Id() const override { return BlockId::Crowd; }
         [[nodiscard]] BlockSize Size(Layout const& layout) const override;
         void DescribeManifest(Layout const& layout, boost::json::object& block) const override;
         void Observe(SeatView const& view, float* obs, uint8* mask) const override;
+        void Apply(SeatView& view, uint32 local, SeatActionResult& result) const override;
+        [[nodiscard]] bool IsMovement(uint32 local) const override
+        {
+            return local == ACTION_ADVANCE || local == ACTION_APPROACH_OBJECT;
+        }
+        [[nodiscard]] std::string ActionName(Layout const& layout, uint32 local) const override;
     };
 }
 
