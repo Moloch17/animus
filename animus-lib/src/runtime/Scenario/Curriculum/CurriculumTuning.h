@@ -113,7 +113,8 @@ namespace Animus::Curriculum
             float KeepUp = 0.0002f;
             /// Healers in a party or a raid: the healing they cast that landed on nobody's missing health, as a share
             /// of their own health. Party healers overhealed 62-73% of what they cast on the drills' easy rungs
-            /// (2026-10-02, stage6 at 41M): healing late, big, and on the full. At 1.0 it stayed at 50% through the stage.
+            /// (2026-10-02, stage6 at 41M): healing late, big, and on the full. At 1.0 it stayed at 50% through the
+            /// stage.
             float Overheal = 2.0f;
             /// Tanks in a party or a raid, per decision in a fight: in the spec's tanking stance, form or aura
             /// (Defensive Stance, Bear Form, Righteous Fury, Frost Presence). Warrior tanks finished 27 of 38 drill
@@ -427,7 +428,7 @@ namespace Animus::Curriculum
             float ProtectValue = 1.0f;          // raised from 0.2: healers chose Protect 1% of the time
             /// Protect is reached by keeping its friend above half health while it is attacked for this long, as well
             /// as by healing it back above 70%.
-            uint32 ProtectHoldMs = 8000;
+            uint32 ProtectHoldMs = 5000;
             float TravelValue = 0.1f;
             float WorldValue = 0.2f;
             /// The secondary goal (a second slot beside the primary: Fight A and hold B): paid this share of what the
