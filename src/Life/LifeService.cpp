@@ -24,7 +24,6 @@
 #include "AuctionHouseMgr.h"
 #include "Bag.h"
 #include "CellImpl.h"
-#include "Corpse.h"
 #include "Creature.h"
 #include "DBCStores.h"
 #include "DatabaseEnv.h"
@@ -36,8 +35,6 @@
 #include "Log.h"
 #include "Mail.h"
 #include "Map.h"
-#include "MotionMaster.h"
-#include "MoveSpline.h"
 #include "ObjectMgr.h"
 #include "Player.h"
 #include "QuestDef.h"
@@ -62,7 +59,6 @@ namespace
     constexpr uint32 AUCTION_EVERY_MS = 60 * IN_MILLISECONDS;
     constexpr uint32 CRAFT_EVERY_MS = 15 * IN_MILLISECONDS;
     constexpr uint32 TAXI_EVERY_MS = 10 * IN_MILLISECONDS;
-    constexpr uint32 CORPSE_GIVE_UP_MS = 5 * MINUTE * IN_MILLISECONDS;
     constexpr float AUCTIONEER_REACH = 10.0f;
     /// Listings run twelve hours; a green is listed at four times its vendor price when the house has no price.
     constexpr uint32 LISTING_HOURS = 12;
@@ -115,8 +111,6 @@ bool Animus::Life::LifeService::Toggle(std::string_view feature, bool on)
         _settings.Mail = on;
     else if (feature == "taxi")
         _settings.Taxi = on;
-    else if (feature == "corpse")
-        _settings.CorpseRun = on;
     else if (feature == "crafting")
         _settings.Crafting = on;
     else
@@ -130,10 +124,9 @@ std::vector<std::string> Animus::Life::LifeService::Status() const
     return {
         Acore::StringFormat("life: {} (the model's world block decides looting, quests, gear, vendors)",
             onOff(_settings.Enable)),
-        Acore::StringFormat("quests {}, auction {} (budget {} gold), mail {}, taxi {} (beyond {:.0f} yd), corpse run "
-            "{}, crafting {}", onOff(_settings.Quests), onOff(_settings.Auction), _settings.AuctionBudgetCopper / 10000,
-            onOff(_settings.Mail), onOff(_settings.Taxi), _settings.TaxiBeyondYards, onOff(_settings.CorpseRun),
-            onOff(_settings.Crafting)),
+        Acore::StringFormat("quests {}, auction {} (budget {} gold), mail {}, taxi {} (beyond {:.0f} yd), crafting {}",
+            onOff(_settings.Quests), onOff(_settings.Auction), _settings.AuctionBudgetCopper / 10000,
+            onOff(_settings.Mail), onOff(_settings.Taxi), _settings.TaxiBeyondYards, onOff(_settings.Crafting)),
     };
 }
 
@@ -591,49 +584,4 @@ void Animus::Life::LifeService::Craft(Player* bot, BotState& state) const
             return;
         }
     }
-}
-
-bool Animus::Life::LifeService::RunToCorpse(uint32 diff, Player* bot, Player* owner, bool hasWorldBlock)
-{
-    if (!_settings.Enable || !_settings.CorpseRun || !hasWorldBlock || !bot || bot->IsAlive())
-        return false;
-
-    BotState& state = StateOf(bot);
-    // Release, as CMSG_REPOP_REQUEST does, once the owner is alive and out of the fight that killed the companion.
-    if (!bot->HasPlayerFlag(PLAYER_FLAGS_GHOST))
-    {
-        if (!owner || !owner->IsAlive() || owner->IsInCombat())
-            return true;
-        bot->BuildPlayerRepop();
-        bot->RepopAtGraveyard();
-        state.GhostMs = 0;
-        state.Released = true;
-        return true;
-    }
-
-    state.GhostMs += diff;
-    Corpse* corpse = bot->GetCorpse();
-    // No corpse to walk to, or one it cannot reach in time: the spirit healer's terms, as a player would take.
-    if (!corpse || corpse->GetMapId() != bot->GetMapId() || state.GhostMs >= CORPSE_GIVE_UP_MS)
-    {
-        bot->ResurrectPlayer(0.5f, true);
-        bot->SpawnCorpseBones();
-        state.Released = false;
-        return true;
-    }
-
-    if (!bot->IsWithinDistInMap(corpse, CORPSE_RECLAIM_RADIUS))
-    {
-        if (bot->movespline->Finalized() || bot->GetMotionMaster()->GetCurrentMovementGeneratorType() != POINT_MOTION_TYPE)
-            bot->GetMotionMaster()->MovePoint(0, corpse->GetPositionX(), corpse->GetPositionY(), corpse->GetPositionZ());
-        return true;
-    }
-
-    // At the corpse: reclaim it once the delay has run, as CMSG_RECLAIM_CORPSE does.
-    if (corpse->GetGhostTime() + time_t(bot->GetCorpseReclaimDelay(false)) > GameTime::GetGameTime().count())
-        return true;
-    bot->ResurrectPlayer(0.5f);
-    bot->SpawnCorpseBones();
-    state.Released = false;
-    return true;
 }

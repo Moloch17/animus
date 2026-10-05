@@ -1109,7 +1109,7 @@ bool Animus::AnimusMod::LifeToggle(std::string_view feature, std::string_view st
     }
     if (!sLife->Toggle(feature, on))
     {
-        message = "The feature is one of all, quests, auction, mail, taxi, corpse, crafting.";
+        message = "The feature is one of all, quests, auction, mail, taxi, crafting.";
         return false;
     }
     message = Acore::StringFormat("Life: {} {} (until the next reload of the config).", feature, state);

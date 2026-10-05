@@ -45,8 +45,12 @@ namespace Animus::Curriculum
  *
  * Scripted here is what is a lookup, or has no sim to learn it in: which quests to hold (the owner's), the
  * auction house (no sim tick ever runs one), collecting the mail the house sends, the flight path when the owner is
- * a zone away, the corpse run, and crafting what the companion knows from what it gathered. Each is a switch in
- * Animus.Life.*, and the whole service is off for a companion whose model has no world block.
+ * a zone away, and crafting what the companion knows from what it gathered. Each is a switch in Animus.Life.*, and
+ * the whole service is off for a companion whose model has no world block.
+ *
+ * There is no corpse run: the companion's only movement is the player controller under its model's keys, and the run
+ * back to a corpse returns as a skill the companions learn in a later stage (movement-curriculum §6). Until then a
+ * dead companion stands up where it fell (CompanionParty).
  *
  * World thread only.
  */
@@ -61,7 +65,6 @@ namespace Animus::Life
         bool Mail = true;               // collect what the house sends
         bool Taxi = true;               // a flight path when the owner is far on the same map
         float TaxiBeyondYards = 1500.0f;
-        bool CorpseRun = true;          // release and walk back to the corpse, rather than stand up in place
         bool Crafting = true;           // make what it knows from what it carries, when idle
         uint32 IdleSeconds = 20;        // out of combat this long before the house, the mail or a recipe
     };
@@ -98,11 +101,6 @@ namespace Animus::Life
         /// Each update of a party: the mail, the house, a recipe when idle; a flight when the owner is far.
         void Update(uint32 diff, Player* owner, std::vector<Companion> const& companions);
 
-        /// A dead companion's way back, when CorpseRun is on: release, walk to the corpse, reclaim. True while the
-        /// service is handling it (the party's own stand-up then waits); false when it is not (CorpseRun off, no
-        /// world block, or the corpse is somewhere it cannot walk to), and the party stands it up as before.
-        bool RunToCorpse(uint32 diff, Player* bot, Player* owner, bool hasWorldBlock);
-
         /// A companion left: forget it.
         void Forget(ObjectGuid bot) { _bots.erase(bot); }
 
@@ -114,8 +112,6 @@ namespace Animus::Life
             uint32 SinceAuctionMs = 0;
             uint32 SinceCraftMs = 0;
             uint32 SinceTaxiMs = 0;
-            uint32 GhostMs = 0;             // time since the corpse run began
-            bool Released = false;
             uint32 Flights = 0;
             uint32 Listed = 0;
             uint32 Bought = 0;

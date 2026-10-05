@@ -805,19 +805,8 @@ void Animus::CompanionParty::UpdateMember(Member& member, Player* bot, Player* o
         }
 
         member.DeadMs += diff;
-        // A companion with the world block walks back to its corpse as a player does (LifeService::RunToCorpse,
-        // Animus.Life.CorpseRun); the rest stand up in place as before.
-        if (sLife->RunToCorpse(diff, bot, owner, member.L && member.L->Has(BlockId::World)))
-        {
-            if (bot->IsAlive())
-            {
-                member.DeadMs = 0;
-                member.SinceDecisionMs = 0;
-                member.StepDamage.store(0, std::memory_order_relaxed);
-                member.StepDamageTaken.store(0, std::memory_order_relaxed);
-            }
-            return;
-        }
+        // No corpse run: walking back to a corpse is a skill the companions learn in a later stage
+        // (movement-curriculum §6), and nothing else moves a companion. Until then it stands up where it fell.
         if (quiet && owner->IsAlive() && !owner->IsInCombat() && member.DeadMs >= RESURRECT_DELAY_MS)
         {
             bot->ResurrectPlayer(0.5f);
