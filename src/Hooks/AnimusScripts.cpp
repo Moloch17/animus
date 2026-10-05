@@ -21,10 +21,12 @@
 #include "AchievementMgr.h"
 #include "AchievementScript.h"
 #include "Chat.h"
+#include "CompanionClient.h"
 #include "CommandScript.h"
 #include "Optional.h"
 #include "Player.h"
 #include "PlayerScript.h"
+#include "ServerScript.h"
 #include "SharedDefines.h"
 #include "UnitScript.h"
 #include "WorldScript.h"
@@ -249,6 +251,19 @@ namespace
         }
     };
 
+    class AnimusServerScript : public ServerScript
+    {
+    public:
+        AnimusServerScript() : ServerScript("AnimusServerScript", { SERVERHOOK_ON_PACKET_SENT }) { }
+
+        /// Every packet queued for any session, sockets or not, on the thread that sends it: what the server tells a
+        /// companion's client about its own movement goes into that client's inbox (CompanionClient).
+        void OnPacketSent(WorldSession* session, WorldPacket const& packet) override
+        {
+            Animus::Client::Clients::OnPacketSent(session, packet);
+        }
+    };
+
     class AnimusUnitScript : public UnitScript
     {
     public:
@@ -271,4 +286,5 @@ void AddSC_animus()
     new AnimusPlayerScript();
     new AnimusAchievementScript();
     new AnimusUnitScript();
+    new AnimusServerScript();
 }
