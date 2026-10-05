@@ -97,10 +97,6 @@ namespace Animus::Client
         /// has the companion the first time, and again after anything put it somewhere else.
         void Tick(Player* bot, uint32 diff);
 
-        /// Let go of every key and forget the body (a death, a resurrection): the next Tick starts again from the
-        /// server's position, holding nothing.
-        void Reset();
-
         /// Reports kept, and refused by cause, since the client was made (for the status line).
         [[nodiscard]] uint64 Applied() const { return _applied; }
         [[nodiscard]] uint64 Refused(Refusal cause) const { return _refused[std::size_t(cause)]; }

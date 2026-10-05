@@ -320,17 +320,17 @@ bool Animus::AnimusMod::Create(Player* owner, std::string name, std::string_view
         return false;
     }
 
+    Curriculum::ClassProfile const& profile = *Curriculum::ClassAssets::FindProfile(classId);
+    Curriculum::Layout const& layout = LayoutFor(profile);
+    if (!HasModel(layout, message))
+        return false;
+
     uint32 const account = _registry.AccountFor(owner);
     if (!account)
     {
         message = "The companion's account could not be created; see the server log.";
         return false;
     }
-
-    Curriculum::ClassProfile const& profile = *Curriculum::ClassAssets::FindProfile(classId);
-    Curriculum::Layout const& layout = LayoutFor(profile);
-    if (!HasModel(layout, message))
-        return false;
 
     std::unique_ptr<CompanionParty>& party = _parties[owner->GetGUID()];
     if (!party)

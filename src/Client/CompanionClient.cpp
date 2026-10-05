@@ -156,12 +156,6 @@ void Animus::Client::CompanionClient::AnswerTimeSync(Player* bot, Order const& o
     bot->GetSession()->HandleTimeSyncResp(received);
 }
 
-void Animus::Client::CompanionClient::Reset()
-{
-    _mover = Movement::Client();
-    Controls.Clear();
-}
-
 void Animus::Client::CompanionClient::Tick(Player* bot, uint32 diff)
 {
     if (!bot || !bot->IsInWorld() || !bot->FindMap() || !bot->GetSession())
@@ -179,17 +173,19 @@ void Animus::Client::CompanionClient::Tick(Player* bot, uint32 diff)
     if (!alive)
         Controls.Clear();
 
+    // Time syncs first: they need nothing from the body, and the first report must already go out synchronised
+    // (an unanswered sync makes the core log every movement packet). The other orders keep their order after them.
+    _inbox.Drain(_taken);
+    for (Order const& order : _taken)
+        if (order.Kind == OrderKind::TimeSync)
+            AnswerTimeSync(bot, order);
+
     if (!_mover.Started())
         _mover.Start(link, shape, world, nowMs);
 
-    _inbox.Drain(_taken);
     for (Order const& order : _taken)
-    {
-        if (order.Kind == OrderKind::TimeSync)
-            AnswerTimeSync(bot, order);
-        else
+        if (order.Kind != OrderKind::TimeSync)
             _mover.Order(order, link, shape, world, nowMs);
-    }
 
     if (alive)
         _mover.Tick(Controls.Held, Movement::SpeedsOf(bot), shape, world, diff, nowMs, link);
