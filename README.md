@@ -98,7 +98,51 @@ Game master commands, not available from the console; the addon does the same fo
 | `.animus list` | Your companion and whether its model is loaded |
 | `.animus stage list` | Every curriculum stage and its arenas: the names `Animus.Curriculum.Stage` accepts |
 | `.animus models` | Console too: every class's model for `Animus.Curriculum.Stage` and whether it loads, and if not the first manifest field that differs. Run it after copying models in, before anyone summons |
+| `.animus rate <+\|-> [movement\|combat\|healing\|tanking\|stuck\|other]` | Any player: your verdict on your companion's play, recorded for training (play capture) |
 | `.animus purge` | Administrator, console too: every account the module made (`ANIMUS<guid>`) deleted with its characters, every companion sent away unsaved, the module's table dropped |
+
+## Play capture
+
+With `Animus.Capture.Enable = 1` and `Animus.Capture.Dir` set, the module records what every player on the realm
+does, and what the companions decide, to files the forge trains on: realistic movement first (a learned style
+reward and a realism score), then reference numbers, prices and scenarios from real play. The module only records;
+it scores and trains nothing.
+
+**What is recorded**, in six streams (the format is [doc/capture-format.md](doc/capture-format.md), a copy of the
+forge's `apps/forge/python/animus/human/FORMAT.md`):
+
+| Stream | Content |
+|---|---|
+| session | login, logout, class, race, level, talent points, item level, map/zone/area and group changes, known spells, latency |
+| move | every movement packet the client sends, unquantised, with the client's own time; speeds; mount, taxi, teleport, loading screen, death, resurrect, root/stun/fear, knockback, shapeshift, vehicle and transport events; a sample of each companion's position at each decision |
+| action | cast requests, refusals, casts going off and their ends; target selection; item use; attack start/stop; interactions (gossip, loot, quests, objects, vendors, flight masters, mail, auction house, trainers, banks, innkeepers) |
+| snapshot | every 250 ms in combat or moving, 1 s otherwise: the player, the nearest 24 hostile and 10 friendly units within 40 yards, party members on the map and the pet, auras and cooldowns |
+| outcome | damage and healing to or from a player, kills, deaths with cause, quests, boss encounters, PvP kills and duels, area changes |
+| companion | each companion decision (model, observation hash, action, goals), the owner's commands, and ratings (`.animus rate`, the addon's Good and Bad buttons) |
+
+**Privacy.** Everyone is captured with no opt-in, and told so at login (`Animus.Capture.LoginNotice`). No chat,
+whispers, mail, names, account data or IPs are written. Characters and every other unit are 8-byte ids hashed with
+a realm-local salt (`<Dir>/salt`, made once; keep it, and keep it on the realm).
+
+**Files.** `<Dir>/<yyyy-mm-dd>/<hh>/<stream>-<map>.bin.gz` (UTC; session and companion files are `-all`), each a
+run of gzip members (one per flush, so a crash loses at most the last), and an `index.json` per hour once it closes:
+record and byte counts per file, players, sessions, records dropped by full buffers, and whether the snapshot stream
+was paused for disk space. Nothing is ever deleted. `tools/capture-sample.bin` holds one record of every type with
+the values in `tools/capture-sample.json` (made by `tools/capture-sample.cpp`), for testing a reader.
+
+**Cost.** Hooks copy a record into their own thread's buffer (no lock, no allocation, no I/O) and one writer thread
+compresses and writes. A full buffer drops records and counts them; it never waits. Expect roughly 3 to 5 MB per
+player-hour compressed, most of it snapshots: lower `Animus.Capture.IdleSnapshotMs` or switch the snapshot stream
+off (`Animus.Capture.Streams`) first if storage is short. Below `Animus.Capture.DiskReserveGB` free the snapshot
+stream pauses by itself; movement is never thinned.
+
+**Keys** (`Animus.Capture.*`, documented in `conf/mod_animus.conf.dist`): `Enable`, `Dir`, `SnapshotMs`,
+`IdleSnapshotMs`, `Streams`, `FlushMs`, `BufferRecords`, `DiskWarnGB`, `DiskReserveGB`, `LoginNotice`.
+
+**Not recorded or approximate** (what the stock core's hooks do not carry): damage and heal records carry no spell,
+school, absorb, crit or overheal; an encounter's `boss_entry` is the instance script's boss index; breath is
+estimated from time under water; snapshot unit velocities are estimated from movement flags and speeds; group
+members on other maps are written without a level; companions get no snapshots.
 
 ## Dungeon party fill
 

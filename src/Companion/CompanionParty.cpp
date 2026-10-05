@@ -17,6 +17,7 @@
  */
 
 #include "CompanionParty.h"
+#include "Capture.h"
 #include "OrderGoals.h"
 #include "ActionCatalog.h"
 #include "BotFactory.h"
@@ -946,6 +947,9 @@ void Animus::CompanionParty::ObserveGoalSignals(Member& member, Curriculum::Seat
 void Animus::CompanionParty::Decide(Member& member, Player* bot, Player* owner, MlpPolicy& policy,
     Settings const& settings)
 {
+    // Where it is at every decision, in the players' movement format, so its motion compares with theirs.
+    Capture::CompanionSample(bot);
+
     bool const inCombat = bot->IsInCombat();
     if (inCombat && !member.InCombat)
     {
@@ -1033,6 +1037,8 @@ void Animus::CompanionParty::Decide(Member& member, Player* bot, Player* owner, 
     // What it is pursuing, for its teammates to see, as a forge party seat's goal reaches the others.
     member.Goal = policy.GoalCount() ? policy.PrimaryOf(member.Policy) : Curriculum::NO_GOAL;
     member.Goal2 = policy.GoalCount() ? policy.SecondaryOf(member.Policy) : Curriculum::NO_GOAL;
+    Capture::CompanionDecision(bot, _owner, member.L->ModelName(), member.Obs.data(), member.Obs.size(), action,
+        member.Goal, member.Goal2);
 
     SeatActionResult result;
     SeatEncoder::Apply(view, action, result);

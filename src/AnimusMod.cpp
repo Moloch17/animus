@@ -22,6 +22,7 @@
 #include "AnimusAddon.h"
 #include "BotAccounts.h"
 #include "BotFactory.h"
+#include "Capture.h"
 #include "CharacterCache.h"
 #include "Chat.h"
 #include "CompanionLoader.h"
@@ -332,6 +333,8 @@ bool Animus::AnimusMod::Create(Player* owner, std::string name, std::string_view
     for (ObjectGuid const& guid : party->GetBotGUIDs())
         _partyByBot[guid] = party.get();
 
+    RecordCommand(owner, uint8(Capture::Command::Other), uint32(Capture::OtherCommand::Create));
+
     std::string error;
     if (!_models.Find(layout, error))
         message += Acore::StringFormat(" Its model is not available ({}), so it only follows you.", error);
@@ -447,6 +450,7 @@ bool Animus::AnimusMod::Summon(Player* owner, std::string& message)
     });
 
     message = Acore::StringFormat("{} is on the way.", character->Name);
+    RecordCommand(owner, uint8(Capture::Command::Summon));
     return true;
 }
 
@@ -469,6 +473,7 @@ bool Animus::AnimusMod::Dismiss(Player* owner, std::string& message)
     if (!PartyOf(owner, message))
         return false;
 
+    RecordCommand(owner, uint8(Capture::Command::Dismiss));
     PutAway(owner->GetGUID(), true);
     message = "Companion dismissed.";
     return true;
@@ -500,6 +505,7 @@ bool Animus::AnimusMod::Rename(Player* owner, std::string name, std::string& mes
         PutAway(owner->GetGUID(), true);
 
     CompanionRegistry::Rename(*record, name);
+    RecordCommand(owner, uint8(Capture::Command::Other), uint32(Capture::OtherCommand::Rename));
     message = Acore::StringFormat("Your companion is now called {}.", name);
     LOG_INFO("module.animus", "{} renamed companion {} to {}", owner->GetName(), record->Bot.ToString(), name);
 
@@ -559,6 +565,7 @@ bool Animus::AnimusMod::Reroll(Player* owner, std::string_view race, std::string
         message = "Your old companion is gone and the new one could not be created: " + message;
         return false;
     }
+    RecordCommand(owner, uint8(Capture::Command::Other), uint32(Capture::OtherCommand::Reroll));
     return true;
 }
 
@@ -621,21 +628,30 @@ bool Animus::AnimusMod::Talent(Player* owner, std::string_view name, uint32 tale
     std::string& message)
 {
     CompanionParty* party = PartyOf(owner, message);
-    return party && party->Talent(name, talentId, learn, message);
+    if (!party || !party->Talent(name, talentId, learn, message))
+        return false;
+    RecordCommand(owner, uint8(Capture::Command::Other), uint32(Capture::OtherCommand::Talent));
+    return true;
 }
 
 bool Animus::AnimusMod::PetTalent(Player* owner, std::string_view name, uint32 talentId, bool learn,
     std::string& message)
 {
     CompanionParty* party = PartyOf(owner, message);
-    return party && party->PetTalent(name, talentId, learn, message);
+    if (!party || !party->PetTalent(name, talentId, learn, message))
+        return false;
+    RecordCommand(owner, uint8(Capture::Command::Other), uint32(Capture::OtherCommand::PetTalent));
+    return true;
 }
 
 bool Animus::AnimusMod::Equip(Player* owner, std::string_view name, uint8 bag, uint8 slot, uint8 equipSlot,
     std::string& message)
 {
     CompanionParty* party = PartyOf(owner, message);
-    return party && party->Equip(owner, name, bag, slot, equipSlot, message);
+    if (!party || !party->Equip(owner, name, bag, slot, equipSlot, message))
+        return false;
+    RecordCommand(owner, uint8(Capture::Command::Other), uint32(Capture::OtherCommand::Equip));
+    return true;
 }
 
 bool Animus::AnimusMod::Pet(Player* owner, std::string_view name, CompanionParty::PetView& view,
@@ -974,6 +990,23 @@ void Animus::AnimusMod::RecordDamage(Unit const* attacker, Unit const* victim, u
     ObjectGuid const dealer = attacker->GetCharmerOrOwnerOrOwnGUID();
     if (auto const party = _partyByBot.find(dealer); party != _partyByBot.end())
         party->second->RecordDamageDealt(dealer, victim->GetGUID(), damage);
+}
+
+void Animus::AnimusMod::RecordCommand(Player* owner, uint8 command, uint32 arg) const
+{
+    if (CompanionRegistry::Record const* record = _registry.Find(owner->GetGUID()))
+        Capture::CompanionCommand(owner->GetGUID(), record->Bot, Capture::Command(command), arg);
+}
+
+bool Animus::AnimusMod::Rate(Player* owner, std::string_view sign, std::string_view reason, std::string& message)
+{
+    CompanionRegistry::Record const* record = _registry.Find(owner->GetGUID());
+    if (!record)
+    {
+        message = "You have no companion to rate.";
+        return false;
+    }
+    return Capture::CompanionRating(owner->GetGUID(), record->Bot, sign, reason, message);
 }
 
 void Animus::AnimusMod::RemoveParty(ObjectGuid owner)

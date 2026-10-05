@@ -96,6 +96,11 @@ function A.Dismiss()
     A.Send("dismiss")
 end
 
+-- Your verdict on how your companion played ("+" or "-"), recorded for training when the realm records play.
+function A.Rate(sign)
+    A.Send("rate", sign)
+end
+
 function A.Rename(name)
     if not name or name == "" then
         A.SetMessage(false, "Enter the new name first.")

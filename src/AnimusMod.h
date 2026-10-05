@@ -118,6 +118,13 @@ namespace Animus
 
         /// Whether `guid` is a companion character (of anyone): it gets no mail and no achievements.
         [[nodiscard]] bool IsCompanion(ObjectGuid guid) const { return _registry.IsCompanion(guid); }
+        /// Whether `guid` is any bot the module runs: a companion or a temporary party member. Safe on map threads
+        /// (both indexes change only on the world thread, never while maps update).
+        [[nodiscard]] bool IsBot(ObjectGuid guid) const { return IsCompanion(guid) || _partyByBot.contains(guid); }
+
+        /// `.animus rate` and the addon's rate request: the owner's verdict on its companion, for the capture
+        /// (Capture::CompanionRating). False with `message` set when refused.
+        bool Rate(Player* owner, std::string_view sign, std::string_view reason, std::string& message);
 
         /// A race a companion may be, with the classes it can be, in the words Create accepts.
         struct RaceChoice
@@ -160,6 +167,8 @@ namespace Animus
         bool Adopt(Player* owner, Player* bot, CompanionRegistry::Record& record, std::string& message);
         /// Save the party's companion and the registry's record of it, then take it out of the world.
         void SaveParty(ObjectGuid owner);
+        /// What the owner told its companion to do, for the capture (Capture::CompanionCommand).
+        void RecordCommand(Player* owner, uint8 command, uint32 arg = 0) const;
         /// The words of a race and class, checked against each other and the owner's faction.
         bool ResolveRaceClass(Player const* owner, std::string_view race, std::string_view playerClass,
             uint8& raceId, uint8& classId, std::string& message) const;

@@ -67,6 +67,25 @@ install(
 
 message(STATUS "  mod-animus models install to ${ANIMUS_MODELS_INSTALL_DIR}")
 
+# The module's revision in every play capture file's header (src/Capture/CaptureWriter.cpp), read at configure time;
+# "unknown" without git or outside a checkout.
+set(ANIMUS_MODULE_REVISION "unknown")
+find_package(Git QUIET)
+if(GIT_FOUND)
+  execute_process(
+    COMMAND "${GIT_EXECUTABLE}" rev-parse HEAD
+    WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}"
+    OUTPUT_VARIABLE ANIMUS_GIT_REVISION
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    RESULT_VARIABLE ANIMUS_GIT_RESULT
+    ERROR_QUIET)
+  if(ANIMUS_GIT_RESULT EQUAL 0 AND ANIMUS_GIT_REVISION MATCHES "^[0-9a-f]+$")
+    set(ANIMUS_MODULE_REVISION "${ANIMUS_GIT_REVISION}")
+  endif()
+endif()
+set_property(SOURCE "${CMAKE_CURRENT_LIST_DIR}/src/Capture/CaptureWriter.cpp" APPEND PROPERTY
+  COMPILE_DEFINITIONS "ANIMUS_MODULE_REVISION=\"${ANIMUS_MODULE_REVISION}\"")
+
 set(ANIMUS_LIB_BUNDLE "${CMAKE_CURRENT_LIST_DIR}/animus-lib")
 if(EXISTS "${CMAKE_SOURCE_DIR}/modules/mod-animus-lib/cmake/AnimusLibDependency.cmake")
   include("${CMAKE_SOURCE_DIR}/modules/mod-animus-lib/cmake/AnimusLibDependency.cmake")
