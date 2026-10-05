@@ -399,8 +399,9 @@ namespace Animus::Client
 
     /// The client's clock: milliseconds of its own steady clock, as GetTickCount is on a real one, starting at `base`
     /// (CLOCK_BASE by default) rather than 0, so a time is never 0 and never wraps soon after it starts. It is not the
-    /// server's getMSTime: an offset subtracted from that would underflow in the server's first second. The core keeps
-    /// a time-sync delta of 0 as "never synced" and only replaces it by one more than 25 ms away (ComputeNewClockDelta),
+    /// server's getMSTime: an offset subtracted from that would underflow in the server's first second. The core
+    /// keeps a time-sync delta of 0 as "never synced" and only replaces it by one more than 25 ms away
+    /// (ComputeNewClockDelta),
     /// so a companion's client is started a second ahead of the server's clock (CompanionClient) and its delta is
     /// always about -1000.
     class Clock
