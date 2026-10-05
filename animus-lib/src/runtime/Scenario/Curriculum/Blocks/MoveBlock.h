@@ -23,9 +23,13 @@
 #include <atomic>
 
 class Map;
+class Player;
+class Unit;
 
 namespace Animus::Curriculum
 {
+    struct SteerMemory;
+
     /// Where the seat puts its feet, answered without reference to anything it is fighting.
     ///
     /// Every movement the curriculum had before this was target-relative: DuelBlock's MOVE_TO_TARGET, MOVE_TO_RANGE,
@@ -151,7 +155,11 @@ namespace Animus::Curriculum
             /// the pathfinder can never propose: a route is built from polygons that touch, and a gap has none.
             /// A seat that jumps does it on what it can see, against the route it was given.
             ACTION_JUMP = ACTION_PITCH_FIRST + PITCH_COUNT,
-            ACTION_COUNT
+            ACTION_COUNT,
+            /// Revision 1: a fine turn, 5 degrees either way, for the aim a 15-degree lattice cannot reach.
+            ACTION_R1_TURN_LEFT_FINE = ACTION_COUNT,
+            ACTION_R1_TURN_RIGHT_FINE,
+            ACTION_R1_COUNT
         };
 
         enum Obs : uint32
@@ -314,7 +322,19 @@ namespace Animus::Curriculum
             /// zero; the dwell share is what tells them apart.
             OBS_TRAIL_FIRST,
             OBS_TRAIL_DWELL         = OBS_TRAIL_FIRST + 2 * TRAIL_SAMPLES,
-            OBS_COUNT
+            OBS_COUNT,
+
+            /// **Revision 1** (AnimusForge.MoveRevision = 1, movement-smooth D; off by default, for a fresh start):
+            /// the steering's own recent past, which the jitter charge prices and the seat could not see. Appended
+            /// past OBS_COUNT, so revision 0's columns are where they always were.
+            OBS_R1_TURN_SIGN        = OBS_COUNT,    // the last turn's way: +1 left, -1 right, 0 none yet
+            OBS_R1_TURN_RECENCY,                    // how much it still weighs (MovePrice::Recency, JitterDecayMs)
+            OBS_R1_BEARING_LAST_FIRST,              // one-hot over the last bearing pressed (BEARING_COUNT)
+            OBS_R1_BEARING_RECENCY  = OBS_R1_BEARING_LAST_FIRST + BEARING_COUNT,
+            OBS_R1_PITCH_SIGN,                      // the last pitch's way: +1 up, -1 down
+            OBS_R1_PITCH_RECENCY,
+            OBS_R1_BEARING_LEFT,                    // the held bearing's clock, / 3 s (Options.MoveBearingMs)
+            OBS_R1_COUNT
         };
 
         /// How far ahead a held bearing aims each decision. Far enough that the seat is still walking when the next
@@ -331,6 +351,13 @@ namespace Animus::Curriculum
         /// FACE_TARGET were the only escapes from, which is why a trained policy found exactly one strategy (face
         /// the objective, hold forward). The 15 degree turn in TURN_ANGLES keeps the finer lattice.
         static constexpr float TURN_RATE = 0.7853982f;          // 45 degrees a decision
+        static constexpr float FINE_TURN = 0.0872665f;          // 5 degrees (revision 1)
+        static constexpr float BEARING_CLOCK_MS = 3000.0f;      // the held bearing's clock is observed on this
+
+        /// The layout revision every seat's move block has (AnimusForge.MoveRevision): 0, or 1 with the steering
+        /// memory and the fine turns. Set once at startup, before any layout is built; never per seat.
+        static void SetRevision(uint32 revision) { CurrentRevision = revision ? 1 : 0; }
+        [[nodiscard]] uint32 Revision() const override { return CurrentRevision; }
         /// How far a chosen pitch tilts the seat each decision until it is there: 30 degrees, so level to a full
         /// climb is two decisions. Slower than the turn because pitch is a smaller range doing more -- the whole
         /// useful span is a dive and a climb -- and how far it may get from level.
@@ -423,7 +450,6 @@ namespace Animus::Curriculum
         /// WaterBreath.Timer), not seconds under over a guessed minute: the old sixty was a third of the real
         /// breath, so the feature saturated with two thirds of the air still to come.
 
-        [[nodiscard]] BlockId Id() const override { return BlockId::Move; }
         [[nodiscard]] BlockSize Size(Layout const& layout) const override;
         void DescribeManifest(Layout const& layout, boost::json::object& block) const override;
         /// What the navmesh senses read standing at one point, as a table, for a console to print.
@@ -440,8 +466,20 @@ namespace Animus::Curriculum
         /// prints is what a seat standing there would sense and not a second implementation of it.
         static std::string RayReport(Map* map, float x, float y, float z, float facing);
 
+        /// A world tick between decisions under FACE_TARGET (StageScenario::SubTick): the seat keeps facing its
+        /// target, on its run or on the spot, and `facing` (the seat's frame) follows. Not under a cast or channel,
+        /// nor for a seat that cannot turn; a flying run faces along its path and is left alone (movement-smooth A2).
+        static void FaceTargetBetween(Player* bot, Unit const* target, float& facing);
+        /// Every world tick while a real client is connected: swing what the client is shown of a seat standing
+        /// still toward its orientation at TURN_RATE a decision, a packet every SHOWN_PACKET_MS and one when it
+        /// arrives -- the realm's CompanionParty::TurnShown. Cosmetic: the seat's own orientation, what casts and
+        /// facing checks read, is the decided one throughout. A running seat is shown its run's launch facing.
+        static void ShowTurn(Player* bot, SteerMemory& steering, uint32 diffMs, uint32 decisionMs);
+        static constexpr uint32 SHOWN_PACKET_MS = 100;
+
         void Observe(SeatView const& view, float* obs, uint8* mask) const override;
         void BeforeApply(SeatView& view, SeatActionResult& result) const override;
+        void BeforePress(SeatView& view) const override;
         void Apply(SeatView& view, uint32 local, SeatActionResult& result) const override;
         [[nodiscard]] std::string ActionName(Layout const& layout, uint32 local) const override;
 
@@ -452,15 +490,23 @@ namespace Animus::Curriculum
         /// spams it should pay.
         [[nodiscard]] bool IsMovement(uint32 local) const override
         {
-            return local <= ACTION_HALT || (local >= ACTION_TURN_FIRST && local <= ACTION_JUMP);
+            return local <= ACTION_HALT || (local >= ACTION_TURN_FIRST && local <= ACTION_JUMP) || IsFineTurn(local);
         }
 
         /// The turns and the pitches aim the seat without moving its feet: pressing one leaves a held bearing walking
         /// (SeatEncoder::Apply), which is what turning while walking is.
         [[nodiscard]] bool IsAiming(uint32 local) const override
         {
-            return local >= ACTION_TURN_FIRST && local < ACTION_JUMP;
+            return (local >= ACTION_TURN_FIRST && local < ACTION_JUMP) || IsFineTurn(local);
         }
+
+        [[nodiscard]] static bool IsFineTurn(uint32 local)
+        {
+            return CurrentRevision && (local == ACTION_R1_TURN_LEFT_FINE || local == ACTION_R1_TURN_RIGHT_FINE);
+        }
+
+    private:
+        static inline uint32 CurrentRevision = 0;
     };
 }
 

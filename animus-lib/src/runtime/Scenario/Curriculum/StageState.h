@@ -22,6 +22,7 @@
 #include "Aptitude.h"
 #include "Block.h"
 #include "BotSlot.h"
+#include "MoveKeep.h"
 #include "ObjectGuid.h"
 #include "Position.h"
 #include "RewardLedger.h"
@@ -172,6 +173,15 @@ namespace Animus::Curriculum
         ModeFlip,           // an aspect, stance or form changed with nothing about the seat's situation changed
         ModeReverse,        // ... and back again within ten seconds
         NeedlessMove,       // a ranged seat moving in a fight it could stand and shoot in
+        TauntOffRole,       // a taunt from a seat that is not the tank, beside a living one
+        TankModeOffRole,    // ... a tank's stance, form, aura or presence
+        // A press that failed for something the seat controls (Encoding::SituationalFailure): it is offered, not
+        // masked, so the seat learns to face, close, see, stand still and pool power before it presses.
+        CastFacing,         // the target not in front (or, for a back attack, not behind)
+        CastRange,          // out of range, or too close
+        CastSight,          // no line of sight
+        CastMoving,         // a cast with a cast time pressed on the move
+        CastPower,          // not enough mana, rage, energy or runic power
         Count
     };
     constexpr std::size_t AIMLESS_CAUSES = std::size_t(AimlessCause::Count);
@@ -338,7 +348,7 @@ namespace Animus::Curriculum
         int32 HintAction = -1;                  // the script's suggestion this decision, and what the seat pressed
         int32 Pressed = -1;                     // (the "Wing stuck" log line)
         std::string ScriptReason;               // why the dungeon script chose it (Baselines::LastDungeonReason)
-        std::array<uint8, PACK_SLOTS> EnemySeenAlive{};
+        std::array<uint8, NAMED_ENEMY_SLOTS> EnemySeenAlive{};
         bool BelowRecover = false;
         uint32 StepPreparationMs = 0;           // buffs, summons and stealth started this decision (SeatGoal::Prepare)
         uint32 FriendSlot = FRIEND_SELF;        // the selected friend (support block)
@@ -354,6 +364,8 @@ namespace Animus::Curriculum
             int32 DurationLeftMs = 0;
         };
         std::vector<AbsorbTrack> Absorbs;
+        /// TrackSupport's working list for this decision, swapped with Absorbs: neither is reallocated once warm.
+        std::vector<AbsorbTrack> AbsorbScratch;
 
         // Support (every stage): wasted and deliberate casts, and time any friend spent low.
         uint32 HealsOnFull = 0;
@@ -382,6 +394,11 @@ namespace Animus::Curriculum
         /// env's target slots hold creatures and the scripted enemy player; in self-play the opponent is the other
         /// seat and is in no slot at all, so anything that looked a seat's target up by slot was blind there.
         ObjectGuid CurrentTargetGuid;
+        /// The target CurrentTarget chose this decision (StageScenario::DecisionTarget): asked of the encounters once
+        /// and read again by the reward, the observation and the action, between which nothing ticks. Known only
+        /// from the reward (or the first observation) to the end of the actions; an episode starts it unknown.
+        ObjectGuid DecisionTarget;
+        bool DecisionTargetKnown = false;
         ObjectGuid LastInterruptibleCaster;     // ... the caster of the one last counted, so a cast counts once
         uint32 LastInterruptibleSpell = 0;
         uint32 LowHealthMs = 0;
@@ -451,7 +468,12 @@ namespace Animus::Curriculum
         // reward, the episode's judged presses by verdict, and a movement press waiting for the reward to see
         // whether it closed or opened the gap to where the goal wants the seat (MoveGap, yards; negative = none).
         uint32 StepAimless = 0;
-        uint32 StepEffort = 0;
+        float StepEffort = 0.0f;            // presses, a steering one by its angle (SeatActionResult::EffortWeight)
+        /// How long the fidget's and the needless move's conditions have held (Actions.SettleGraceMs).
+        uint32 FidgetHeldMs = 0;
+        uint32 NeedlessHeldMs = 0;
+        uint32 FacingToggles = 0;
+        uint32 Weaves = 0;
         uint32 StepFidgetMs = 0;
         std::array<uint32, AIMLESS_CAUSES> StepAimlessBy{};     // this decision's, by cause (priced at the reward)
         std::array<uint32, AIMLESS_CAUSES> AimlessBy{};         // the episode's
@@ -482,6 +504,11 @@ namespace Animus::Curriculum
         float FollowDistanceSq = 0.0f;
         uint32 FollowInBand = 0;
         uint32 MoveStarts = 0;
+        uint32 SplineRestarts = 0;          // a decision that launched a move spline over one still running
+        uint32 TurnRestarts = 0;            // ... of them, on a decision with a turn under way or chosen
+        /// ... and every one of them by what let the run go (MoveKeep::Relaunch, restart-causes).
+        std::array<uint32, std::size_t(MoveKeep::Relaunch::Count)> Relaunches{};
+        uint32 MoveStopStarts = 0;          // a start within a second of a stop
         bool WasMoving = false;
         uint32 StoppedAtMs = 0;
 
@@ -491,6 +518,7 @@ namespace Animus::Curriculum
         /// Clear the episode totals (not the character).
         void ResetEpisode()
         {
+            DecisionTargetKnown = false;
             LastStepDamage = 0.0f;
             LastStepPowerDelta = 0.0f;
             LastStepDamageTaken = 0.0f;
@@ -616,7 +644,11 @@ namespace Animus::Curriculum
             BearingFlips = 0.0f;
             PitchReversals = 0;
             StepAimless = 0;
-            StepEffort = 0;
+            StepEffort = 0.0f;
+            FidgetHeldMs = 0;
+            NeedlessHeldMs = 0;
+            FacingToggles = 0;
+            Weaves = 0;
             StepFidgetMs = 0;
             StepAimlessBy.fill(0);
             AimlessBy.fill(0);
@@ -644,6 +676,10 @@ namespace Animus::Curriculum
             FollowDistanceSq = 0.0f;
             FollowInBand = 0;
             MoveStarts = 0;
+            SplineRestarts = 0;
+            TurnRestarts = 0;
+            Relaunches.fill(0);
+            MoveStopStarts = 0;
             WasMoving = false;
             StoppedAtMs = 0;
             Combat = CombatTally();
@@ -670,9 +706,15 @@ namespace Animus::Curriculum
         /// while reading as three. The episode columns `spawn_drawn` and `spawn_point` are these two fields.
         uint32 SpawnDrawn = 0;
         std::array<SeatState, MAX_SEATS> Seats;
+        /// Each side's director's own charges (RewardTerm::OrderChurn), apart from Seats: a director is agent
+        /// _seatCount + side, past MAX_SEATS in a forty-seat raid.
+        std::array<RewardLedger, TEAM_COUNT> DirectorRewards;
         /// This decision's reward row while the observation that follows it runs (Reward sets it, Observe clears
         /// it): a goal reached is paid into the decision that reached it, so the goal's own span carries it.
         float* StepReward = nullptr;
+        /// Whether any enemy in the target slots is alive and in combat, taken once at the start of the reward
+        /// (StageScenario::Reward) for every seat's terms that ask it: the combat clock, the wing's stall.
+        bool StepEngaged = false;
         uint32 ActiveSeats = 1;                 // seats with a character this episode (the first ones)
         bool Fresh = false;                     // built by Setup, not yet reset
         bool BuildFailed = false;               // the last reset could not build the episode: end it and retry

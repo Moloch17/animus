@@ -19,6 +19,7 @@
 #ifndef ANIMUS_LIB_CURRICULUM_SEAT_VIEW_H
 #define ANIMUS_LIB_CURRICULUM_SEAT_VIEW_H
 
+#include "RouteShortcut.h"
 #include "Aptitude.h"
 #include "Block.h"
 #include "ClassProfile.h"
@@ -66,6 +67,11 @@ namespace Animus::Curriculum
         /// walks, straight, where the server's navmesh does not join the way (a drop into a cavern).
         bool HasStep = false;
         Position Step;
+        /// The run an advance walks (movement-smooth A8): the route's corners about 18 yards on (Step the first), or
+        /// the detour's points back to it.
+        std::array<Position, 6> Path{};
+        uint32 PathPoints = 0;
+        bool AtDoor = false;                        // the run was cut at a closed door: nothing walks through it
     };
 
     /// The world outside a fight, as the life encounters read it for the WorldBlock (or the live module's life
@@ -126,6 +132,10 @@ namespace Animus::Curriculum
         bool HasEnder = false;
         Position EnderAt;
         std::array<JournalPlace, JOURNAL_PLACES> Places{};
+        /// A dungeon's way on in Places and the assignment (InstanceEncounter::View: the next packs, the next route
+        /// point, the tank) with no journal behind them: the goal block reads the places and the assignment, and
+        /// nothing else of the world view is live (Active stays false, so no world action changes).
+        bool RoutePlaces = false;
         uint8 ChainIndex = 0;                       // quests of the chain turned in
         uint8 ChainLength = 0;
         bool HasAssignment = false;                 // the area the coordinator gave the seat's group
@@ -265,6 +275,45 @@ namespace Animus::Curriculum
         uint8 Bearing = 0xFF;                   // and which (MoveBlock::Bearing), 0xFF none yet
         uint64 PitchMs = 0;                     // the clock the last pitch was chosen at
         int8 PitchSign = 0;                     // and which way it tilted the head: +1 up, -1 down, 0 none yet
+        /// The angles those were, signed (MovePrice::Undone prices a reversal by what it takes back), and the facing
+        /// mode before the current one with when it was left (a FACE_* back to it is a toggle, movement-smooth C).
+        float TurnAngle = 0.0f;
+        float PitchDelta = 0.0f;
+        uint8 LastFacingMode = 0xFF;
+        uint64 FacingModeMs = 0;
+        /// What a watching client draws (movement-smooth A2, B2): a run keeps the head it was launched with
+        /// (RunFacing, for the run RunId) however it is re-aimed since, and a seat standing still is shown its turns
+        /// swung across the ticks (ShownFacing) rather than snapped.
+        float RunFacing = 0.0f;
+        uint32 RunId = 0;
+        /// The run (spline id) launched on an incomplete path: it ends where the ground lets the bearing go, and is
+        /// kept to that end (MoveKeep::KeepEdgeRun, movement-smooth A7). 0: none.
+        uint32 EdgeRunId = 0;
+        uint32 EdgeRuns = 0;                    // runs launched on an incomplete path this episode
+        uint32 EdgeHolds = 0;                   // ... and decisions held at the edge with nothing left to walk
+        uint32 DoorHolds = 0;                   // decisions held at a closed door a run would have walked through
+        /// The speed Steer measured when it launched the run RunId (MoveKeep::SpeedChanged), and the one it measured
+        /// last, which becomes RunSpeed when a new run starts (movement-smooth A9).
+        float RunSpeed = 0.0f;
+        float LaunchSpeed = 0.0f;
+        /// Why this decision relaunched a run under way (MoveKeep::Relaunch, restart-causes): set by the first thing
+        /// that let it go, read once the action is applied. Pressing is up while a movement press is applied, so a
+        /// run let go by the press is the press's and not the keep's. LaunchCapped/RunCapped: the run was launched
+        /// with a reach MoveKeep::CappedReach cut short.
+        uint8 LaunchCause = 0;
+        bool Pressing = false;
+        uint8 PressKind = 0;                    // the movement press applied this decision (MoveKeep::Relaunch Press*)
+        bool LaunchCapped = false;
+        bool RunCapped = false;
+        bool Swimming = false;                  // steered as a swimmer (MoveKeep::SwimMode)
+        /// PartyBlock's FOLLOW_TANK: when it last aimed, and the run it launched.
+        uint64 FollowAimMs = 0;
+        uint32 FollowRunId = 0;
+        /// CrowdBlock's ADVANCE: the run it launched, which it carries on before it arrives (movement-smooth A8).
+        uint32 AdvanceRunId = 0;
+        float ShownFacing = 0.0f;
+        bool ShownSeeded = false;
+        uint32 ShownSinceMs = 0;
 
         void Clear() { *this = SteerMemory(); }
     };
@@ -470,6 +519,10 @@ namespace Animus::Curriculum
         float EpisodeTime = 0.0f;                   // time into the episode / EPISODE_TIME_SCALE_MS, clamped
         SeatMemory const* Memory = nullptr;         // what the seat has been doing; null: none (features at rest)
         uint64 NowMs = 0;                           // the clock Memory was kept with
+        uint32 DecisionMs = 250;                    // how long a decision lasts (the scenario's decision clock)
+        /// The closed doors near a dungeon wing's party (InstanceEncounter's EnvInstance::ClosedDoors); null
+        /// elsewhere. Steer's runs stop at one, as the advance's do: a spline walks through anything.
+        std::vector<RouteShortcut::Door> const* ClosedDoors = nullptr;
 
         // Duel: time in combat, what the bot brought (potions, bandages, stones), whether it may resurrect itself, and
         // a hunter's beasts on offer.
@@ -700,12 +753,21 @@ namespace Animus::Curriculum
         uint32 Falls = 0;
         float FallYards = 0.0f;
         float FallDamage = 0.0f;                    // fraction of maximum health
-        /// Steering that failed to commit (MoveBlock, Actions.Jitter): a turn chosen against one chosen within
-        /// JitterWindowMs, and a bearing pressed within it that swings the feet round from the last one -- as the
-        /// share of a half turn it swings (a reversal is 1, a quarter turn 0.5).
+        /// Steering that failed to commit (MoveBlock, Actions.Jitter), counted for the columns as before: a turn or a
+        /// pitch chosen against one chosen within 1500 ms (MovePrice::COUNT_MS), a bearing pressed within it that
+        /// swings the feet round from the last one -- as the share of a half turn it swings -- a facing mode taken
+        /// back, and any of them 1.5 to 4 s on (Weaves).
         uint32 TurnReversals = 0;
         float BearingFlip = 0.0f;
-        uint32 PitchReversals = 0;                  // a pitch chosen against one chosen within the window
+        uint32 PitchReversals = 0;
+        uint32 FacingToggles = 0;
+        uint32 Weaves = 0;
+        /// ... and what they cost, in quarter turns undone weighed by how recent the choice undone was
+        /// (MovePrice::Undone, Recency): the Actions.Jitter charge.
+        float JitterWeight = 0.0f;
+        /// The share of a full press this press costs in Actions.Effort: a steering press by its angle
+        /// (MovePrice::EffortOf), everything else 1.
+        float EffortWeight = 1.0f;
         /// A follow (CompanionBlock): runs started or re-aimed this decision, and the yards to the owner while one
         /// ran (negative: none ran).
         uint32 FollowAims = 0;
@@ -717,6 +779,10 @@ namespace Animus::Curriculum
         ObjectGuid CastAt;
         bool CastHarmful = false;
         bool CastTactical = false;
+        bool CastTaunt = false;                     // a taunt (Taunt, Growl, Hand of Reckoning, Dark Command, ...)
+        bool CastTankMode = false;                  // a tank's stance, form, aura or presence
+        uint32 RefusedCast = 0;                     // a press that did not start: the core's SpellCastResult
+        bool BearingRefresh = false;                // the bearing already held, pressed again: kept, not a press
         bool CastTrap = false;                      // a trap laid (a trap object summoned, or a missile that drops one)
         bool CastDispel = false;
         bool CastReachesFocus = false;              // an area spell with no unit: the focus was inside its radius

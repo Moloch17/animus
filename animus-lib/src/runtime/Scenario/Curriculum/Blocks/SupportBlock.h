@@ -35,8 +35,8 @@ namespace Animus::Curriculum
         enum Obs : uint32
         {
             OBS_SELECTED_FIRST          = 0,    // one-hot over FRIEND_SLOTS: the selected friend
-            OBS_RANK_TIER_FIRST         = 5,    // one-hot over RANK_TIERS
-            OBS_GLOBAL_COUNT            = 8
+            OBS_RANK_TIER_FIRST         = OBS_SELECTED_FIRST + FRIEND_SLOTS,   // one-hot over RANK_TIERS
+            OBS_GLOBAL_COUNT            = OBS_RANK_TIER_FIRST + RANK_TIERS
 
             // Then FRIEND_SLOTS friend slots of FRIEND_FEATURES.
         };
@@ -49,7 +49,7 @@ namespace Animus::Curriculum
             FRIEND_MANA                 = 3,    // 0 without mana
             FRIEND_DISTANCE             = 4,    // yards / 40; 0 for the bot itself
             FRIEND_IN_LINE_OF_SIGHT     = 5,
-            FRIEND_ATTACKERS            = 6,    // enemies attacking it / PACK_SLOTS
+            FRIEND_ATTACKERS            = 6,    // enemies attacking it / ENEMY_COUNT_SCALE
             /// What it can do, as the six-number brief of its Aptitude; all zero when the seat has no way of
             /// knowing (an empty slot). A healer choosing who to spend a cast on wants to know what the candidate
             /// can do for itself, and a three-way label was a coarse answer to that.
@@ -68,8 +68,10 @@ namespace Animus::Curriculum
             ACTION_COUNT                = FRIEND_SLOTS
         };
 
-        [[nodiscard]] BlockId Id() const override { return BlockId::Support; }
         [[nodiscard]] BlockSize Size(Layout const& layout) const override;
+        /// 1: the selected-friend one-hot spans FRIEND_SLOTS (it was 5 columns wide, so friends 5-8 wrote over the
+        /// rank tier and the first friend's present flag), the rank tier after it.
+        [[nodiscard]] uint32 Revision() const override { return 1; }
         void DescribeManifest(Layout const& layout, boost::json::object& block) const override;
         void Observe(SeatView const& view, float* obs, uint8* mask) const override;
         void Apply(SeatView& view, uint32 local, SeatActionResult& result) const override;

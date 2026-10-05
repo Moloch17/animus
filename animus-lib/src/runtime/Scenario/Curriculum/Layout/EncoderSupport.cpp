@@ -17,6 +17,8 @@
  */
 
 #include "EncoderSupport.h"
+#include <atomic>
+#include "Forge.h"
 #include "ObjectAccessor.h"
 #include "CharmInfo.h"
 #include "Cell.h"
@@ -30,6 +32,8 @@
 #include "SpellChecks.h"
 #include "Item.h"
 #include "Layout.h"
+#include "RunCourse.h"
+#include "Log.h"
 #include "MotionMaster.h"
 #include "MoveSplineInit.h"
 #include "MoveSpline.h"
@@ -176,6 +180,106 @@ namespace Animus::Curriculum::Encoding
         return bot->IsNonMeleeSpellCast(false, true, true);
     }
 
+    bool CastHoldsFeet(Player const* bot)
+    {
+        return bot && bot->IsNonMeleeSpellCast(false, false, true);
+    }
+
+    void ReleaseBearing(SeatView& view)
+    {
+        view.HeldBearing = 0xFF;
+        if (view.Option)
+            view.Option->Stop(SeatOptionKind::MoveBearing);
+        if (view.Bot && !view.Bot->movespline->Finalized())
+            view.Bot->StopMoving();
+    }
+
+    bool ReaimRun(Player* bot, float facing)
+    {
+        if (!bot || !AnimusLib::ReaimFacing(*bot->movespline, facing))
+            return false;
+        // The spline writes initialOrientation onto the unit only on the next world tick
+        // (Unit::UpdateSplinePosition); a press this decision must not wait for it. Not shown to clients: they are
+        // drawing this unit along a monster-move spline, and a facing packet in the middle of one is unverified --
+        // the realm's TurnShown sends none while a spline runs either. They see the head at the next launch.
+        if (std::fabs(Position::NormalizeOrientation(facing - bot->GetOrientation() + float(M_PI)) - float(M_PI))
+            > 0.001f)
+            bot->UpdatePosition(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(), facing);
+        return true;
+    }
+
+    void TurnOnSpot(Player* bot, float facing)
+    {
+        if (!bot || std::fabs(Position::NormalizeOrientation(facing - bot->GetOrientation() + float(M_PI))
+            - float(M_PI)) <= 0.001f)
+            return;
+        bot->UpdatePosition(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(), facing);
+    }
+
+    void ShowFacing(Player* bot, float shown)
+    {
+        if (!bot || !ForgeCore::HasClients())
+            return;
+        // The shown angle goes out in an ordinary facing packet; the unit's orientation is put back at once.
+        float const decided = bot->GetOrientation();
+        bot->SetOrientation(shown);
+        WorldPacket data(MSG_MOVE_SET_FACING, 64);
+        data << bot->GetPackGUID();
+        bot->BuildMovementPacket(&data);
+        bot->SetOrientation(decided);
+        bot->SendMessageToSet(&data, false);
+    }
+
+    /// A spell the mask offered that did not start, and why: the engine's cast result, or the press's own refusal
+    /// (1000 not known, 1001 a cast in progress, 1002 no friend to take it). Capped per process. Stage7's healers
+    /// pressed four to seven heals for each that started, and stage5's casters five to seven spells (2026-10-04);
+    /// this says where the rest went. `unit` is the friend a helpful spell went to, else the enemy target.
+    void NotePressRefused(Player* bot, SpellInfo const* info, Unit const* unit, uint32 reason)
+    {
+        static std::atomic<uint32> logged{ 0 };
+        if (logged.fetch_add(1) >= 600)
+            return;
+        bool const helpful = info && info->IsPositive();
+        LOG_INFO("module.animus", "Press refused: class {} level {} spell {} {} reason {} unit {} health {:.0f}% "
+            "distance {:.1f} los {} infront {} moving {} spline {} casting {} gcd {} combat {}",
+            uint32(bot->getClass()), bot->GetLevel(), info ? info->Id : 0, helpful ? "helpful" : "harmful", reason,
+            unit ? (unit == bot ? "self" : "other") : "none", unit ? unit->GetHealthPct() : 0.0f,
+            unit ? bot->GetDistance(unit) : 0.0f, unit ? bot->IsWithinLOSInMap(unit) : false,
+            unit ? bot->HasInArc(float(M_PI), unit) : false, bot->isMoving(), !bot->movespline->Finalized(),
+            bot->IsNonMeleeSpellCast(false, true, true),
+            info ? bot->GetGlobalCooldownMgr().HasGlobalCooldown(info) : false, bot->IsInCombat());
+    }
+
+    /// Where a heal goes: the selected friend when it can take it, else the most hurt living friend the heal reaches
+    /// (range and line of sight), else the selected friend as before. Heals went only to the selected friend, which
+    /// starts as the seat itself, and a heal on a friend at full health is masked: a healer that kept an enemy
+    /// selected and seldom picked a friend was seldom offered a heal at all (2026-10-03, stage6: holy paladins had
+    /// Holy Light open 13 decisions a fight against a priest's 60-90 for its heals, and cast two heals a fight).
+    Unit* HealTarget(SeatView const& view, ActionCatalog::Action const& def, SpellInfo const* info)
+    {
+        Unit* selected = SupportTarget(view);
+        Player* bot = view.Bot;
+        if (!def.Healing || !view.L || !view.L->Has(BlockId::Support))
+            return selected;
+
+        float const range = info->GetMaxRange(true, bot);
+        auto const takes = [&](Unit* unit)
+        {
+            return unit && unit->IsAlive() && (!def.DirectHeal || !unit->IsFullHealth())
+                && (!def.KeepsAura || !OwnAuraHasPlentyLeft(unit, info, bot->GetGUID()))
+                && (unit == bot || (bot->IsWithinDistInMap(unit, range) && bot->IsWithinLOSInMap(unit)));
+        };
+        if (takes(selected))
+            return selected;
+
+        Unit* best = nullptr;
+        for (uint32 slot = 0; slot < FRIEND_SLOTS; ++slot)
+            if (Unit* unit = FriendUnit(view, slot); unit && unit != selected && !unit->IsFullHealth() && takes(unit)
+                && (!best || unit->GetHealthPct() < best->GetHealthPct()))
+                best = unit;
+        return best ? best : selected;
+    }
+
     bool MountCastInProgress(Player const* bot)
     {
         Spell const* spell = bot->GetCurrentSpell(CURRENT_GENERIC_SPELL);
@@ -186,6 +290,29 @@ namespace Animus::Curriculum::Encoding
     bool CanCast(Player* bot, SpellInfo const* info, Unit* target, Item* castItem, Unit* friendUnit)
     {
         return CheckCast(bot, info, TargetsFor(info, bot, target, friendUnit), castItem);
+    }
+
+    Situational SituationalFailure(uint32 castResult)
+    {
+        switch (SpellCastResult(castResult))
+        {
+            case SPELL_FAILED_UNIT_NOT_INFRONT:
+            case SPELL_FAILED_NOT_INFRONT:
+            case SPELL_FAILED_UNIT_NOT_BEHIND:
+            case SPELL_FAILED_NOT_BEHIND:
+                return Situational::Facing;
+            case SPELL_FAILED_OUT_OF_RANGE:
+            case SPELL_FAILED_TOO_CLOSE:
+                return Situational::Range;
+            case SPELL_FAILED_LINE_OF_SIGHT:
+                return Situational::Sight;
+            case SPELL_FAILED_MOVING:
+                return Situational::Moving;
+            case SPELL_FAILED_NO_POWER:
+                return Situational::Power;
+            default:
+                return Situational::None;
+        }
     }
 
     bool CanHeal(Player* bot, ActionCatalog::Action const& heal, Unit* ally)
@@ -250,12 +377,22 @@ namespace Animus::Curriculum::Encoding
         return CancellableForm(bot);
     }
 
-    bool IsSpellActionAllowed(SeatView const& view, Unit* target, ActionCatalog::Action const& def)
+    bool IsSpellActionAllowed(SeatView const& view, Unit* target, ActionCatalog::Action const& def,
+        SpellReadiness* readiness)
     {
         Player* bot = view.Bot;
 
         // Cheap rejections before the full cast check.
         SpellInfo const* info = KnownRank(view, def);
+        if (info && readiness && bot->HasActiveSpell(info->Id))
+        {
+            // Affordable whatever else stands in the way: what it costs against what the seat has (as Spell::prepare
+            // works the cost out and Spell::CheckPower compares it). Runes are the core's own check.
+            int32 const cost = info->PowerType == POWER_RUNE ? 0 : info->CalcPowerCost(bot, info->GetSchoolMask());
+            readiness->Affordable = cost <= 0
+                || (info->PowerType == POWER_HEALTH ? int32(bot->GetHealth()) > cost
+                    : info->PowerType < MAX_POWERS && int32(bot->GetPower(Powers(info->PowerType))) >= cost);
+        }
         if (!info || !bot->HasActiveSpell(info->Id) || bot->HasSpellCooldown(info->Id) || CastInProgress(bot))
             return false;
 
@@ -265,11 +402,7 @@ namespace Animus::Curriculum::Encoding
         if (bot->GetGlobalCooldownMgr().HasGlobalCooldown(info))
             return false;
 
-        // With movement actions (duel block on): server-driven movement does not set the movement flags CheckCast
-        // looks at, so no cast-time or channeled spell while running.
-        if (view.L->Has(BlockId::Duel) && !bot->movespline->Finalized()
-            && (info->CalcCastTime(bot) || info->IsChanneled()))
-            return false;
+        // Running with a cast time is not masked: the press fails SPELL_FAILED_MOVING and is charged (Situational).
 
         // Heals, shields and buffs go to the selected friend (the bot itself without the support block); a friend who
         // is gone or dead takes none. Casts that can only be wasted are not offered: a heal with nothing else to it on
@@ -277,7 +410,7 @@ namespace Animus::Curriculum::Encoding
         Unit* friendUnit = nullptr;
         if (info->IsPositive())
         {
-            friendUnit = AimsAtFriend(info) ? SupportTarget(view) : bot;
+            friendUnit = AimsAtFriend(info) ? HealTarget(view, def, info) : bot;
             if (!friendUnit)
                 return false;
 
@@ -292,9 +425,19 @@ namespace Animus::Curriculum::Encoding
         // (ApplySpellAction). The full cast check cannot be asked that question, so this is the shapeshift rule
         // alone; a press the core still refuses simply does nothing, as any masked-through press does.
         if (FormToDropFor(bot, info))
-            return info->CheckShapeshift(FORM_NONE) == SPELL_CAST_OK;
+        {
+            bool const shifts = info->CheckShapeshift(FORM_NONE) == SPELL_CAST_OK;
+            if (readiness)
+                readiness->Ready = shifts && readiness->Affordable;
+            return shifts;
+        }
 
-        return CanCast(bot, info, target, nullptr, friendUnit);
+        // What the seat can put right itself -- facing, range, sight, moving, power -- is offered: the press fails,
+        // and the failure is charged by its cause.
+        SpellCastResult const cast = SpellChecks::CastResult(bot, info, TargetsFor(info, bot, target, friendUnit));
+        if (readiness)
+            readiness->Ready = cast == SPELL_CAST_OK;
+        return cast == SPELL_CAST_OK || SituationalFailure(uint32(cast)) != Situational::None;
     }
 
     bool ApplySpellAction(SeatView const& view, Unit* target, ActionCatalog::Action const& def,
@@ -306,13 +449,19 @@ namespace Animus::Curriculum::Encoding
 
         SpellInfo const* info = KnownRank(view, def);
         if (!info || !bot->HasActiveSpell(info->Id) || CastInProgress(bot))
+        {
+            NotePressRefused(bot, info, nullptr, CastInProgress(bot) ? 1001 : 1000);
             return false;
+        }
 
         // Same path as CMSG_CAST_SPELL. prepare() runs the full cast validation again, so a masked action
         // from a misbehaving client simply fails. The spell owns and frees itself.
-        Unit* friendUnit = info->IsPositive() && AimsAtFriend(info) ? SupportTarget(view) : bot;
+        Unit* friendUnit = info->IsPositive() && AimsAtFriend(info) ? HealTarget(view, def, info) : bot;
         if (info->IsPositive() && !friendUnit)
+        {
+            NotePressRefused(bot, info, nullptr, 1002);
             return false;
+        }
 
         bool const onFullHealth = def.DirectHeal && friendUnit && friendUnit->IsFullHealth();
         SpellCastTargets targets = TargetsFor(info, bot, target, friendUnit);
@@ -324,12 +473,20 @@ namespace Animus::Curriculum::Encoding
         if (SpellInfo const* current = FormToDropFor(bot, info))
             bot->RemoveAurasDueToSpell(current->Id);
         Spell* spell = new Spell(bot, info, TRIGGERED_NONE);
-        if (spell->prepare(&targets) != SPELL_CAST_OK)
+        if (SpellCastResult const cast = spell->prepare(&targets); cast != SPELL_CAST_OK)
+        {
+            NotePressRefused(bot, info, info->IsPositive() ? friendUnit : target, uint32(cast));
+            result.RefusedCast = uint32(cast);
             return false;
+        }
 
         ++result.SpellCasts;
         result.CastHarmful = !info->IsPositive();
         result.CastTactical = def.From == ActionCatalog::Group::Tactical;
+        result.CastTaunt = info->HasEffect(SPELL_EFFECT_ATTACK_ME) || info->HasAura(SPELL_AURA_MOD_TAUNT);
+        // Defensive Stance, Righteous Fury, Bear Form (Dire Bear Form is its rank), Frost Presence.
+        uint32 const chain = info->GetFirstRankSpell() ? info->GetFirstRankSpell()->Id : info->Id;
+        result.CastTankMode = chain == 71 || chain == 25780 || chain == 5487 || chain == 9634 || chain == 48263;
         result.CastTrap = IsTrapSpell(info);
         result.CastDispel = def.Dispel;
         // A harmful spell names a unit only when it needs one; an area spell is judged by whether the focus was
@@ -792,7 +949,7 @@ namespace Animus::Curriculum::Encoding
         return watcher && target && watcher->CanSeeOrDetect(target) && watcher->IsWithinLOSInMap(target);
     }
 
-    void MoveTo(Player* bot, uint32 pointId, float x, float y, float z, float const* facing)
+    void MoveTo(Player* bot, uint32 pointId, float x, float y, float z, float const* facing, float velocity)
     {
         struct Timed
         {
@@ -842,6 +999,8 @@ namespace Animus::Curriculum::Encoding
         init.MoveTo(x, y, z, true);
         init.SetOrientationFixed(true);
         init.SetFacing(*facing);        // and for the final tick, on the rare spline that does finish
+        if (velocity > 0.0f)
+            init.SetVelocity(velocity);
         init.Launch();
     }
 
@@ -857,7 +1016,7 @@ namespace Animus::Curriculum::Encoding
         init.Launch();
     }
 
-    void SwimTo(Player* bot, float x, float y, float z, float const* facing)
+    void SwimTo(Player* bot, float x, float y, float z, float const* facing, float velocity)
     {
         // Straight there, no pathfinding: the walkable mesh stops at the waterline -- mmaps drops the terrain
         // under real liquid -- so a pathfound step into a lake has nowhere to land and the seat stands on the
@@ -881,7 +1040,53 @@ namespace Animus::Curriculum::Encoding
             init.SetOrientationFixed(true);
             init.SetFacing(*facing);
         }
+        if (velocity > 0.0f)
+            init.SetVelocity(velocity);
         init.Launch();
+    }
+
+    void MoveAlong(Player* bot, std::vector<G3D::Vector3> const& points, float facing, float velocity)
+    {
+        // As MoveTo: interrupt first so Launch seeds the orientation from the unit rather than from the spline in
+        // flight, then hold it for the run's whole life.
+        bot->GetMotionMaster()->Clear();
+        bot->DisableSpline();
+        bot->UpdatePosition(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(), facing);
+
+        Movement::MoveSplineInit init(bot);
+        init.MovebyPath(points);
+        init.SetOrientationFixed(true);
+        init.SetFacing(facing);
+        if (velocity > 0.0f)
+            init.SetVelocity(velocity);
+        init.Launch();
+    }
+
+    void WalkPath(Player* bot, std::vector<G3D::Vector3> const& points)
+    {
+        bot->GetMotionMaster()->Clear();
+        std::vector<G3D::Vector3> path{ G3D::Vector3(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ()) };
+        path.insert(path.end(), points.begin(), points.end());
+        Movement::MoveSplineInit init(bot);
+        init.MovebyPath(path);
+        init.Launch();
+    }
+
+    float CourseAhead(Unit const* bot, uint32 aheadMs)
+    {
+        if (std::optional<float> const course = RunCourse(*bot->movespline, aheadMs))
+            return Position::NormalizeOrientation(*course);
+        G3D::Vector3 const end = bot->movespline->FinalDestination();
+        return bot->GetAbsoluteAngle(end.x, end.y);
+    }
+
+    float ClimbAhead(Unit const* bot, uint32 aheadMs)
+    {
+        if (std::optional<float> const climb = RunClimb(*bot->movespline, aheadMs))
+            return *climb;
+        G3D::Vector3 const end = bot->movespline->FinalDestination();
+        float const flat = bot->GetExactDist2d(end.x, end.y);
+        return flat > 0.1f ? std::atan2(end.z - bot->GetPositionZ(), flat) : 0.0f;
     }
 
     void JumpTo(Player* bot, float x, float y, float z, float speedXY, float speedZ, float const* facing)
@@ -978,20 +1183,51 @@ namespace Animus::Curriculum::Encoding
         return true;
     }
 
-    void FlyTo(Player* bot, float x, float y, float z, float const* facing)
+    void FlyTo(Player* bot, float x, float y, float z, float const* facing, float velocity)
     {
-        // Deliberately NOT orientation-fixed, unlike MoveTo and SwimTo. SetFly puts the spline in Catmullrom
-        // mode, and Spline::init_spline places the virtual first control point at
-        // controls[0] - (cos(initialOrientation), sin(initialOrientation)): a facing off the direction of travel
-        // would bend the start of the flight path rather than only turn the seat's head. Flying seats therefore
-        // keep the old face-along-the-path behaviour until a stage needs to strafe in the air.
+        if (facing)
+        {
+            FlyAlong(bot, { G3D::Vector3(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ()),
+                G3D::Vector3(x, y, z) }, *facing, velocity);
+            return;
+        }
         bot->GetMotionMaster()->Clear();
         Movement::MoveSplineInit init(bot);
         init.MoveTo(x, y, z, false, true);
-        if (facing)
-            init.SetFacing(*facing);
         init.SetFly();
+        if (velocity > 0.0f)
+            init.SetVelocity(velocity);
         init.Launch();
+    }
+
+    void FlyAlong(Player* bot, std::vector<G3D::Vector3> const& points, float facing, float velocity)
+    {
+        // SetFly puts the spline in Catmullrom mode, and Spline::init_spline places the virtual first control point
+        // at controls[0] - (cos(initialOrientation), sin(initialOrientation)): launched with the head off the way
+        // the path leaves, the start of the flight bends toward the head. So the unit is turned along the first leg
+        // for the launch -- the curve is built then and never again -- and the head is put where the seat looks
+        // straight after (MoveSpline::ReaimFacing), which turns the head and not the path. Flights used to face
+        // along the path for this reason, so a held head in the air was the seat's belief and not the world's.
+        bot->GetMotionMaster()->Clear();
+        bot->DisableSpline();
+        float along = facing;
+        for (std::size_t i = 1; i < points.size(); ++i)
+            if (std::fabs(points[i].x - points[0].x) + std::fabs(points[i].y - points[0].y) > 0.01f)
+            {
+                along = std::atan2(points[i].y - points[0].y, points[i].x - points[0].x);
+                break;
+            }
+        bot->UpdatePosition(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(), along);
+
+        Movement::MoveSplineInit init(bot);
+        init.MovebyPath(points);
+        init.SetFly();
+        init.SetOrientationFixed(true);
+        init.SetFacing(facing);
+        if (velocity > 0.0f)
+            init.SetVelocity(velocity);
+        init.Launch();
+        ReaimRun(bot, facing);
     }
 
     bool PetAttack(Player* bot, Unit* target)

@@ -614,7 +614,7 @@ namespace
             .Suffix = "_ragefire",
             .Extends = "stage7_group",
             .Summary = "Ragefire Chasm from the door to Bazzalan, five seats of its level under a director",
-            // Crowd: what is on the party past the pack's four slots, and the pack ahead. Hint: the suggestion the
+            // Crowd: what is on the party past the pack's slots, and the pack ahead. Hint: the suggestion the
             // learner imitates while the support lasts, hidden from the networks.
             .Blocks = { Core, Move, Duel, Pet, Pack, Gauntlet, Companion, Party, Support, Order, Forecast, Crowd, Hint,
                 Goal },
@@ -630,6 +630,11 @@ namespace
                     .Against = Opposition::Instance, .PartyGroup = true, .Instance = InstanceLadder::Wing,
                     .InstanceRow = 0, .PullDrill = true, .EpisodeSeconds = 150, .Directed = true,
                     .DirectorLearned = true },
+                // Held out: a dungeon of the same levels the stage never trains on, played only by the learner's
+                // eval.heldout (ArenaDefinition::EvalOnly) -- whether it learned to run dungeons or this one's route.
+                { .Name = "heldout", .Weight = 0, .Seats = SeatPlan::Party, .Against = Opposition::Instance,
+                    .PartyGroup = true, .Instance = InstanceLadder::Wing, .InstanceRow = 2, .EvalOnly = true,
+                    .EpisodeSeconds = 10800, .Directed = true, .DirectorLearned = true },
             },
         });
 
@@ -646,6 +651,11 @@ namespace
                 { .Name = "dungeon", .Weight = 1, .Seats = SeatPlan::Party, .Against = Opposition::Instance,
                     .PartyGroup = true, .Instance = InstanceLadder::Wing, .InstanceRow = 1, .EpisodeSeconds = 14400,
                     .Directed = true, .DirectorLearned = true },
+                // Held out: a dungeon of the same levels the stage never trains on, played only by the learner's
+                // eval.heldout (ArenaDefinition::EvalOnly) -- whether it learned to run dungeons or this one's route.
+                { .Name = "heldout", .Weight = 0, .Seats = SeatPlan::Party, .Against = Opposition::Instance,
+                    .PartyGroup = true, .Instance = InstanceLadder::Wing, .InstanceRow = 2, .EvalOnly = true,
+                    .EpisodeSeconds = 10800, .Directed = true, .DirectorLearned = true },
             },
         });
 
@@ -1056,6 +1066,8 @@ namespace
             return "pack health is a percentage of a pull's creatures' own";
         if (arena.InstanceRow >= 0 && !instance)
             return "only an instance arena pins a row of its ladder";
+        if (arena.EvalOnly && arena.PullDrill)
+            return "a held-out arena is played by evaluations, which never play a pull drill";
         if (arena.OwnerCast && !arena.Owner)
             return "a cast owner is still an owner: the arena has to have one";
         if (arena.OwnerCast && stage.SeatCount() + TEAM_COUNT + 1 > MAX_SEATS)

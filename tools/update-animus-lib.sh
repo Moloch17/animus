@@ -8,8 +8,9 @@
 # manifest this module builds is exactly the one it was exported with, so the bundle must be refreshed from the forge
 # revision the models were trained on, together with the models.
 #
-# Every file of the bundle that the forge also has is copied from it as it is. The module keeps its own:
-#   animus_lib_loader.cpp, Core/ (CoreHooks), Model/ (the .amdl reader and the model library), and Bot/BotFactory.*
+# Every file of the bundle that the forge also has is copied from it as it is (but for MoveSpline::ReaimFacing calls,
+# pointed at Core/Forge.h). The module keeps its own:
+#   animus_lib_loader.cpp, Core/ (CoreHooks, and Forge.h: the forge core's seams on a stock core), Model/ (the .amdl reader and the model library), and Bot/BotFactory.*
 #   (the forge's creates sim-session bots through forge-only core calls; this one places companions beside players)
 # and Scenario/Curriculum/WarmCaches.cpp is left out (it warms the training half's tables; GearBuilder only needs the
 # header). A file the forge has and the bundle does not is not added unless something includes it: the script lists
@@ -43,6 +44,13 @@ while IFS= read -r file; do
   fi
 done < <(cd "$bundle" && find . -type f \( -name '*.cpp' -o -name '*.h' \) | sed 's|^\./||' | sort)
 echo "Copied $copied files from $core."
+
+# The forge core's own calls, pointed at the module's stock-core versions in Core/Forge.h: MoveSpline::ReaimFacing is
+# a forge core addition (its fields are protected on a stock core).
+while IFS= read -r file; do
+  sed -i -E 's/([A-Za-z_]+)->movespline->ReaimFacing\(/AnimusLib::ReaimFacing(*\1->movespline, /g' "$file"
+  echo "  pointed $file's MoveSpline::ReaimFacing at Core/Forge.h"
+done < <(grep -rlE -- '->movespline->ReaimFacing\(' "$bundle" || true)
 printf '  kept the module'"'"'s own: %s\n' "${kept[@]}"
 
 # Includes the bundle cannot resolve: its own headers, then the core's (a stock core has everything but the forge's).

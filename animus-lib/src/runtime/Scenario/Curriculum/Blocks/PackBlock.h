@@ -31,8 +31,8 @@ namespace Animus::Curriculum
     public:
         enum Obs : uint32
         {
-            OBS_ALIVE                   = 0,    // living enemies / PACK_SLOTS
-            OBS_IN_COMBAT               = 1,    // enemies in combat / PACK_SLOTS
+            OBS_ALIVE                   = 0,    // living enemies / ENEMY_COUNT_SCALE
+            OBS_IN_COMBAT               = 1,    // enemies in combat / ENEMY_COUNT_SCALE
             OBS_GLOBAL_COUNT            = 2
 
             // Then PACK_SLOTS enemy slots of SLOT_FEATURES.
@@ -78,7 +78,6 @@ namespace Animus::Curriculum
             ACTION_COUNT                = PACK_SLOTS + 1
         };
 
-        [[nodiscard]] BlockId Id() const override { return BlockId::Pack; }
         [[nodiscard]] BlockSize Size(Layout const& layout) const override;
         void DescribeManifest(Layout const& layout, boost::json::object& block) const override;
         void Observe(SeatView const& view, float* obs, uint8* mask) const override;

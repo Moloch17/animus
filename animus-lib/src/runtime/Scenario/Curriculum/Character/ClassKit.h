@@ -37,6 +37,7 @@ namespace Animus::Curriculum
             uint32 SpellId = 0;                     // the spell the player ends up knowing
             uint8 ReqLevel = 0;
             std::array<uint32, 3> ReqAbility{};     // must all be known (talent-gated ranks)
+            uint32 RaceMask = 0;                    // the races it is for (a race's class quest); 0: every race
         };
 
         struct Reagent
@@ -55,6 +56,8 @@ namespace Animus::Curriculum
         /// The lowest level a character of `playerClass` can be (death knights start at 55).
         [[nodiscard]] static uint8 MinLevelOf(uint8 playerClass);
         [[nodiscard]] std::vector<KitSpell> const& Spells() const { return _spells; }
+        /// The level the kit teaches `spellId` at; 0 when it does not teach it.
+        [[nodiscard]] uint8 LevelOf(uint32 spellId) const;
 
         /// Learns every kit spell available at the bot's level whose required abilities it knows.
         /// Call after talents, so talent-gated ranks (e.g. Mortal Strike rank 2+) are picked up.

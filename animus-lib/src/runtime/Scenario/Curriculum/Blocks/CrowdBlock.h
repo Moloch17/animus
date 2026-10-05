@@ -57,8 +57,8 @@ namespace Animus::Curriculum
             OBS_TANK_DISTANCE   = 17,   // / 100 yd
             OBS_TANK_SIN        = 18,
             OBS_TANK_COS        = 19,
-            OBS_TANK_TARGET_FIRST = 20, // one-hot over the pack block's slots: the enemy the tank is on
-            OBS_BEHIND          = OBS_TANK_TARGET_FIRST + PACK_SLOTS,   // its place on the route is behind the party
+            OBS_TANK_TARGET_FIRST = 20, // one-hot over the named enemy slots: the enemy the tank is on
+            OBS_BEHIND          = OBS_TANK_TARGET_FIRST + NAMED_ENEMY_SLOTS,   // its route place is behind the party
             OBS_SLOT_FIRST      = OBS_BEHIND + 1
         };
 
@@ -114,10 +114,10 @@ namespace Animus::Curriculum
         /// Whether `bot` can use `object` as it stands: a key it needs is carried.
         [[nodiscard]] static bool CanUse(Player const* bot, GameObject const* object);
 
-        [[nodiscard]] BlockId Id() const override { return BlockId::Crowd; }
         [[nodiscard]] BlockSize Size(Layout const& layout) const override;
         void DescribeManifest(Layout const& layout, boost::json::object& block) const override;
         void Observe(SeatView const& view, float* obs, uint8* mask) const override;
+        void BeforeApply(SeatView& view, SeatActionResult& result) const override;
         void Apply(SeatView& view, uint32 local, SeatActionResult& result) const override;
         [[nodiscard]] bool IsMovement(uint32 local) const override
         {

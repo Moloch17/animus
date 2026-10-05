@@ -115,7 +115,6 @@ namespace Animus::Curriculum
     };
 
     constexpr uint32 ORDER_KIND_COUNT = uint32(OrderKind::Count);
-    [[nodiscard]] std::string_view OrderKindName(OrderKind kind);
 
     /// Who an order came to: the whole side, the member's group, or the member by name. A raid director's order to
     /// one member outranks its order to the member's group, which outranks the side's.
@@ -193,7 +192,19 @@ namespace Animus::Curriculum
     /// Teammate slots a seat observes and acts on (PartyBlock). Bounded on purpose: a raider heals, assists and
     /// guards its own group and a few named others, never 39 people, and a slot is 36 features and three actions.
     constexpr uint32 PARTY_MEMBERS = GROUP_MEMBERS + SPOTLIGHT_SLOTS;
-    constexpr uint32 PACK_SLOTS = 4;        // enemies observed
+    /// Enemies observed one by one (PackBlock, HostilesBlock: the seat sets' enemies, picked by pointer). A dungeon's
+    /// fights had a median of eight creatures on the party and raids and battlegrounds have more; four left half of
+    /// a pull out of sight (2026-10-03). The slots are in order of what matters to the party (the encounters keep
+    /// them so: PullsEncounter::OrderCamp), and the crowd block counts what is past them.
+    constexpr uint32 PACK_SLOTS = 24;
+    /// The first enemy slots the other blocks name by index -- a teammate's target and the slots on it (PartyBlock),
+    /// the owner's (CompanionBlock), the tank's (CrowdBlock) and a goal's enemy (GoalTarget): the four that matter
+    /// most, the tank's target first. Fixed apart from PACK_SLOTS so those blocks keep their sizes and seeded weights
+    /// when the observed slots grow; a target past them reads as none of these.
+    constexpr uint32 NAMED_ENEMY_SLOTS = 4;
+    /// The scale an enemy count is observed at (living enemies, attackers on a seat): what PACK_SLOTS was when those
+    /// features were trained, so a seeded policy reads them as it did. Not a cap: eight attackers read 2.
+    constexpr float ENEMY_COUNT_SCALE = 4.0f;
     constexpr uint32 CROWD_SLOTS = 4;       // enemies past the pack's slots, observed one by one (CrowdBlock)
     /// Rays the movement block senses the ground along: twice the bearings it can walk, because a gap between
     /// two 45-degree bearings is visible at 22.5 degrees and not at 45 (GroundProbe, MoveBlock::RAY_COUNT).
@@ -248,7 +259,7 @@ namespace Animus::Curriculum
     {
         GOAL_TARGET_NONE        = 0,
         GOAL_TARGET_ENEMY_FIRST = 1,
-        GOAL_TARGET_FRIEND_FIRST = GOAL_TARGET_ENEMY_FIRST + PACK_SLOTS,
+        GOAL_TARGET_FRIEND_FIRST = GOAL_TARGET_ENEMY_FIRST + NAMED_ENEMY_SLOTS,
         GOAL_TARGET_OBJECTIVE_FIRST = GOAL_TARGET_FRIEND_FIRST + FRIEND_SLOTS,
         GOAL_TARGET_GIVER       = GOAL_TARGET_OBJECTIVE_FIRST + 4,
         GOAL_TARGET_ENDER,
@@ -308,10 +319,18 @@ namespace Animus::Curriculum
     public:
         virtual ~Block() = default;
 
-        [[nodiscard]] virtual BlockId Id() const = 0;
-
         /// The features and actions the block adds to `layout` (profile, assets and ally heals are set).
         [[nodiscard]] virtual BlockSize Size(Layout const& layout) const = 0;
+
+        /// Bumped when the block's columns change meaning at the same place (a re-layout, not new features at the
+        /// end): written to the manifest and stage.json when not 0, so a model or checkpoint of the old layout is
+        /// told apart from one of the new even where the widths agree.
+        [[nodiscard]] virtual uint32 Revision() const { return 0; }
+        /// Columns of the block whose scale changed in place, each {tag, first (relative to the block), count}: the
+        /// learner's seeding starts their normaliser statistics afresh when the parent's block lacks the tag, and
+        /// keeps the rest of the block (bootstrap._seed_rescaled_norms). A Revision is for columns that changed
+        /// meaning; this is for a reading that changed its scale.
+        virtual void DescribeRescaled(Layout const& /*layout*/, boost::json::array& /*out*/) const { }
 
         /// Block-specific manifest entries (spell lists, slot counts), written inside the block's manifest object.
         virtual void DescribeManifest(Layout const& /*layout*/, boost::json::object& /*block*/) const { }
@@ -324,6 +343,13 @@ namespace Animus::Curriculum
         /// Every decision before the chosen action, whatever it is: where a durative action (SeatOption) acts. What
         /// it does is recorded in `result` as a press would be.
         virtual void BeforeApply(SeatView& /*view*/, SeatActionResult& /*result*/) const { }
+        /// Every decision before the press, whatever it is (the no-op included) and whichever block it belongs to:
+        /// what a press must meet already true of the world (MoveBlock: the seat's orientation synced to where it is
+        /// looking, for a spell's facing check -- movement-smooth A3). Nothing is recorded; it is not an action.
+        virtual void BeforePress(SeatView& /*view*/) const { }
+        /// The action is applied before every block's BeforeApply rather than after: a press that must meet the
+        /// world as the seat saw it (a spell: facing, range, the global cooldown).
+        [[nodiscard]] virtual bool PressesFirst(Layout const& /*layout*/, uint32 /*local*/) const { return false; }
 
         /// Apply the block's action `local` (0-based within the block) as the client would. Masked actions do nothing.
         virtual void Apply(SeatView& /*view*/, uint32 /*local*/, SeatActionResult& /*result*/) const { }
@@ -350,6 +376,15 @@ namespace Animus::Curriculum
 
     /// The block implementation of `id`.
     [[nodiscard]] Block const& GetBlock(BlockId id);
+
+    /// A seat layout's entities as sets, for the learner's shared set encoders and pointer heads (peak-play W4,
+    /// stage.json layouts.<name>.sets): per set its name, slot count, the column of a slot's "present" feature, the
+    /// observation segments a slot is gathered from (each `first` column of slot 0 and `stride` columns a slot, read
+    /// in order and concatenated) and the action ranges that name its slots (`first` global action, `count` = slots).
+    /// The enemies are the pack block's slots joined with the hostiles block's for the same slot; the members the
+    /// party block's teammates; the friends the support block's; the crowd the crowd block's. Empty for a layout with
+    /// none of them, and for the director, which has its own (DirectorLayout::SetDescriptor).
+    void DescribeSeatSets(Layout const& layout, boost::json::array& sets);
 }
 
 #endif

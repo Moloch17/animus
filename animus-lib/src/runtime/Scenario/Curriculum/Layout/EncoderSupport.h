@@ -82,6 +82,25 @@ namespace Animus::Curriculum::Encoding
     /// meanwhile. The core only checks this for client casts, so actions check it here.
     [[nodiscard]] bool CastInProgress(Player const* bot);
 
+    /// A cast or a channel under way that moving would cancel: the steering does not launch a spline under it
+    /// (MoveBlock Steer), and a press that started one lets go of the held bearing (ReleaseBearing).
+    [[nodiscard]] bool CastHoldsFeet(Player const* bot);
+    /// Stop the feet and let go of the held bearing and its option, so nothing re-issues the walk under a cast.
+    void ReleaseBearing(SeatView& view);
+
+    /// Turn the head of the run under way to `facing` without relaunching it (MoveSpline::ReaimFacing), and the
+    /// unit's orientation with it at once, so a facing check made before the next world tick reads where the seat
+    /// is looking (movement-smooth A3). False when there is no orientation-fixed run to turn -- standing, flying
+    /// (FlyTo faces along its path), a follow or an advance -- and then nothing is changed.
+    bool ReaimRun(Player* bot, float facing);
+    /// Turn a seat standing still to `facing`, as a turn on the spot does (UpdatePosition with the same
+    /// coordinates fires AURA_INTERRUPT_FLAG_TURNING); nothing when the angle is unchanged.
+    void TurnOnSpot(Player* bot, float facing);
+    /// A turn on the spot reaches clients only with the next run: while a real client is connected
+    /// (ForgeCore::HasClients) `shown` goes out in an ordinary MSG_MOVE_SET_FACING, the unit's own orientation
+    /// untouched (MoveBlock::ShowTurn swings it across the ticks). Nothing is built otherwise.
+    void ShowFacing(Player* bot, float shown);
+
     /// Whether the cast in flight is a mount.
     ///
     /// Narrower than CastInProgress on purpose. A mount is the one cast in the curriculum that the seat must
@@ -103,7 +122,25 @@ namespace Animus::Curriculum::Encoding
     /// at its rank tier.
     [[nodiscard]] SpellInfo const* KnownRank(SeatView const& view, ActionCatalog::Action const& def);
 
-    [[nodiscard]] bool IsSpellActionAllowed(SeatView const& view, Unit* target, ActionCatalog::Action const& def);
+    /// What a spell action would do if pressed now, beside whether it is offered: it would start (Ready), and the
+    /// seat has the power it costs (Affordable). Observed per action (CoreBlock ACTION_READY, ACTION_AFFORDABLE), so a
+    /// seat offered a spell that will fail -- facing away, out of range, short of mana -- can see that it will.
+    struct SpellReadiness
+    {
+        bool Ready = false;
+        bool Affordable = false;
+    };
+
+    [[nodiscard]] bool IsSpellActionAllowed(SeatView const& view, Unit* target, ActionCatalog::Action const& def,
+        SpellReadiness* readiness = nullptr);
+
+    /// A cast failure the seat brings on itself and can put right by what it does -- facing (or getting behind),
+    /// range, line of sight, standing still for a cast, power -- as 1-5 (Situational), else 0. Not masked: the seat
+    /// presses, the press fails, and the failure is charged by its cause (StageScenario::JudgePress), as a player
+    /// learns from "You are facing the wrong way" (2026-10-04). A cooldown, the global cooldown and a cast already
+    /// under way stay masked: waiting is not a skill.
+    enum class Situational : uint8 { None, Facing, Range, Sight, Moving, Power };
+    [[nodiscard]] Situational SituationalFailure(uint32 castResult);
 
     /// Cast a spell action at `target` as CMSG_CAST_SPELL would. Returns true if it started.
     bool ApplySpellAction(SeatView const& view, Unit* target, ActionCatalog::Action const& def,
@@ -238,19 +275,38 @@ namespace Animus::Curriculum::Encoding
     /// Walk to a point, by path. `facing` turns the head as it goes: it has to be part of the same spline,
     /// because a spline sets the unit's orientation as it runs and a facing applied by any other means is
     /// overwritten the moment the unit moves. Null leaves the head to the spline, which points it along the path.
-    void MoveTo(Player* bot, uint32 pointId, float x, float y, float z, float const* facing = nullptr);
+    /// `velocity` above 0 is the run's own speed (a bearing walked backwards runs at the run-back speed, A9);
+    /// otherwise the spline takes the unit's speed for how it moves, as before. Ignored without a facing.
+    void MoveTo(Player* bot, uint32 pointId, float x, float y, float z, float const* facing = nullptr,
+        float velocity = 0.0f);
     /// A pathfound run to (x, y, z) at `speed` yards a second, walking if `walk`: a follow at its owner's pace.
     void FollowTo(Player* bot, float x, float y, float z, float speed, bool walk);
     /// MoveTo's calls and time since the start (each a pathfound spline), for the status line.
     inline std::atomic<uint64> MoveToCalls{ 0 };
     inline std::atomic<uint64> MoveToNs{ 0 };
+    /// MoveBlock's turns walked as one run (movement-smooth A2): the tries at laying one out, their time since the
+    /// start (a PathGenerator and a line of sight a turning leg), and how many fell back to the straight run.
+    inline std::atomic<uint64> TurnRunCalls{ 0 };
+    inline std::atomic<uint64> TurnRunNs{ 0 };
+    inline std::atomic<uint64> TurnRunFallbacks{ 0 };
 
     /// Move along a straight spline through the air or the water, with no path and no ground under it. Steering in
     /// three dimensions needs this: a ground move is snapped to the ground by definition, which is exactly what a
     /// dive or a climb is trying not to be. `facing` as above.
     /// Straight to a point with no pathfinding and no fly flag: how a seat enters and crosses water,
     /// where the walkable mesh stops at the surface.
-    void SwimTo(Player* bot, float x, float y, float z, float const* facing = nullptr);
+    void SwimTo(Player* bot, float x, float y, float z, float const* facing = nullptr, float velocity = 0.0f);
+
+    /// Walk a path already laid out and checked (MoveBlock's turn walked as one run, movement-smooth A2): no
+    /// pathfinding, the points as given from the seat's own position on, facing `facing` the whole way as MoveTo does.
+    void MoveAlong(Player* bot, std::vector<G3D::Vector3> const& points, float facing, float velocity = 0.0f);
+    /// Walk through `points` from where the seat is, no pathfinding, facing along the way (the dungeon advance).
+    void WalkPath(Player* bot, std::vector<G3D::Vector3> const& points);
+    /// The direction of the leg a running spline will be on `aheadMs` from now, radians: where the run is going over
+    /// the next decision, which on a turn walked as one run is not the way to its end. A leg's end is reached a
+    /// millisecond after the decision that should start the next (the spline's timestamps start at 1), so asking
+    /// about the leg under way now would read the previous leg's direction at every boundary.
+    [[nodiscard]] float CourseAhead(Unit const* bot, uint32 aheadMs);
 
     /// Jump along a heading: a parabola at `speedXY` forward and `speedZ` up, with no pathfinding.
 
@@ -260,7 +316,15 @@ namespace Animus::Curriculum::Encoding
 
         float const* facing = nullptr);
 
-    void FlyTo(Player* bot, float x, float y, float z, float const* facing = nullptr);
+    /// Fly straight to a point. With `facing` the head is held there for the whole flight, as MoveTo and SwimTo
+    /// hold it, rather than turned along the path (movement-smooth A3 in the air): see FlyAlong.
+    void FlyTo(Player* bot, float x, float y, float z, float const* facing = nullptr, float velocity = 0.0f);
+    /// Fly a path already laid out and checked (MoveBlock's turn or climb flown as one run, movement-smooth A2 in
+    /// the air), the seat's own position first, the head held at `facing` the whole way.
+    void FlyAlong(Player* bot, std::vector<G3D::Vector3> const& points, float facing, float velocity = 0.0f);
+    /// The climb (radians, up positive) of the leg a running spline will be on `aheadMs` from now, or that of the
+    /// way to its end: CourseAhead's companion for a swim or a flight.
+    [[nodiscard]] float ClimbAhead(Unit const* bot, uint32 aheadMs);
 
     /// A seat in the air without flight (the end of a drop jump, a dismount, a cast that took the mount away)
     /// falls to the ground the way a player does: MotionMaster::MoveFall, then Player::HandleFall for the
