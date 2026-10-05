@@ -59,9 +59,6 @@
 
 namespace
 {
-    /// The least time between two cosmetic facing packets for one companion (CompanionParty::TurnShown).
-    constexpr uint32 SHOWN_PACKET_MS = 100;
-
     using namespace Animus::Curriculum;
 
     /// A player character owns one companion. (The party keeps its seats: the model was trained with up to four.)
@@ -81,26 +78,11 @@ namespace
         return std::max<uint32>(1000, sWorld->getIntConfig(CONFIG_WATER_BREATH_TIMER));
     }
 
-    /// Following the owner is the model's job (the companion block's follow press, re-aimed while it runs): nothing
-    /// here leashes or teleports a companion that has fallen behind on the owner's map. Only a companion with no
-    /// model to decide for it is walked behind the owner, from this far, since there is nothing else it can do.
-    constexpr float FOLLOW_DISTANCE = 2.0f;
-    constexpr float NO_MODEL_FOLLOW_DISTANCE = 6.0f;
-    constexpr uint32 NO_MODEL_MOVE_POINT_ID = 5;
+    // Following the owner is the model's own, with the keys it holds: nothing here leashes, teleports or walks a
+    // companion that has fallen behind on the owner's map, and a companion with no model is not kept at all.
 
     /// A dead companion stands up again this long after the party is out of combat.
     constexpr uint32 RESURRECT_DELAY_MS = 10000;
-
-    void MoveBehind(Player* bot, Player* owner)
-    {
-        float x = 0.0f;
-        float y = 0.0f;
-        float z = 0.0f;
-        owner->GetNearPoint(bot, x, y, z, bot->GetCombatReach(), FOLLOW_DISTANCE,
-            Position::NormalizeOrientation(owner->GetOrientation() + float(M_PI)));
-        bot->GetMotionMaster()->Clear();
-        bot->GetMotionMaster()->MovePoint(NO_MODEL_MOVE_POINT_ID, x, y, z);
-    }
 
     Player* FindBot(ObjectGuid guid)
     {
@@ -300,6 +282,14 @@ bool Animus::CompanionParty::Join(Player* owner, Player* bot, Layout const& layo
     // Supplies after joining: a warlock in the group hands out healthstones.
     Restock(*member, bot, owner);
     member->LastPower = bot->GetPower(bot->getPowerType());
+
+    // Its game client, from here on the only way it moves: registered under its session so the server's movement
+    // orders reach it and its map ticks it, and synchronised with the server's clock as a client entering a map is.
+    member->Client = std::make_shared<Client::CompanionClient>(bot->GetGUID());
+    member->Session = bot->GetSession();
+    Client::Clients::Register(member->Session, member->Client);
+    member->Client->RequestTimeSync(bot);
+
     _members.push_back(std::move(member));
     return true;
 }
@@ -365,6 +355,7 @@ Animus::CompanionParty::Status Animus::CompanionParty::Update(uint32 diff, Setti
             return false;
 
         LOG_INFO("module.animus", "Companion {} ({}) is gone", member->Name, member->Bot.ToString());
+        Client::Clients::Unregister(member->Session);
         if (Group* group = owner->GetGroup(); group && group->IsMember(member->Bot))
             group->RemoveMember(member->Bot);
         return true;
@@ -431,6 +422,18 @@ Animus::CompanionParty::Status Animus::CompanionParty::Update(uint32 diff, Setti
     sLife->Update(diff, owner, companions);
 
     return Status::Active;
+}
+
+std::vector<Animus::CompanionParty::Modelless> Animus::CompanionParty::WithoutModel(ModelLibrary& models) const
+{
+    std::vector<Modelless> out;
+    for (std::unique_ptr<Member> const& member : _members)
+    {
+        std::string error;
+        if (!member->L || !models.Find(*member->L, error))
+            out.push_back({ member->Name, member->Temporary, member->L ? error : "it has no layout" });
+    }
+    return out;
 }
 
 std::vector<Player*> Animus::CompanionParty::PresentBots() const
@@ -749,47 +752,6 @@ void Animus::CompanionParty::StartEpisode(Player* owner)
             Restock(*member, bot, owner);
 }
 
-void Animus::CompanionParty::TurnShown(Member& member, Player* bot, uint32 diff, Settings const& settings)
-{
-    // Cosmetic only: a decision turns a standing seat up to 45 degrees in one step (MoveBlock::TURN_RATE), and a
-    // standing turn reached clients only with the next run, as a snap. Clients are shown the turn swung across
-    // the world ticks at the same rate instead. The seat's own orientation -- what casts, facing checks and the
-    // next observation read -- is the decided one throughout, so play still matches training.
-    float const decided = bot->GetOrientation();
-    if (!member.ShownSeeded || !bot->IsAlive() || !bot->movespline->Finalized())
-    {
-        member.ShownFacing = decided;
-        member.ShownSeeded = true;
-        return;
-    }
-
-    float const left = Position::NormalizeOrientation(decided - member.ShownFacing + float(M_PI)) - float(M_PI);
-    if (std::fabs(left) < 0.01f)
-    {
-        member.ShownSinceMs = 0;
-        return;             // not turning: nothing is sent
-    }
-
-    float const step = Curriculum::MoveBlock::TURN_RATE * float(diff) / float(std::max<uint32>(1, settings.DecisionMs));
-    member.ShownFacing = Position::NormalizeOrientation(member.ShownFacing + std::clamp(left, -step, step));
-
-    // A few packets a decision at most, for realms with hundreds of companions: one every SHOWN_PACKET_MS while a
-    // turn is under way, and the last when it arrives.
-    member.ShownSinceMs += diff;
-    bool const arrived = std::fabs(left) <= step;
-    if (!arrived && member.ShownSinceMs < SHOWN_PACKET_MS)
-        return;
-    member.ShownSinceMs = 0;
-
-    // The shown angle goes out in an ordinary facing packet; the unit's orientation is put back at once.
-    bot->SetOrientation(member.ShownFacing);
-    WorldPacket data(MSG_MOVE_SET_FACING, 64);
-    data << bot->GetPackGUID();
-    bot->BuildMovementPacket(&data);
-    bot->SetOrientation(decided);
-    bot->SendMessageToSet(&data, false);
-}
-
 void Animus::CompanionParty::UpdateMember(Member& member, Player* bot, Player* owner, uint32 diff,
     Settings const& settings, ModelLibrary& models)
 {
@@ -805,8 +767,6 @@ void Animus::CompanionParty::UpdateMember(Member& member, Player* bot, Player* o
             BotFactory::TeleportNear(bot, owner);
         return;
     }
-
-    TurnShown(member, bot, diff, settings);
 
     bool const quiet = _enemies.empty() && !bot->IsInCombat();
 
@@ -879,22 +839,16 @@ void Animus::CompanionParty::UpdateMember(Member& member, Player* bot, Player* o
     if (quiet && LevelFor(member, owner) > member.Level)
         LevelUp(member, bot, owner);
 
+    // No model, no companion: the owner's mod removes it (WithoutModel) before its next update; until then it
+    // holds nothing and decides nothing.
     std::string error;
     MlpPolicy* policy = models.Find(*member.L, error);
     if (!policy)
     {
-        if (!member.ModelErrorLogged)
-        {
-            LOG_ERROR("module.animus", "Companion {} has no model and only follows: {}", member.Name, error);
-            member.ModelErrorLogged = true;
-        }
-
-        if (quiet && bot->GetDistance(owner) > NO_MODEL_FOLLOW_DISTANCE && bot->movespline->Finalized())
-            MoveBehind(bot, owner);
+        if (member.Client)
+            member.Client->Controls.Clear();
         return;
     }
-
-    member.ModelErrorLogged = false;
 
     member.SinceDecisionMs += diff;
     if (member.SinceDecisionMs < settings.DecisionMs)
@@ -1035,15 +989,9 @@ void Animus::CompanionParty::Decide(Member& member, Player* bot, Player* owner, 
     member.Goal2 = policy.GoalCount() ? policy.SecondaryOf(member.Policy) : Curriculum::NO_GOAL;
 
     SeatActionResult result;
+    // The move block's presses change the keys the client holds (view.Controls); the client's next map tick moves
+    // the body under them and tells the server.
     SeatEncoder::Apply(view, action, result);
-    // Steering is state, not a one-off order: what the feet and the head were told is what the next decision
-    // continues from.
-    member.HeldBearing = view.HeldBearing;
-    member.FacingMode = view.FacingMode;
-    member.TurnLeft = view.TurnLeft;
-    member.PitchTarget = view.PitchTarget;
-    member.Pitch = view.Pitch;
-    member.Facing = view.Facing;
     if (action > 0)
         member.Memory.Press(layout, uint32(action), _nowMs, settings.Actions, bot, &member.KnownRanks);
     member.TargetSlot = view.TargetSlot;
@@ -1103,20 +1051,18 @@ Animus::Curriculum::SeatView Animus::CompanionParty::View(Member const& member, 
     view.Memory = &member.Memory;
     view.Trail = &member.Trail;
     view.Probe = &member.Probe;
-    view.HeldBearing = member.HeldBearing;
-    view.FacingMode = member.FacingMode;
-    view.TurnLeft = member.TurnLeft;
-    view.Steering = &member.Steering;
-    view.PitchTarget = member.PitchTarget;
-    view.Pitch = member.Pitch;
-    view.Facing = member.Facing;
+    // The keys it holds and the body they move (its client's), and where it looks: the body's own yaw, which a
+    // client knows exactly (§5A.1: self observations read the true body).
+    view.Controls = &member.Client->Controls;
+    view.Body = &member.Client->Mover().Body;
+    view.Facing = member.Client->Mover().Started() ? member.Client->Mover().Body.Yaw : bot->GetOrientation();
+    view.DecisionMs = settings.DecisionMs;
     view.MoveRate = member.MoveRate;
     view.CloseRate = member.CloseRate;
     view.SubmergedTime = member.SubmergedSinceMs && _nowMs > member.SubmergedSinceMs
         ? float(_nowMs - member.SubmergedSinceMs) / 1000.0f : 0.0f;
     view.BreathSpent = float(member.BreathSpentMs) / float(BreathMs());
     view.KnownRanks = &member.KnownRanks;
-    view.JumpDropSearch = settings.Actions.JumpDropSearch;
     view.Options = settings.Options;
     view.NowMs = _nowMs;
     view.LastStepDamage = member.LastStepDamage;
@@ -1278,21 +1224,8 @@ Unit const* Animus::CompanionParty::TravelObjective(Member const& member, Player
 void Animus::CompanionParty::Track(Member& member, Player* bot, Player* owner, Unit* target,
     Settings const& settings) const
 {
-    // The facing it steers by is its own, seeded from the character the first time: a default of 0 would aim it
-    // due east.
-    if (!member.FacingSeeded)
-    {
-        member.Facing = bot->GetOrientation();
-        member.FacingSeeded = true;
-    }
-
-    // In water, as the client would say: Player::SetInWater is only called from the movement opcode handler, and a
-    // companion sends none, so the core would think it dry for good -- and launch every swim at run speed.
-    LiquidData const liquid = bot->GetMap()->GetLiquidData(bot->GetPhaseMask(), bot->GetPositionX(),
-        bot->GetPositionY(), bot->GetPositionZ(), bot->GetCollisionHeight(), {});
-    bool const swimming = (liquid.Status & MAP_LIQUID_STATUS_SWIMMING) != 0;
-    bot->SetInWater(swimming);
-    bot->SetSwim(swimming);
+    // In the water or out of it is the client's to say, as a player's is: its START_SWIM / STOP_SWIM reports reach
+    // HandleMovementOpcodes, which sets the core's in-water state (CompanionClient).
 
     // Breath, as the forge's seats keep it: spent under water, back ten times as fast above it, none spent under
     // a water-breathing aura.
@@ -1319,11 +1252,14 @@ void Animus::CompanionParty::Track(Member& member, Player* bot, Player* owner, U
         member.LastSeenMs = _nowMs;
     }
 
-    // Whether its legs are getting anywhere (the forge's StageScenario::TrackMotion).
+    // Whether its legs are getting anywhere (the forge's StageScenario::TrackMotion): from its own body, which a
+    // client knows exactly (§5A.1), not from the position the server was last told.
     constexpr uint64 MARK_MS = 1000;
     constexpr float RUN_SPEED = 7.0f;
-    float const x = bot->GetPositionX();
-    float const y = bot->GetPositionY();
+    Movement::Client const& mover = member.Client->Mover();
+    Position const self = mover.Started() ? Position(mover.Body.X, mover.Body.Y, mover.Body.Z) : bot->GetPosition();
+    float const x = self.GetPositionX();
+    float const y = self.GetPositionY();
     if (member.MotionHasLast)
         member.MotionTravelled += std::hypot(x - member.MotionLastX, y - member.MotionLastY);
     member.MotionLastX = x;
@@ -1335,7 +1271,7 @@ void Animus::CompanionParty::Track(Member& member, Player* bot, Player* owner, U
     Unit const* toward = TravelObjective(member, bot, owner);
     if (!toward)
         toward = target;
-    float const range = toward ? bot->GetExactDist2d(toward) : -1.0f;
+    float const range = toward ? self.GetExactDist2d(toward) : -1.0f;
     if (!member.MotionMarkMs || _nowMs < member.MotionMarkMs)
     {
         member.MotionMarkMs = std::max<uint64>(1, _nowMs);
@@ -1573,6 +1509,10 @@ bool Animus::CompanionParty::Remove(std::string_view name, std::string& message)
 
 void Animus::CompanionParty::Destroy(Member& member, Player* owner)
 {
+    // Its client goes first: the session it is registered under goes with the bot.
+    Client::Clients::Unregister(member.Session);
+    member.Session = nullptr;
+
     Player* bot = FindBot(member.Bot);
     if (!bot)
         return;

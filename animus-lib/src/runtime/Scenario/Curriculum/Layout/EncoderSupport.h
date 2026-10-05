@@ -82,6 +82,9 @@ namespace Animus::Curriculum::Encoding
     /// meanwhile. The core only checks this for client casts, so actions check it here.
     [[nodiscard]] bool CastInProgress(Player const* bot);
 
+    /// A cast or a channel under way that moving would cancel.
+    [[nodiscard]] bool CastHoldsFeet(Player const* bot);
+
     /// Whether the cast in flight is a mount.
     ///
     /// Narrower than CastInProgress on purpose. A mount is the one cast in the curriculum that the seat must
@@ -103,7 +106,25 @@ namespace Animus::Curriculum::Encoding
     /// at its rank tier.
     [[nodiscard]] SpellInfo const* KnownRank(SeatView const& view, ActionCatalog::Action const& def);
 
-    [[nodiscard]] bool IsSpellActionAllowed(SeatView const& view, Unit* target, ActionCatalog::Action const& def);
+    /// What a spell action would do if pressed now, beside whether it is offered: it would start (Ready), and the
+    /// seat has the power it costs (Affordable). Observed per action (CoreBlock ACTION_READY, ACTION_AFFORDABLE), so a
+    /// seat offered a spell that will fail -- facing away, out of range, short of mana -- can see that it will.
+    struct SpellReadiness
+    {
+        bool Ready = false;
+        bool Affordable = false;
+    };
+
+    [[nodiscard]] bool IsSpellActionAllowed(SeatView const& view, Unit* target, ActionCatalog::Action const& def,
+        SpellReadiness* readiness = nullptr);
+
+    /// A cast failure the seat brings on itself and can put right by what it does -- facing (or getting behind),
+    /// range, line of sight, standing still for a cast, power -- as 1-5 (Situational), else 0. Not masked: the seat
+    /// presses, the press fails, and the failure is charged by its cause (StageScenario::JudgePress), as a player
+    /// learns from "You are facing the wrong way" (2026-10-04). A cooldown, the global cooldown and a cast already
+    /// under way stay masked: waiting is not a skill.
+    enum class Situational : uint8 { None, Facing, Range, Sight, Moving, Power };
+    [[nodiscard]] Situational SituationalFailure(uint32 castResult);
 
     /// Cast a spell action at `target` as CMSG_CAST_SPELL would. Returns true if it started.
     bool ApplySpellAction(SeatView const& view, Unit* target, ActionCatalog::Action const& def,
@@ -234,42 +255,6 @@ namespace Animus::Curriculum::Encoding
     /// evade drill reads zero for every class that has no stealth. The cheap test runs first, so the raycast
     /// only happens for something already detectable.
     [[nodiscard]] bool CanSee(WorldObject const* watcher, WorldObject const* target);
-
-    /// Walk to a point, by path. `facing` turns the head as it goes: it has to be part of the same spline,
-    /// because a spline sets the unit's orientation as it runs and a facing applied by any other means is
-    /// overwritten the moment the unit moves. Null leaves the head to the spline, which points it along the path.
-    void MoveTo(Player* bot, uint32 pointId, float x, float y, float z, float const* facing = nullptr);
-    /// A pathfound run to (x, y, z) at `speed` yards a second, walking if `walk`: a follow at its owner's pace.
-    void FollowTo(Player* bot, float x, float y, float z, float speed, bool walk);
-    /// MoveTo's calls and time since the start (each a pathfound spline), for the status line.
-    inline std::atomic<uint64> MoveToCalls{ 0 };
-    inline std::atomic<uint64> MoveToNs{ 0 };
-
-    /// Move along a straight spline through the air or the water, with no path and no ground under it. Steering in
-    /// three dimensions needs this: a ground move is snapped to the ground by definition, which is exactly what a
-    /// dive or a climb is trying not to be. `facing` as above.
-    /// Straight to a point with no pathfinding and no fly flag: how a seat enters and crosses water,
-    /// where the walkable mesh stops at the surface.
-    void SwimTo(Player* bot, float x, float y, float z, float const* facing = nullptr);
-
-    /// Jump along a heading: a parabola at `speedXY` forward and `speedZ` up, with no pathfinding.
-
-    /// The caller must already know there is somewhere to land.
-
-    void JumpTo(Player* bot, float x, float y, float z, float speedXY, float speedZ,
-
-        float const* facing = nullptr);
-
-    void FlyTo(Player* bot, float x, float y, float z, float const* facing = nullptr);
-
-    /// A seat in the air without flight (the end of a drop jump, a dismount, a cast that took the mount away)
-    /// falls to the ground the way a player does: MotionMaster::MoveFall, then Player::HandleFall for the
-    /// damage, which is nothing under a feather-fall or hover aura and lethal past about seventy yards. True
-    /// when a fall was started; `yards` and `healthFraction` (of maximum health) say what it cost. Nothing
-    /// happens while a spline is still running, so a jump's own arc is never cut short, and the falling flag
-    /// the core leaves on a player is taken off again -- EffectMovementGenerator::Finalize clears it for
-    /// creatures only, and with it stuck the jump stayed masked for the rest of the episode.
-    bool FallToGround(Player* bot, float* yards = nullptr, float* healthFraction = nullptr);
 
     /// Send the bot's pets and guardians at `target`, as the pet bar's Attack does. True if any was ordered.
     bool PetAttack(Player* bot, Unit* target);

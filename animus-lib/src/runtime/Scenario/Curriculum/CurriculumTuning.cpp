@@ -20,6 +20,7 @@
 #include "Config.h"
 #include "Log.h"
 #include <algorithm>
+#include <atomic>
 #include <boost/json/object.hpp>
 #include <charconv>
 #include <cstdlib>

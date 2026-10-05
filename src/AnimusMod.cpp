@@ -195,8 +195,31 @@ void Animus::AnimusMod::OnUpdate(uint32 diff)
         _config.CurriculumOptions, _config.CurriculumDirector, DirectorLayout() };
     std::vector<ObjectGuid> gone;
     for (auto const& [owner, party] : _parties)
-        if (party->Update(diff, settings, _models) == CompanionParty::Status::Dismiss)
+    {
+        // No model, no companion: one whose model is gone (a reload that refuses it) is saved and despawned.
+        for (CompanionParty::Modelless const& lost : party->WithoutModel(_models))
+        {
+            LOG_ERROR("module.animus", "Companion {} despawned: its model is not available ({})", lost.Name,
+                lost.Error);
+            if (!lost.Temporary)
+                if (CompanionRegistry::Record* record = _registry.Find(owner))
+                {
+                    party->Save(*record);
+                    _registry.Update(*record);
+                }
+            std::string message;
+            party->Remove(lost.Name, message);
+            if (Player* player = ObjectAccessor::FindPlayer(owner))
+            {
+                std::string const told = Acore::StringFormat("{} left: there is no model this server can play for it "
+                    "({}).", lost.Name, lost.Error);
+                ChatHandler(player->GetSession()).SendSysMessage(told);
+                Addon::Push(player, told);
+            }
+        }
+        if (!party->Size() || party->Update(diff, settings, _models) == CompanionParty::Status::Dismiss)
             gone.push_back(owner);
+    }
 
     for (ObjectGuid const& owner : gone)
         RemoveParty(owner);
@@ -306,6 +329,8 @@ bool Animus::AnimusMod::Create(Player* owner, std::string name, std::string_view
 
     Curriculum::ClassProfile const& profile = *Curriculum::ClassAssets::FindProfile(classId);
     Curriculum::Layout const& layout = LayoutFor(profile);
+    if (!HasModel(layout, message))
+        return false;
 
     std::unique_ptr<CompanionParty>& party = _parties[owner->GetGUID()];
     if (!party)
@@ -332,10 +357,6 @@ bool Animus::AnimusMod::Create(Player* owner, std::string name, std::string_view
     for (ObjectGuid const& guid : party->GetBotGUIDs())
         _partyByBot[guid] = party.get();
 
-    std::string error;
-    if (!_models.Find(layout, error))
-        message += Acore::StringFormat(" Its model is not available ({}), so it only follows you.", error);
-
     return true;
 }
 
@@ -349,6 +370,9 @@ bool Animus::AnimusMod::Adopt(Player* owner, Player* bot, CompanionRegistry::Rec
     }
 
     Curriculum::Layout const& layout = LayoutFor(*profile);
+    if (!HasModel(layout, message))
+        return false;
+
     std::unique_ptr<CompanionParty>& party = _parties[owner->GetGUID()];
     if (!party)
         party = std::make_unique<CompanionParty>(owner->GetGUID());
@@ -362,11 +386,19 @@ bool Animus::AnimusMod::Adopt(Player* owner, Player* bot, CompanionRegistry::Rec
 
     for (ObjectGuid const& guid : party->GetBotGUIDs())
         _partyByBot[guid] = party.get();
-
-    std::string error;
-    if (!_models.Find(layout, error))
-        message += Acore::StringFormat(" Its model is not available ({}), so it only follows you.", error);
     return true;
+}
+
+bool Animus::AnimusMod::HasModel(Curriculum::Layout const& layout, std::string& message)
+{
+    // No model, no companion: there is no fallback movement and no scripted play, so a companion whose class model
+    // is missing, or was trained on another layout (an older move block among them), is not made, summoned or kept.
+    std::string error;
+    if (_models.Find(layout, error))
+        return true;
+    message = Acore::StringFormat("There is no {} model this server can play ({}), so no companion of that class can "
+        "join you.", layout.ModelName(), error);
+    return false;
 }
 
 bool Animus::AnimusMod::Summon(Player* owner, std::string& message)
@@ -415,6 +447,11 @@ bool Animus::AnimusMod::Summon(Player* owner, std::string& message)
         _registry.Erase(owner->GetGUID(), false);
         return false;
     }
+
+    // No model, no companion: refused before its character is loaded (Adopt asks again once it is).
+    if (Curriculum::ClassProfile const* profile = Curriculum::ClassAssets::FindProfile(character->Class))
+        if (!HasModel(LayoutFor(*profile), message))
+            return false;
 
     // Neither reaches a companion: whatever arrived while it was away goes before it loads.
     CompanionRegistry::Purge(record->Bot);
@@ -921,6 +958,15 @@ void Animus::AnimusMod::FillParty(Player* owner)
             if (!choice.Specs.empty())
                 choices.push_back(std::move(choice));
         }
+        if (choices.empty())
+            continue;
+
+        // A class with no model this server can play fills no seat (no model, no companion).
+        std::erase_if(choices, [this](Choice const& choice)
+        {
+            std::string error;
+            return !_models.Find(LayoutFor(*Curriculum::ClassAssets::FindProfile(choice.Class)), error);
+        });
         if (choices.empty())
             continue;
 

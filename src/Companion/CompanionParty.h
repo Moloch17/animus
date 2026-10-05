@@ -20,6 +20,7 @@
 #define ANIMUS_COMPANION_PARTY_H
 
 #include "CompanionRegistry.h"
+#include "CompanionClient.h"
 #include "ClassAssets.h"
 #include "CompanionTalents.h"
 #include "Layout.h"
@@ -39,6 +40,7 @@
 
 class Player;
 class Unit;
+class WorldSession;
 
 namespace Animus
 {
@@ -176,6 +178,17 @@ namespace Animus
         [[nodiscard]] bool HasBot(ObjectGuid bot) const;
         [[nodiscard]] std::size_t Size() const { return _members.size(); }
 
+        /// Members whose model is not available (none in the model directory, or refused by its manifest): a
+        /// companion without a model is not kept (no fallback movement, no scripted play). Their names, and whether
+        /// each is a temporary member; the caller saves an owner's companion and removes them (AnimusMod).
+        struct Modelless
+        {
+            std::string Name;
+            bool Temporary = false;
+            std::string Error;
+        };
+        [[nodiscard]] std::vector<Modelless> WithoutModel(ModelLibrary& models) const;
+
         /// Every companion's bot that is in the world, in the order they were added (the life service's list).
         [[nodiscard]] std::vector<Player*> PresentBots() const;
 
@@ -229,23 +242,13 @@ namespace Animus
             /// The ground around it, marched out and reused until it has moved or turned enough (the move block's
             /// cache, as a forge seat's): read from the forge's layered fields (Animus.Probe.Source).
             mutable Curriculum::GroundProbe Probe;
-            /// How it is steering, carried from one decision to the next as a forge seat's is: without it a held
-            /// bearing is forgotten before it is walked twice and the facing actions have nothing to act on.
-            uint8 HeldBearing = 0xFF;
-            uint8 FacingMode = 0xFF;
-            float TurnLeft = 0.0f;
-            /// The last turn and bearing, which the move block keeps to tell a steady course from a wobble. Nothing
-            /// is charged in play; kept so a model sees its turns as the forge's seats saw theirs.
-            mutable Curriculum::SteerMemory Steering;
-            float PitchTarget = 0.0f;
-            float Pitch = 0.0f;
-            float Facing = 0.0f;
-            bool FacingSeeded = false;
-            /// The facing clients have been shown (TurnShown): swung towards the decided one across the world
-            /// ticks of a decision, where the decision itself turns the seat in one step.
-            float ShownFacing = 0.0f;
-            bool ShownSeeded = false;
-            uint32 ShownSinceMs = 0;                // since the last facing packet
+            /// Its game client (CompanionClient): the keys and mouse the model holds, the body the player controller
+            /// moves with them every map tick, and the reports that tell the server, as a player's client does.
+            /// The only way a companion moves. Shared with the session registry the packet and tick hooks use.
+            std::shared_ptr<Client::CompanionClient> Client;
+            /// The session its client is registered under (Client::Clients), kept to unregister it even when the bot
+            /// has already gone.
+            WorldSession* Session = nullptr;
             /// Whether its legs are getting anywhere (SeatView::MoveRate, CloseRate), as the forge's TrackMotion
             /// measures it: distance covered and the range to its target, marked about once a second.
             float MotionLastX = 0.0f;
@@ -287,7 +290,6 @@ namespace Animus
             bool EventLow = false;
             bool EventOwnerAttacked = false;
             bool BelowRecover = false;
-            bool ModelErrorLogged = false;
             bool Temporary = false;             // a party filler (AddFiller), never saved
             bool Parked = false;                // out of the world while the owner flies or rides a vehicle
             /// The owner edited its talents, its pet's or its gear: LevelUp keeps them (and only spends the new
@@ -311,8 +313,6 @@ namespace Animus
 
         /// Refresh the pull: new enemies into free (or dead) slots, and the end of the pull.
         void UpdatePull(Player* owner, std::vector<Player*> const& bots);
-        /// Swing the facing clients see towards the decided one (cosmetic; see the definition).
-        static void TurnShown(Member& member, Player* bot, uint32 diff, Settings const& settings);
         void UpdateMember(Member& member, Player* bot, Player* owner, uint32 diff, Settings const& settings,
             ModelLibrary& models);
         void Decide(Member& member, Player* bot, Player* owner, MlpPolicy& policy, Settings const& settings);

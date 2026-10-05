@@ -17,27 +17,28 @@
  */
 
 #include "MoveBlock.h"
+#include "EncoderSupport.h"
+#include "Forge.h"
 #include "GroundSense.h"
 #include "LayeredField.h"
+#include "Layout.h"
+#include "MapWorldQuery.h"
 #include "ProbeBake.h"
 #include "SeatEncoder.h"
-#include "EncoderSupport.h"
-#include "Layout.h"
-#include <boost/json/array.hpp>
-#include <boost/json/object.hpp>
+#include "SeatView.h"
+#include "TravelBlock.h"
+#include "UnitBody.h"
 #include "DetourExtended.h"
 #include "DetourNavMeshQuery.h"
 #include "Map.h"
 #include "MapCollisionData.h"
 #include "MapDefines.h"
-#include "MotionMaster.h"
-#include "MoveSplineInit.h"
-#include "MovementTypedefs.h"
 #include "Player.h"
 #include "SpellAuraDefines.h"
-#include "SeatView.h"
-#include "TravelBlock.h"
+#include <boost/json/array.hpp>
+#include <boost/json/object.hpp>
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <iomanip>
 #include <sstream>
@@ -46,28 +47,15 @@ namespace
 {
     using Animus::Curriculum::MoveBlock;
     namespace Encoding = Animus::Curriculum::Encoding;
-    using Animus::Curriculum::TravelBlock;
-    using Animus::Curriculum::SeatOptionKind;
     namespace Ground = Animus::Curriculum::GroundSense;
     namespace LayeredField = Animus::Curriculum::LayeredField;
+    namespace MC = Animus::Curriculum::MoveControls;
+    namespace Mv = Animus::Movement;
     using Ground::NavRay;
 
-    constexpr uint32 MOVE_POINT_ID = 0x4D56;    // "MV": this block's spline, distinct from the duel block's
-    /// How far a running step may have drifted from the held heading, and the facing from the one wanted, and still
-    /// be left to run (Steer): about 20 degrees, a path bent round a rock; and under 6 degrees of facing.
-    constexpr float RUN_HEADING_SLACK = 0.35f;
-    constexpr float RUN_FACING_SLACK = 0.1f;
     constexpr float YARD_SCALE = 40.0f;         // distances are reported as a fraction of this
     constexpr float OBJECTIVE_SCALE = 500.0f;   // an objective is further off than anything else it looks at
     constexpr float RUN_SPEED = 7.0f;           // yards a second, unmounted and unhasted (TravelBlock's)
-
-    /// The world angle a bearing points at, given where the seat is looking. Bearings run clockwise from straight
-    /// ahead, and WoW orientation runs counter-clockwise, so the eighth-turns are subtracted.
-    float HeadingOf(float facing, uint32 bearing)
-    {
-        float const heading = facing - float(bearing) * float(M_PI) / 4.0f;
-        return Position::NormalizeOrientation(heading);
-    }
 
     /// The same for a sensing ray: sixteenths of a turn, so ray 2 * b lies along bearing b and the odd rays fall
     /// half way between two bearings, where a doorway sits as often as not.
@@ -96,156 +84,6 @@ namespace
         return bot && (bot->IsInWater() || bot->CanFly());
     }
 
-    /// Bring the seat's own heading up to date for this decision, before anything is measured off it.
-    ///
-    /// `view.Facing` is the frame, not `bot->GetOrientation()`. The orientation belongs to whatever spline is
-    /// running -- it is overwritten with the direction of travel every tick -- so measuring a bearing off it made
-    /// the frame rotate by the bearing's own angle every decision, and a seat holding anything but straight ahead
-    /// walked a spiral. Only BEARING_FORWARD was a fixed point, which is exactly the shape the failures had.
-    ///
-    /// Holding is therefore the default, including the 0xFF a seat starts an episode with: keep the heading you
-    /// have unless you asked for something else. Facing along the path is the opt-in now, not the fallback.
-    void UpdateFacing(Animus::Curriculum::SeatView& view)
-    {
-        Player const* bot = view.Bot;
-        if (!bot)
-            return;
-
-        switch (view.FacingMode)
-        {
-            case MoveBlock::ACTION_FACE_TARGET:
-                if (view.Target)
-                    view.Facing = bot->GetAngle(view.Target);
-                return;
-            case MoveBlock::ACTION_FACE_HEADING:
-                // Turn to face the way the feet are going -- and then, by construction, the way the feet are
-                // going is straight ahead. Leaving the bearing where it was would rotate the frame again on the
-                // next decision and re-create the spiral this whole change exists to remove: "face where I am
-                // going" is a snap to a heading, not a standing instruction to keep turning.
-                if (view.HeldBearing < MoveBlock::BEARING_COUNT)
-                {
-                    view.Facing = HeadingOf(view.Facing, view.HeldBearing);
-                    view.HeldBearing = MoveBlock::BEARING_FORWARD;
-                }
-                return;
-            case MoveBlock::ACTION_FACE_HOLD:
-            default:
-                return;                     // keep the heading it has, which is the point of both
-        }
-    }
-
-    /// How long a jump hangs in the air, and how far it carries.
-    ///
-    /// Rising and falling take the same time, so the whole arc is 2 * speedZ / gravity -- about 825 ms at the
-    /// player's own launch speed, which is three decisions at DecisionMs.
-    uint64 JumpFlightMs()
-    {
-        return uint64(2000.0f * MoveBlock::JUMP_SPEED_Z / float(Movement::gravity));
-    }
-
-    float JumpRange(Player const* bot)
-    {
-        float const speedXY = std::max(1.0f, bot->GetSpeed(MOVE_RUN));
-        return 2.0f * (MoveBlock::JUMP_SPEED_Z / float(Movement::gravity)) * speedXY;
-    }
-
-    /// Whether the seat is on its way down right now: a fall spline running. Not Unit::IsFalling, which also reads
-    /// MOVEMENTFLAG_FALLING -- a flag the core sets on a player when it starts a fall and clears only when a client
-    /// reports the landing, which a seat never does, so on a bot it sticks from the first step down a slope to the
-    /// end of the episode. Masking the feet on it masked them for good (stage1_move on format 7, first run: the
-    /// scripted baseline arrived 0.23 against 0.84 the run before, stalling after ninety yards).
-    bool Descending(Player const* bot)
-    {
-        return !bot->movespline->Finalized() && bot->movespline->Initialized() && bot->movespline->isFalling();
-    }
-
-    /// How high the arc rises above the launch: what JumpTo builds the parabola from.
-    float JumpApex()
-    {
-        float const halfTime = MoveBlock::JUMP_SPEED_Z / float(Movement::gravity);
-        return -Movement::computeFallElevation(halfTime, false, -MoveBlock::JUMP_SPEED_Z);
-    }
-
-    /// Where a jump along `heading` would come down, and how far below the seat that is.
-    struct JumpAim
-    {
-        Position Landing;
-        float Drop = 0.0f;      // launch height minus the landing's; negative is a step up
-        bool Ok = false;
-    };
-
-    /// The landing test, one function for the mask and the press so the two cannot disagree.
-    ///
-    /// It used to be the core's CanReachPositionAndGetValidCoords, which is a Detour raycast *along the
-    /// navmesh*: at a lip it clipped the landing back to the near edge, and its slope test refused anything
-    /// more than the mesh's 1.6 yd climb below the start. So a jump could never drop off a ledge, and the header
-    /// comment about gaps described a thing the code did not do. This looks at the landing point itself:
-    ///
-    ///   - the ground under the end of the arc, searched `search` yards down (Actions.JumpDropSearch). No ground
-    ///     that deep is the void, and the one thing a jump is refused for. There is no upper bound on the drop
-    ///     on purpose: what a fall costs is the seat's to learn (OBS_JUMP_DROP, and what happens), and with Slow
-    ///     Fall or Levitate it costs nothing;
-    ///   - up to JUMP_RISE_MAX above the launch, which a step clears anyway; higher is a wall;
-    ///   - on the navmesh, within a step of the ground found (a landing the mesh does not cover is a fall onto
-    ///     something the seat cannot walk on), water allowed only for a hop -- a fall into deep water ends at
-    ///     the surface and costs nothing (Encoding::FallToGround), so a lake is never a drop to learn from;
-    ///   - clear of collision in two legs: across at the apex, for a wall in the way, and straight down over
-    ///     the landing, for a lip that overhangs it. One diagonal ray would cut every cliff face and refuse
-    ///     every drop.
-    ///
-    /// A gap works the same way once the mesh resumes on the far side: the landing is there, the drop is small,
-    /// and the arc is clear. Nothing here needs to change for it.
-    JumpAim JumpLandingTest(Map* map, dtNavMeshQuery const* query, Player const* bot, float heading, float search)
-    {
-        JumpAim aim;
-        if (!map || !query)
-            return aim;
-
-        float const range = JumpRange(bot);
-        float const bx = bot->GetPositionX();
-        float const by = bot->GetPositionY();
-        float const bz = bot->GetPositionZ();
-        float const ax = bx + range * std::cos(heading);
-        float const ay = by + range * std::sin(heading);
-        if (range < MoveBlock::JUMP_MIN_YARDS)
-            return aim;
-
-        uint32 const phase = bot->GetPhaseMask();
-        float const groundZ = map->GetHeight(phase, ax, ay, bz + MoveBlock::MAX_STEP, true,
-            std::max(search, MoveBlock::MAX_STEP) + MoveBlock::MAX_STEP);
-        if (groundZ <= INVALID_HEIGHT)
-            return aim;
-
-        float const drop = bz - groundZ;
-        if (drop < -MoveBlock::JUMP_RISE_MAX)
-            return aim;
-
-        // Detour's axes are {y, z, x}.
-        dtQueryFilterExt filter;
-        filter.setIncludeFlags(drop <= MoveBlock::DROP_ABOVE ? NAV_GROUND | NAV_WATER : NAV_GROUND);
-        filter.setExcludeFlags(0);
-        float const at[3] = { ay, groundZ, ax };
-        float const extents[3] = { 1.5f, MoveBlock::MAX_STEP, 1.5f };
-        float nearest[3] = { 0.0f, 0.0f, 0.0f };
-        dtPolyRef ref = 0;
-        if (dtStatusFailed(query->findNearestPoly(at, extents, &filter, &ref, nearest)) || !ref
-            || std::fabs(nearest[1] - groundZ) > MoveBlock::MAX_STEP)
-            return aim;
-
-        float const apex = bz + JumpApex();
-        float const collision = bot->GetCollisionHeight();
-        if (!map->isInLineOfSight(bx, by, apex, ax, ay, apex, phase, LINEOFSIGHT_ALL_CHECKS,
-                VMAP::ModelIgnoreFlags::Nothing)
-            || !map->isInLineOfSight(ax, ay, bz + collision, ax, ay, groundZ + collision, phase,
-                LINEOFSIGHT_ALL_CHECKS, VMAP::ModelIgnoreFlags::Nothing))
-            return aim;
-
-        aim.Landing.Relocate(ax, ay, groundZ);
-        aim.Drop = drop;
-        aim.Ok = true;
-        return aim;
-    }
-
     void RefreshLive(Animus::Curriculum::GroundProbe* probe, Map* map, dtNavMeshQuery const* query,
         Animus::Curriculum::GroundSense::Origin const& at, float facing,
         std::chrono::steady_clock::time_point& partMark);
@@ -257,7 +95,7 @@ namespace
     /// the seat does. Movement is
     /// the trigger that matters -- at seven yards a second a one-second-old march is seven yards stale and its
     /// nearest cell is six -- with a turn threshold because the grid is egocentric, and a clock as a backstop.
-    void RefreshProbe(Animus::Curriculum::SeatView const& view, Player* bot, float facing)
+    void RefreshProbe(Animus::Curriculum::SeatView const& view, Player* bot, Position const& self, float facing)
     {
         Animus::Curriculum::GroundProbe* probe = view.Probe;
         if (!probe)
@@ -272,7 +110,7 @@ namespace
         bool stale = !probe->Valid;
         if (probe->Valid)
         {
-            float const moved = bot->GetExactDist(&probe->From);
+            float const moved = self.GetExactDist(&probe->From);
             float const turned = std::fabs(std::atan2(std::sin(facing - probe->Facing),
                 std::cos(facing - probe->Facing)));
             stale = moved >= MoveBlock::MARCH_REFRESH_YARDS || turned >= MoveBlock::MARCH_REFRESH_RADIANS
@@ -285,8 +123,8 @@ namespace
                 MoveBlock::StaleClock.fetch_add(1, std::memory_order_relaxed);
         }
 
-        // A baked probe is a lookup, so it is read every decision and is never stale; only the jump test below
-        // keeps the refresh cadence. A field probe is turned to the facing every decision, and worked out again
+        // A baked probe is a lookup, so it is read every decision and is never stale; only the march's own
+        // bookkeeping below keeps the refresh cadence. A field probe is turned to the facing every decision, and worked out again
         // only where the seat has walked to (below). A live one is measured when it has gone stale.
         bool const baked = Bake::Store::Baked();
         bool const fields = Field::Store::Enabled();
@@ -297,7 +135,7 @@ namespace
         auto probeMark = std::chrono::steady_clock::now();
         auto partMark = probeMark;
 
-        Ground::Origin const at{ bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(), bot->GetPhaseMask(),
+        Ground::Origin const at{ self.GetPositionX(), self.GetPositionY(), self.GetPositionZ(), bot->GetPhaseMask(),
             bot->GetCollisionHeight() };
         dtNavMeshQuery const* query = map->GetMapCollisionData().GetMMapData().GetNavMeshQuery();
 
@@ -345,7 +183,7 @@ namespace
         bool fromField = false;
         if (!fromTable && fields)
         {
-            if (!probe->CompassValid || bot->GetExactDist(&probe->CompassFrom) >= MoveBlock::MARCH_REFRESH_YARDS)
+            if (!probe->CompassValid || self.GetExactDist(&probe->CompassFrom) >= MoveBlock::MARCH_REFRESH_YARDS)
             {
                 Field::Store::Neighbourhood around;
                 Field::Compass compass;
@@ -363,7 +201,7 @@ namespace
                     probe->CompassClearance = compass.Room.Clearance;
                     probe->CompassDirected = compass.Room.Directed;
                     probe->CompassAway = compass.Room.Away;
-                    probe->CompassFrom.Relocate(bot);
+                    probe->CompassFrom.Relocate(self);
                     probe->CompassValid = true;
                 }
                 else
@@ -391,7 +229,7 @@ namespace
             }
             Encoder::ChargeObserve(Encoder::OBSERVE_PROBE_MARCH, partMark);
 
-            // Only the jump test keeps the refresh cadence: it looks along the facing.
+            // Only the march's bookkeeping keeps the refresh cadence.
             if (!stale)
             {
                 Encoder::ChargeObserve(Encoder::OBSERVE_PROBE, probeMark);
@@ -401,14 +239,7 @@ namespace
         if (!fromTable && !fromField && !Field::Store::Enabled())
             RefreshLive(probe, map, query, at, facing, partMark);
 
-        // Where a jump would come down, cached with the rest. The mask reads this; the press reads it too while
-        // the cache still describes where the seat stands, and measures again once it has moved or turned.
-        JumpAim const aim = JumpLandingTest(map, query, bot, facing, view.JumpDropSearch);
-        probe->CanJump = !Descending(bot) && !probe->JumpDropPending && aim.Ok;
-        probe->JumpLanding = aim.Landing;
-        probe->JumpDrop = aim.Ok ? aim.Drop : 0.0f;
-
-        probe->From.Relocate(bot);
+        probe->From.Relocate(self);
         probe->Facing = facing;
         probe->Ms = view.NowMs;
         probe->Valid = true;
@@ -452,7 +283,7 @@ namespace
     /// from where the seat stands now, in its own frame (ahead, left) over YARD_SCALE, oldest first with the newest
     /// in the last pair, then the share of the samples it is still within DWELL_YARDS of. The first observation of
     /// an episode takes the first sample, so the trail always knows where the seat set out from.
-    void ObserveTrail(Animus::Curriculum::SeatView const& view, Player const* bot, float* out)
+    void ObserveTrail(Animus::Curriculum::SeatView const& view, Position const& self, float* out)
     {
         using Animus::Curriculum::MovementTrail;
         using Animus::Curriculum::TRAIL_SAMPLES;
@@ -464,8 +295,8 @@ namespace
         if (!trail->Started || view.NowMs < trail->LastMs
             || view.NowMs - trail->LastMs >= MovementTrail::INTERVAL_MS)
         {
-            trail->X[trail->Next] = bot->GetPositionX();
-            trail->Y[trail->Next] = bot->GetPositionY();
+            trail->X[trail->Next] = self.GetPositionX();
+            trail->Y[trail->Next] = self.GetPositionY();
             trail->Next = (trail->Next + 1) % TRAIL_SAMPLES;
             trail->Count = std::min(trail->Count + 1, TRAIL_SAMPLES);
             trail->LastMs = view.NowMs;
@@ -479,8 +310,8 @@ namespace
         {
             // Oldest first: with the ring full, the oldest sample is the slot Next points at.
             uint32 const slot = (trail->Next + TRAIL_SAMPLES - trail->Count + i) % TRAIL_SAMPLES;
-            float const dx = trail->X[slot] - bot->GetPositionX();
-            float const dy = trail->Y[slot] - bot->GetPositionY();
+            float const dx = trail->X[slot] - self.GetPositionX();
+            float const dy = trail->Y[slot] - self.GetPositionY();
             // Into the seat's frame: ahead is +x and left is +y, orientation running counter-clockwise.
             float const ahead = dx * cosFacing + dy * sinFacing;
             float const left = dy * cosFacing - dx * sinFacing;
@@ -492,258 +323,6 @@ namespace
         }
         out[MoveBlock::OBS_TRAIL_DWELL] = float(dwelling) / float(TRAIL_SAMPLES);
     }
-
-    /// One step of a chosen turn, and one of a held pitch. Exactly once per decision, whoever asks: BeforeApply
-    /// on a decision the turn is merely under way, Apply on the decision it is chosen, so the choice does
-    /// something rather than waiting 250 ms for the next decision to notice it.
-    void StepTurn(Animus::Curriculum::SeatView& view)
-    {
-        Player const* bot = view.Bot;
-        if (!bot || view.TurnLeft == 0.0f || view.TurnStepped || !bot->IsAlive()
-            || bot->HasUnitState(Encoding::IMMOBILE_STATES))
-            return;
-
-        view.TurnStepped = true;
-
-        // Straight onto the seat's own heading. SetFacingTo launches an orientation-only spline, and the move
-        // spline Steer issues does MotionMaster::Clear() and replaces it before a single world tick can apply
-        // it -- so a turn made that way did nothing at all while the seat was walking, which is every decision
-        // that matters. It also left GetOrientation() unchanged for the heading Steer computes, so the turn did
-        // not even steer the decision it was chosen on.
-        float const step = std::clamp(view.TurnLeft, -MoveBlock::TURN_RATE, MoveBlock::TURN_RATE);
-        view.Facing = Position::NormalizeOrientation(view.Facing + step);
-        view.TurnLeft -= step;
-        // Done: the float left over from subtracting a clamp from itself is not a turn still to come.
-        if (std::fabs(view.TurnLeft) < 1e-4f)
-        {
-            view.TurnLeft = 0.0f;
-            if (view.Option)
-                view.Option->Stop(SeatOptionKind::MoveTurn);
-        }
-    }
-
-    void StepPitch(Animus::Curriculum::SeatView& view)
-    {
-        if (view.PitchStepped || view.Pitch == view.PitchTarget || !Airborne(view.Bot))
-            return;
-
-        view.PitchStepped = true;
-        view.Pitch += std::clamp(view.PitchTarget - view.Pitch, -MoveBlock::PITCH_RATE, MoveBlock::PITCH_RATE);
-        // There: the float left over is not a tilt still to come.
-        if (std::fabs(view.PitchTarget - view.Pitch) < 1e-4f)
-        {
-            view.Pitch = view.PitchTarget;
-            if (view.Option)
-                view.Option->Stop(SeatOptionKind::MovePitch);
-        }
-    }
-
-    /// Settle where the seat is looking and carry it -- on the move spline if the feet are going somewhere, as a
-    /// turn on the spot if they are not.
-    ///
-    /// Split out of BeforeApply so that it can be re-run the moment an action changes the steering, without
-    /// re-running the things that must happen exactly once a decision. Pressing a facing or a bearing used to
-    /// call the whole of BeforeApply again, which stepped a held turn a second time in the same 250 ms: the turn
-    /// rate doubled whenever the policy did anything else while turning.
-    void Steer(Animus::Curriculum::SeatView& view)
-    {
-        Player* bot = view.Bot;
-        if (!bot || !view.Option)
-            return;
-
-        bool const alive = bot->IsAlive() && !bot->HasUnitState(Encoding::IMMOBILE_STATES);
-
-        // Where the head is pointing this decision, settled before a single bearing is measured off it.
-        UpdateFacing(view);
-
-        if (!view.Option->Running(SeatOptionKind::MoveBearing, view.NowMs)
-            || view.HeldBearing >= MoveBlock::BEARING_COUNT)
-        {
-            view.HeldBearing = 0xFF;
-            // Standing still, so no move spline will carry the heading: push it onto the unit here instead, or a
-            // turn and a FACE_* would be things the seat believed about itself that the world did not share.
-            // UpdatePosition with the same coordinates is a pure turn, and it is a no-op when the angle is unchanged.
-            if (alive)
-                bot->UpdatePosition(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(), view.Facing);
-            return;
-        }
-
-        if (!alive)
-            return;
-
-        // Re-aimed from where the seat is now, every decision it keeps walking. Aiming once at a point chosen when the
-        // key went down would walk it into the first wall the ground put in the way; recomputing lets the path bend.
-        float const heading = HeadingOf(view.Facing, view.HeldBearing);
-        bool const airborne = Airborne(bot);
-
-        // On the ground, a run still under way along this heading and facing this way is left to run until it is
-        // half spent. Re-issuing it every decision restarted the spline four times a second, and a client draws each
-        // restart as a hitch in the stride (in-game testing, 2026-09-28): the seat walked in a stutter. Half a step
-        // is still under two decisions of ground at a run, so the path is recomputed about as often as the seat
-        // covers new ground.
-        if (!airborne && !bot->movespline->Finalized())
-        {
-            G3D::Vector3 const end = bot->movespline->FinalDestination();
-            float const remaining = bot->GetExactDist2d(end.x, end.y);
-            float const toward = bot->GetAbsoluteAngle(end.x, end.y);
-            if (remaining >= MoveBlock::STEP_YARDS * 0.5f
-                && std::fabs(Position::NormalizeOrientation(toward - heading + float(M_PI)) - float(M_PI)) < RUN_HEADING_SLACK
-                && std::fabs(Position::NormalizeOrientation(bot->GetOrientation() - view.Facing + float(M_PI))
-                    - float(M_PI)) < RUN_FACING_SLACK)
-                return;
-        }
-
-        float const pitch = airborne ? view.Pitch : 0.0f;
-        float const reach = MoveBlock::STEP_YARDS * std::cos(pitch);
-
-        Position destination = *bot;
-        destination.Relocate(bot->GetPositionX() + reach * std::cos(heading),
-            bot->GetPositionY() + reach * std::sin(heading),
-            bot->GetPositionZ() + MoveBlock::STEP_YARDS * std::sin(pitch));
-
-        if (airborne)
-        {
-            // Swimming and flying are steered in three dimensions and must not be snapped to the ground: the whole
-            // point of a pitch is to leave it. A climb still stops at the ceiling the air has.
-            float const facing = view.Facing;
-            if (!bot->CanFly())
-            {
-                // In the water. Keep the seat under the surface rather than skimming along the top of it, and swim
-                // rather than fly: a spline with the fly flag on a swimmer is a different animal.
-                Encoding::SwimTo(bot, destination.GetPositionX(), destination.GetPositionY(),
-                    destination.GetPositionZ(), &facing);
-                return;
-            }
-
-            float const ceiling = bot->GetPositionZ()
-                + (TravelBlock::MAX_ALTITUDE - TravelBlock::HeightAboveGround(bot));
-            destination.Relocate(destination.GetPositionX(), destination.GetPositionY(),
-                std::min(destination.GetPositionZ(), ceiling));
-
-            Encoding::FlyTo(bot, destination.GetPositionX(), destination.GetPositionY(), destination.GetPositionZ(),
-                &facing);
-            return;
-        }
-
-        // On land, but the step leads into water. This is the one move the seat could never make: the walkable mesh
-        // ends at the waterline, so a pathfound ground step into a lake has nowhere to land and the seat stops on
-        // the shore -- and it could not start swimming, because swimming was only ever reached by already being in
-        // the water. Over 200 sampled decisions across a whole run, no seat ever got its feet below the surface;
-        // every sample near water sat 0.1 to 0.4 yards above it. Entering is therefore its own case: go straight in,
-        // to just under the surface, and from the next decision `airborne` is true and the seat is swimming.
-        if (Map* map = bot->GetMap())
-        {
-            LiquidData const liquid = map->GetLiquidData(bot->GetPhaseMask(), destination.GetPositionX(),
-                destination.GetPositionY(), bot->GetPositionZ(), bot->GetCollisionHeight(), {});
-            // Water and ocean only: stepping into magma or slime is not a crossing, it is a death, and the probe
-            // reports it as no reach for that reason.
-            if (liquid.Status != LIQUID_MAP_NO_WATER && liquid.Level > INVALID_HEIGHT
-                && (liquid.Flags & (MAP_LIQUID_TYPE_WATER | MAP_LIQUID_TYPE_OCEAN)) != 0
-                && liquid.Level >= bot->GetPositionZ() - MoveBlock::MAX_STEP)
-            {
-                // With a water-walking aura the lake is a floor: the step lands on the surface, and the movement
-                // flag the core would only set on a client's acknowledgement (Unit::SetWaterWalking sends a packet
-                // to a client-controlled player and waits) is set here, the way AllowFlight sets CAN_FLY.
-                if (bot->HasWaterWalkAura())
-                {
-                    bot->AddUnitMovementFlag(MOVEMENTFLAG_WATERWALKING);
-                    Encoding::SwimTo(bot, destination.GetPositionX(), destination.GetPositionY(),
-                        liquid.Level + MoveBlock::WATER_WALK_ABOVE, &view.Facing);
-                    return;
-                }
-                Encoding::SwimTo(bot, destination.GetPositionX(), destination.GetPositionY(),
-                    liquid.Level - bot->GetCollisionHeight() * 0.5f, &view.Facing);
-                return;
-            }
-        }
-
-        // Put the destination on the ground where there is ground to put it on. Where there is not -- the bearing
-        // leads off the map, or over a drop deeper than a step -- the move is issued anyway, at the unsnapped point.
-        //
-        // Refusing to move in that case is what it looked like it should do, and it is wrong: the seat then stands
-        // still, and standing still is the one outcome this whole block exists to prevent. The direction is still the
-        // policy's; only the height of a point eight yards away is being guessed at, and the path the spline takes
-        // sorts that out. The ground probe is how the seat learns not to choose such a bearing in the first place.
-        // Deliberately discarded: see above -- a failure is a reason to move anyway, not a reason to stand still.
-        (void)Encoding::SnapToGround(bot->GetMap(), bot->GetPhaseMask(), destination, bot->GetPositionZ(),
-            MoveBlock::STEP_YARDS);
-
-        // Pathfinding on, which is the default: a bearing is where the seat wants to go, not a licence to walk through
-        // a wall to get there.
-        Encoding::MoveTo(bot, MOVE_POINT_ID, destination.GetPositionX(), destination.GetPositionY(),
-            destination.GetPositionZ(), &view.Facing);
-    }
-}
-
-Animus::Curriculum::BlockSize Animus::Curriculum::MoveBlock::Size(Layout const& /*layout*/) const
-{
-    return { OBS_COUNT, ACTION_COUNT };
-}
-
-void Animus::Curriculum::MoveBlock::DescribeManifest(Layout const& /*layout*/, boost::json::object& block) const
-{
-    block["bearings"] = uint32(BEARING_COUNT);
-    block["rays"] = uint32(RAY_COUNT);
-    block["trail_samples"] = uint32(TRAIL_SAMPLES);
-    block["trail_interval_ms"] = uint32(MovementTrail::INTERVAL_MS);
-    block["step_yards"] = double(STEP_YARDS);
-    block["turn_rate"] = double(TURN_RATE);
-    boost::json::array turns;
-    for (float angle : TURN_ANGLES)
-        turns.push_back(double(angle));
-    block["turn_angles"] = std::move(turns);
-    block["pitch_rate"] = double(PITCH_RATE);
-    boost::json::array pitches;
-    for (float angle : PITCH_ANGLES)
-        pitches.push_back(double(angle));
-    block["pitch_angles"] = std::move(pitches);
-    block["pitch_max"] = double(PITCH_MAX);
-    block["probe_yards"] = double(PROBE_YARDS);
-    boost::json::array ranges;
-    for (float range : MARCH_RANGES)
-        ranges.push_back(double(range));
-    block["march_ranges"] = std::move(ranges);
-    block["march_max"] = double(MARCH_MAX);
-    block["clearance_range"] = double(CLEARANCE_RANGE);
-    block["jump_speed_z"] = double(JUMP_SPEED_Z);
-    block["jump_rise_max"] = double(JUMP_RISE_MAX);
-    block["jump_drop_scale"] = double(JUMP_DROP_SCALE);
-
-    // Which ground probe the model was trained on: the observation's reach, step, shore, burns and clearance are
-    // its definition. "baked" (tables) and "geometry" (layered fields) are the same dense probe, taken at 2 yd cells
-    // and 16 compass bearings, or worked out at the seat; "live" is the old five-cell one, a different observation.
-    // A runtime reading the model with another should know it is fine-tuning territory.
-    namespace Bake = Animus::Curriculum::ProbeBake;
-    boost::json::object probe;
-    probe["source"] = Bake::Store::Baked() ? "baked"
-        : Animus::Curriculum::LayeredField::Store::Enabled() ? "geometry" : "live";
-    probe["dense"] = Bake::Store::Baked() || Animus::Curriculum::LayeredField::Store::Enabled();
-    Bake::Settings const standard = Bake::StandardSettings();
-    probe["table_cell"] = double(standard.Cell);
-    probe["table_bearings"] = standard.Bearings;
-    probe["wedge_rays"] = standard.WedgeRays;
-    probe["march_pitch"] = double(standard.Pitch);
-    probe["march_window"] = double(GroundSense::MARCH_WINDOW);
-    probe["field_cell"] = double(Animus::Curriculum::LayeredField::STANDARD_CELL);
-    // The fields are sensed along the compass and turned to the facing to the nearest of these (RaysFor).
-    probe["field_compass_headings"] = 2 * Animus::Curriculum::SENSE_RAYS;
-    block["ground_probe"] = std::move(probe);
-}
-
-std::string Animus::Curriculum::MoveBlock::ActionName(Layout const& /*layout*/, uint32 local) const
-{
-    static constexpr std::array<char const*, ACTION_COUNT> NAMES =
-    {
-        "move_forward", "move_forward_right", "move_right", "move_back_right",
-        "move_back", "move_back_left", "move_left", "move_forward_left",
-        "halt", "face_target", "face_heading", "face_hold",
-        "turn_left_15", "turn_right_15", "turn_left_45", "turn_right_45", "turn_left_90", "turn_right_90",
-        "turn_left_135", "turn_right_135", "turn_about",
-        "pitch_down_60", "pitch_down_45", "pitch_down_30", "pitch_down_15", "pitch_level",
-        "pitch_up_15", "pitch_up_30", "pitch_up_45", "pitch_up_60", "jump",
-    };
-
-    return local < NAMES.size() ? NAMES[local] : std::string();
 }
 
 std::string Animus::Curriculum::MoveBlock::RayReport(Map* map, float x, float y, float z, float facing)
@@ -893,6 +472,65 @@ std::string Animus::Curriculum::MoveBlock::RayReport(Map* map, float x, float y,
 
     return out.str();
 }
+Animus::Curriculum::BlockSize Animus::Curriculum::MoveBlock::Size(Layout const& /*layout*/) const
+{
+    return BlockSize{ OBS_COUNT, MC::ACTION_COUNT };
+}
+
+void Animus::Curriculum::MoveBlock::DescribeManifest(Layout const& /*layout*/, boost::json::object& block) const
+{
+    block["controls"] = "player-controller";
+    block["rays"] = uint32(RAY_COUNT);
+    block["trail_samples"] = uint32(TRAIL_SAMPLES);
+    block["trail_interval_ms"] = uint32(MovementTrail::INTERVAL_MS);
+    boost::json::array turns;
+    for (float rate : MC::TURN_RATES_DEG)
+        turns.push_back(double(rate));
+    block["turn_rates_deg"] = std::move(turns);
+    boost::json::array pitches;
+    for (float rate : MC::PITCH_RATES_DEG)
+        pitches.push_back(double(rate));
+    block["pitch_rates_deg"] = std::move(pitches);
+    block["turn_rate_max"] = double(MC::TURN_RATE_MAX);
+    block["pitch_rate_max"] = double(MC::PITCH_RATE_MAX);
+    block["jump_speed"] = double(Mv::JUMP_SPEED);
+    block["swim_jump_speed"] = double(Mv::SWIM_JUMP_SPEED);
+    block["step_up"] = double(Mv::STEP_UP);
+    block["fall_time_scale_ms"] = double(FALL_TIME_SCALE_MS);
+    block["fall_height_scale"] = double(FALL_HEIGHT_SCALE);
+    block["probe_yards"] = double(PROBE_YARDS);
+    boost::json::array ranges;
+    for (float range : MARCH_RANGES)
+        ranges.push_back(double(range));
+    block["march_ranges"] = std::move(ranges);
+    block["march_max"] = double(MARCH_MAX);
+    block["clearance_range"] = double(CLEARANCE_RANGE);
+
+    // Which ground probe the model was trained on: the observation's reach, step, shore, burns and clearance are
+    // its definition. "baked" (tables) and "geometry" (layered fields) are the same dense probe, taken at 2 yd cells
+    // and 16 compass bearings, or worked out at the seat; "live" is the old five-cell one, a different observation.
+    // A runtime reading the model with another should know it is fine-tuning territory.
+    namespace Bake = Animus::Curriculum::ProbeBake;
+    boost::json::object probe;
+    probe["source"] = Bake::Store::Baked() ? "baked"
+        : Animus::Curriculum::LayeredField::Store::Enabled() ? "geometry" : "live";
+    probe["dense"] = Bake::Store::Baked() || Animus::Curriculum::LayeredField::Store::Enabled();
+    Bake::Settings const standard = Bake::StandardSettings();
+    probe["table_cell"] = double(standard.Cell);
+    probe["table_bearings"] = standard.Bearings;
+    probe["wedge_rays"] = standard.WedgeRays;
+    probe["march_pitch"] = double(standard.Pitch);
+    probe["march_window"] = double(GroundSense::MARCH_WINDOW);
+    probe["field_cell"] = double(Animus::Curriculum::LayeredField::STANDARD_CELL);
+    // The fields are sensed along the compass and turned to the facing to the nearest of these (RaysFor).
+    probe["field_compass_headings"] = 2 * Animus::Curriculum::SENSE_RAYS;
+    block["ground_probe"] = std::move(probe);
+}
+
+std::string Animus::Curriculum::MoveBlock::ActionName(Layout const& /*layout*/, uint32 local) const
+{
+    return local < MC::ACTION_COUNT ? MC::NAMES[local] : std::string();
+}
 
 void Animus::Curriculum::MoveBlock::Observe(SeatView const& view, float* obs, uint8* mask) const
 {
@@ -901,63 +539,78 @@ void Animus::Curriculum::MoveBlock::Observe(SeatView const& view, float* obs, ui
     // stayed masked and no seat could steer (stage1_move, 2026-09-21).
     float* out = obs;
     Player* bot = view.Bot;
+    Mv::BodyState const* body = view.Body;
+    Mv::ControlState const* held = view.Controls ? &view.Controls->Held : nullptr;
+    bool const airborne = Airborne(bot);
+    // Where the seat is, for everything it senses of itself: the controller's true body, as a client knows its own
+    // position (§5A.1 point 1); the server's (others read it) lags it by up to a report.
+    Position const self = body ? Position(body->X, body->Y, body->Z, body->Yaw)
+        : bot ? bot->GetPosition() : Position();
 
     // Everything a seat needs to place its feet, and nothing about whether it has an enemy: this block is the one
     // that still works when there is nothing to fight.
-    // A jump owns the feet until it lands. Every movement action begins by calling DisableSpline, so a step or
-    // a second jump pressed mid-arc would cancel the parabola from wherever the seat had got to and leave it
-    // walking on air -- and the core's own IsFalling cannot see this coming, because MoveSplineFlag's
-    // EnableParabolic clears the Falling bit it tests. The arc is a known 825 ms, so the honest fix is to hold
-    // the clock ourselves and mask the feet for as long as they are not under the seat.
-    bool const inFlight = view.Probe && view.NowMs < view.Probe->JumpUntilMs;
-
-    // A mount cast owns the feet the same way a jump arc does, and for the same reason: it takes several
-    // decisions and any movement in them destroys it. Without this the mount was unreachable by construction --
-    // the scripted policy cancelled its own every time, and a learned one has to find a run of consecutive
-    // decisions in which it presses nothing that moves, while potential shaping charges it for the pause.
-    //
-    // Only a mount. Protecting casts in general would stop a seat walking out of fire mid-spell, and that is a
-    // thing it must always be able to do.
-    bool const mounting = bot && Encoding::MountCastInProgress(bot);
-    // And a fall: a bearing pressed on the way down would Clear() the fall spline from mid-air and start a second
-    // fall from there, with a second HandleFall at the bottom. The spline's own word and this block's drop flag,
-    // never the core's falling flag (Descending).
-    bool const falling = bot && (Descending(bot) || (view.Probe && view.Probe->JumpDropPending));
-    bool const canMove = bot && bot->IsAlive() && !bot->HasUnitState(Encoding::IMMOBILE_STATES)
-        && !inFlight && !mounting && !falling;
-    bool const airborne = Airborne(bot);
-
     if (bot)
     {
-        // Every bearing in this block is measured off the seat's own heading, so the observation has to report
-        // that and not the spline's idea of it.
+        // Every bearing in this block is measured off the seat's own heading.
         float const facing = view.Facing;
-        out[OBS_MOVING] = bot->isMoving() ? 1.0f : 0.0f;
+        bool const keys = held && (held->Forward || held->Strafe || held->Vertical);
+        float const speed = body ? std::sqrt(body->Vx * body->Vx + body->Vy * body->Vy + body->Vz * body->Vz) : 0.0f;
+        out[OBS_MOVING] = keys || speed > 0.1f || bot->isMoving() ? 1.0f : 0.0f;
         // Over twice the unhasted run speed and clamped: a mounted seat read 2.0 here and a flying one nearly 4,
         // which are not features in [0, 1] and were the widest inputs the row had.
         out[OBS_SPEED] = std::min(1.0f, bot->GetSpeed(MOVE_RUN) / (2.0f * RUN_SPEED));
         out[OBS_FACING_SIN] = std::sin(facing);
         out[OBS_FACING_COS] = std::cos(facing);
 
-        if (view.HeldBearing < BEARING_COUNT)
-            out[OBS_BEARING_HELD + view.HeldBearing] = 1.0f;
-        else
-            out[OBS_BEARING_NONE] = 1.0f;
+        if (held)
+        {
+            out[OBS_HELD_FORWARD] = float(held->Forward);
+            out[OBS_HELD_STRAFE] = float(held->Strafe);
+            out[OBS_HELD_VERTICAL] = float(held->Vertical);
+            out[OBS_HELD_TURN] = std::clamp(held->TurnRate / MC::TURN_RATE_MAX, -1.0f, 1.0f);
+            out[OBS_HELD_PITCH] = std::clamp(held->PitchRate / MC::PITCH_RATE_MAX, -1.0f, 1.0f);
+            out[OBS_HELD_WALK] = held->Walk ? 1.0f : 0.0f;
+        }
 
-        out[OBS_TURNING_LEFT] = std::clamp(view.TurnLeft / float(M_PI), 0.0f, 1.0f);
-        out[OBS_TURNING_RIGHT] = std::clamp(-view.TurnLeft / float(M_PI), 0.0f, 1.0f);
-        out[OBS_PITCH_SIN] = std::sin(view.Pitch);
-        out[OBS_PITCH_COS] = std::cos(view.Pitch);
-        out[OBS_PITCH_TARGET] = view.PitchTarget / PITCH_MAX;
+        if (body)
+        {
+            out[OBS_PITCH_SIN] = std::sin(body->Pitch);
+            out[OBS_PITCH_COS] = std::cos(body->Pitch);
+            // Into the body's frame: ahead along the yaw, left counter-clockwise of it.
+            float const scale = 2.0f * RUN_SPEED;
+            float const ahead = body->Vx * std::cos(body->Yaw) + body->Vy * std::sin(body->Yaw);
+            float const left = body->Vy * std::cos(body->Yaw) - body->Vx * std::sin(body->Yaw);
+            out[OBS_VELOCITY_AHEAD] = std::clamp(ahead / scale, -1.0f, 1.0f);
+            out[OBS_VELOCITY_LEFT] = std::clamp(left / scale, -1.0f, 1.0f);
+            out[OBS_VELOCITY_UP] = std::clamp(body->Vz / scale, -1.0f, 1.0f);
+            out[OBS_PROGRESS] = body->Commanded > 1e-4f ? std::clamp(body->Moved / body->Commanded, 0.0f, 1.0f)
+                : 1.0f;
+            out[OBS_MODE_FIRST + uint32(body->Kind)] = 1.0f;
+            out[OBS_FALL_TIME] = body->Kind == Mv::Mode::Falling
+                ? std::min(1.0f, float(body->FallMs) / FALL_TIME_SCALE_MS) : 0.0f;
+            out[OBS_FALL_HEIGHT] = body->Kind == Mv::Mode::Falling
+                ? std::clamp((body->FallApexZ - body->Z) / FALL_HEIGHT_SCALE, 0.0f, 1.0f) : 0.0f;
+            out[OBS_AGAINST_WALL] = body->AgainstWall ? 1.0f : 0.0f;
+            out[OBS_STEEP_SLOPE] = body->SteepSlope ? 1.0f : 0.0f;
+        }
+
+        // How deep the feet are, the core's own liquid query at the body.
+        if (Map* map = bot->GetMap())
+        {
+            LiquidData const& liquid = map->GetLiquidData(bot->GetPhaseMask(), self.GetPositionX(),
+                self.GetPositionY(), self.GetPositionZ(), bot->GetCollisionHeight(), MAP_ALL_LIQUIDS);
+            if (liquid.Status != LIQUID_MAP_NO_WATER)
+                out[OBS_DEPTH] = std::clamp((liquid.Level - self.GetPositionZ())
+                    / std::max(0.1f, bot->GetCollisionHeight()), 0.0f, 1.0f);
+        }
 
         if (Unit const* target = view.Target)
         {
-            float const relative = RelativeBearing(*bot, facing, *target);
+            float const relative = RelativeBearing(self, facing, *target);
             out[OBS_TARGET_BEARING_SIN] = std::sin(relative);
             out[OBS_TARGET_BEARING_COS] = std::cos(relative);
-            out[OBS_TARGET_DISTANCE] = std::min(1.0f, bot->GetExactDist2d(target) / YARD_SCALE);
+            out[OBS_TARGET_DISTANCE] = std::min(1.0f, self.GetExactDist2d(target) / YARD_SCALE);
         }
-
         // The nearest ground effect it is not standing in, in the same frame: which way it lies and how wide, so
         // the seat can walk round one rather than only out of one. Its bearing is already relative to facing.
         if (view.NearestHazard.Present)
@@ -970,11 +623,11 @@ void Animus::Curriculum::MoveBlock::Observe(SeatView const& view, float* obs, ui
 
         if (view.HasObjective)
         {
-            float const relative = RelativeBearing(*bot, facing, view.Objective);
+            float const relative = RelativeBearing(self, facing, view.Objective);
             out[OBS_OBJECTIVE] = 1.0f;
             out[OBS_OBJECTIVE_BEARING_SIN] = std::sin(relative);
             out[OBS_OBJECTIVE_BEARING_COS] = std::cos(relative);
-            float const range = bot->GetExactDist2d(&view.Objective);
+            float const range = self.GetExactDist2d(&view.Objective);
             out[OBS_OBJECTIVE_DISTANCE] = std::min(1.0f, range / OBJECTIVE_SCALE);
             // The same distance again, over forty yards rather than five hundred. Every episode this stage loses
             // ends twenty to forty-five yards short, which is a twelfth of the coarse feature's range and half
@@ -986,7 +639,7 @@ void Animus::Curriculum::MoveBlock::Observe(SeatView const& view, float* obs, ui
         // not what the seat is steering against and the samples would only report the bottom.
         if (!airborne)
         {
-            RefreshProbe(view, bot, facing);
+            RefreshProbe(view, bot, self, facing);
             if (GroundProbe const* probe = view.Probe)
                 for (uint32 ray = 0; ray < RAY_COUNT; ++ray)
                 {
@@ -1001,9 +654,6 @@ void Animus::Curriculum::MoveBlock::Observe(SeatView const& view, float* obs, ui
                 out[OBS_CLEARANCE] = probe->Clearance;
                 out[OBS_CLEARANCE_SIN] = probe->ClearanceSin;
                 out[OBS_CLEARANCE_COS] = probe->ClearanceCos;
-                out[OBS_CAN_JUMP] = probe->CanJump ? 1.0f : 0.0f;
-                out[OBS_JUMP_DROP] = probe->CanJump
-                    ? std::clamp(probe->JumpDrop / JUMP_DROP_SCALE, 0.0f, 1.0f) : 0.0f;
             }
         }
         else
@@ -1022,11 +672,11 @@ void Animus::Curriculum::MoveBlock::Observe(SeatView const& view, float* obs, ui
             // open air. A swimmer's rays stay open, as they were.
             bool const flying = !bot->IsInWater();
             Map* map = bot->GetMap();
-            float const z = bot->GetPositionZ() + bot->GetCollisionHeight() * 0.5f;
+            float const z = self.GetPositionZ() + bot->GetCollisionHeight() * 0.5f;
             bool const fields = LayeredField::Store::Enabled();
             LayeredField::Store::Neighbourhood around;
             bool const fromField = flying && map && fields
-                && LayeredField::Store::Gather(map->GetId(), bot->GetPositionX(), bot->GetPositionY(), around);
+                && LayeredField::Store::Gather(map->GetId(), self.GetPositionX(), self.GetPositionY(), around);
             if (flying && map && fields)
                 (fromField ? LayeredField::Store::Reads : LayeredField::Store::Fallbacks)
                     .fetch_add(1, std::memory_order_relaxed);
@@ -1037,19 +687,19 @@ void Animus::Curriculum::MoveBlock::Observe(SeatView const& view, float* obs, ui
                 if (fromField)
                 {
                     float const heading = RayHeading(facing, ray);
-                    float const level = LayeredField::FlightReach(around.View, bot->GetPositionX(),
-                        bot->GetPositionY(), z, heading, MARCH_MAX, FLIGHT_PITCH);
-                    float const above = LayeredField::FlightReach(around.View, bot->GetPositionX(),
-                        bot->GetPositionY(), z + FLIGHT_CLIMB, heading, MARCH_MAX, FLIGHT_PITCH);
+                    float const level = LayeredField::FlightReach(around.View, self.GetPositionX(),
+                        self.GetPositionY(), z, heading, MARCH_MAX, FLIGHT_PITCH);
+                    float const above = LayeredField::FlightReach(around.View, self.GetPositionX(),
+                        self.GetPositionY(), z + FLIGHT_CLIMB, heading, MARCH_MAX, FLIGHT_PITCH);
                     reach = level / MARCH_MAX;
                     climb = std::clamp((above - level) / MARCH_MAX, -1.0f, 1.0f);
                 }
                 else if (flying && map && !fields)
                 {
                     float const heading = RayHeading(facing, ray);
-                    float const level = LayeredField::LiveFlightReach(map, bot->GetPositionX(), bot->GetPositionY(),
+                    float const level = LayeredField::LiveFlightReach(map, self.GetPositionX(), self.GetPositionY(),
                         z, heading, MARCH_MAX, FLIGHT_PITCH);
-                    float const above = LayeredField::LiveFlightReach(map, bot->GetPositionX(), bot->GetPositionY(),
+                    float const above = LayeredField::LiveFlightReach(map, self.GetPositionX(), self.GetPositionY(),
                         z + FLIGHT_CLIMB, heading, MARCH_MAX, FLIGHT_PITCH);
                     reach = level / MARCH_MAX;
                     climb = std::clamp((above - level) / MARCH_MAX, -1.0f, 1.0f);
@@ -1068,7 +718,6 @@ void Animus::Curriculum::MoveBlock::Observe(SeatView const& view, float* obs, ui
             }
         }
 
-        out[OBS_FALLING] = (view.Probe && view.Probe->JumpDropPending) || bot->IsFalling() ? 1.0f : 0.0f;
         out[OBS_IN_WATER] = bot->IsInWater() ? 1.0f : 0.0f;
         out[OBS_SUBMERGED] = bot->IsUnderWater() ? 1.0f : 0.0f;
         out[OBS_SUBMERGED_TIME] = std::min(1.0f, view.BreathSpent);
@@ -1079,11 +728,6 @@ void Animus::Curriculum::MoveBlock::Observe(SeatView const& view, float* obs, ui
     // The way round against the way through, and whether the legs are getting anywhere. All three are the
     // scenario's to measure -- one at the episode's build, two over the last second -- because none of them can
     // be seen from a probe of any length.
-    // Which way it has told itself to look. The FACE_* actions are masked while they are the mode being held, so
-    // without this the policy could only infer its own steering state from what it was forbidden to press.
-    out[OBS_FACING_MODE_FIRST + (view.FacingMode >= ACTION_FACE_TARGET && view.FacingMode <= ACTION_FACE_HOLD
-        ? 1 + view.FacingMode - ACTION_FACE_TARGET : 0)] = 1.0f;
-
     out[OBS_DETOUR] = std::clamp(view.Detour / 4.0f, 0.0f, 1.0f);
     out[OBS_MOVE_RATE] = std::clamp(view.MoveRate, 0.0f, 1.0f);
     out[OBS_CLOSE_RATE] = std::clamp(view.CloseRate, -1.0f, 1.0f);
@@ -1091,271 +735,49 @@ void Animus::Curriculum::MoveBlock::Observe(SeatView const& view, float* obs, ui
     // Where it has been, in its own frame, sampled here once a second because this is the one place that runs
     // for every seat every decision, in training and in play alike.
     if (bot)
-        ObserveTrail(view, bot, out);
+        ObserveTrail(view, self, out);
+
+    // The masks: only the presses that are physically impossible (MoveControls::Allowed). The jump and the vertical
+    // controls read the body the controller moves.
+    MC::MaskState state;
+    state.Alive = bot && bot->IsAlive();
+    if (bot && body)
+    {
+        Mv::Speeds const speeds = Mv::SpeedsOf(bot);
+        state.CanSteerVertically = Mv::CanSteerVertically(*body, speeds);
+        if (Map* map = bot->GetMap())
+        {
+            Mv::MapWorldQuery const world(map, bot->GetPhaseMask());
+            state.CanJump = Mv::CanJump(*body, Mv::ShapeOf(bot), world);
+        }
+    }
+    out[OBS_CAN_JUMP] = state.Alive && state.CanJump ? 1.0f : 0.0f;
 
     if (!mask)
         return;
-
-    uint8* allowed = mask;
-    for (uint32 bearing = 0; bearing < BEARING_COUNT; ++bearing)
-        allowed[ACTION_BEARING_FIRST + bearing] = canMove ? 1 : 0;
-
-    // The bearing already being walked is masked: pressing it again would be a repeat of a key already held, and
-    // the option machinery re-issues the spline each decision without being asked.
-    if (canMove && view.HeldBearing < BEARING_COUNT && view.Option
-        && view.Option->Running(SeatOptionKind::MoveBearing, view.NowMs))
-        allowed[ACTION_BEARING_FIRST + view.HeldBearing] = 0;
-
-    // Halting is only worth offering while something is being walked.
-    allowed[ACTION_HALT] = canMove && view.HeldBearing < BEARING_COUNT ? 1 : 0;
-
-    // Where it looks is a choice it can always make, alive and able to turn. Facing the target needs one.
-    bool const canTurn = bot && bot->IsAlive() && !bot->HasUnitState(Encoding::STUN_STATES);
-    allowed[ACTION_FACE_TARGET] = canTurn && view.Target && view.Target->IsAlive() ? 1 : 0;
-    allowed[ACTION_FACE_HEADING] = canTurn ? 1 : 0;
-    allowed[ACTION_FACE_HOLD] = canTurn ? 1 : 0;
-    for (uint32 face = ACTION_FACE_TARGET; face <= ACTION_FACE_HOLD; ++face)
-        if (view.FacingMode == face)
-            allowed[face] = 0;              // already holding its head that way
-
-    // Turning is the mouse-look, and it means nothing while the head is aimed at something in the world:
-    // FACE_TARGET recomputes the heading from the target's position every decision, so a turn under it is
-    // overwritten before it can steer anything. Masking says what is true: there is no heading to choose while
-    // something else is choosing it. To look elsewhere, take the head back with FACE_HOLD first.
-    //
-    // FACE_OBJECTIVE was the other aimed mode, and it is gone: a heading the engine snapped to the objective every
-    // decision was a compass held for the policy, and the trained policy collapsed onto it -- the episodes that
-    // failed pressed seven turns to an arrival's two, and in the worst of them a turn was followed by
-    // face_objective 22 times out of 27 -- and learned nothing about the ground.
-    // Every turn stays open while another is under way: choosing again replaces what is left of it, which is how a
-    // seat corrects a turn it misjudged. What that costs when it undoes a recent one is the jitter charge's to say,
-    // not the mask's -- a moving target is a good reason to turn back.
-    bool const aimed = view.FacingMode == ACTION_FACE_TARGET;
-    for (uint32 turn = 0; turn < TURN_COUNT; ++turn)
-        allowed[ACTION_TURN_FIRST + turn] = canTurn && !aimed ? 1 : 0;
-
-    // A jump is legs, so it goes with the other movement: on the ground, not already in the air, and only
-    // where the cached probe found somewhere to land. Apply checks the landing again before it commits.
-    allowed[ACTION_JUMP] = canMove && !airborne && bot
-        && view.Probe && view.Probe->CanJump ? 1 : 0;   // canMove already excludes an arc or a fall in the air
-
-    // Pitch only means something off the ground. On foot the ground decides the seat's height, so the pitches are
-    // masked rather than merely useless -- a masked action cannot be explored into. The one already chosen is masked
-    // too: choosing it again is a key already held.
-    bool const canPitch = canTurn && airborne;
-    for (uint32 pitch = 0; pitch < PITCH_COUNT; ++pitch)
-        allowed[ACTION_PITCH_FIRST + pitch] = canPitch
-            && std::fabs(PITCH_ANGLES[pitch] - view.PitchTarget) > 1e-3f ? 1 : 0;
-}
-
-void Animus::Curriculum::MoveBlock::BeforeApply(SeatView& view, SeatActionResult& result) const
-{
-    if (!view.Bot || !view.Option)
-        return;
-
-    // The end of a drop jump: the arc ran out at the launch height over the edge, and what happens next is the
-    // core's own fall with the core's own damage. Here rather than only in the travel block, which does the same
-    // for a dismount, because this block is in every stage and a drop in a pack stage must not leave the seat
-    // standing on air. Idempotent with the travel block's call: the second sees the fall spline running.
-    // A water-walking flag this block set outlives its aura on a client-controlled player (the core only clears
-    // it on a client's acknowledgement), so it comes off here when the aura has.
-    if (view.Bot->HasUnitMovementFlag(MOVEMENTFLAG_WATERWALKING) && !view.Bot->HasWaterWalkAura())
-        view.Bot->RemoveUnitMovementFlag(MOVEMENTFLAG_WATERWALKING);
-
-    // The core's falling flag, stuck on a seat that is standing on the ground (Descending): taken off here, every
-    // decision, so nothing downstream that still asks Unit::IsFalling -- the core's own movement code among them --
-    // sees a seat that landed a minute ago as still in the air.
-    if (view.Bot->IsAlive() && view.Bot->movespline->Finalized()
-        && view.Bot->HasUnitMovementFlag(MOVEMENTFLAG_FALLING | MOVEMENTFLAG_FALLING_FAR)
-        && TravelBlock::HeightAboveGround(view.Bot) <= DROP_ABOVE)
-        view.Bot->RemoveUnitMovementFlag(MOVEMENTFLAG_FALLING | MOVEMENTFLAG_FALLING_FAR);
-
-    if (view.Probe && view.Probe->JumpDropPending && view.Bot->movespline->Finalized())
-    {
-        view.Probe->JumpDropPending = false;
-        float fell = 0.0f;
-        float cost = 0.0f;
-        if (Encoding::FallToGround(view.Bot, &fell, &cost))
-        {
-            ++result.Falls;
-            result.FallYards += fell;
-            result.FallDamage += cost;
-        }
-    }
-
-    // A turn and a pitch end when they get there (StepTurn, StepPitch), not on a clock.
-    // A turn under way swings the seat on by TURN_RATE every decision until it is done. It happens before the feet
-    // are re-aimed, so a bearing walked under a turn curves rather than stepping.
-    StepTurn(view);
-    StepPitch(view);
-    Steer(view);
+    for (uint32 action = 0; action < MC::ACTION_COUNT; ++action)
+        mask[action] = MC::Allowed(action, state) ? 1 : 0;
 }
 
 void Animus::Curriculum::MoveBlock::Apply(SeatView& view, uint32 local, SeatActionResult& result) const
 {
     Player* bot = view.Bot;
-    if (!bot || !view.Option)
+    if (!bot || !view.Controls || local >= MC::ACTION_COUNT)
         return;
 
-    if (local < ACTION_HALT)
+    // One held control changed (MoveControls::Press), priced by what it takes back of a recent choice. The value
+    // already held, pressed again, is the key kept down: no press, no charge (SeatActionResult::KeyStillHeld).
+    MC::PressOutcome const pressed = MC::Press(*view.Controls, local, view.NowMs, view.Options.JitterDecayMs);
+    if (!pressed.Changed)
     {
-        uint8 const bearing = uint8(local - ACTION_BEARING_FIRST);
-        // A bearing swung round from one pressed moments ago is feet that zigzag (Actions.Jitter): counted by how
-        // far round it swings, so a quarter turn is half a reversal and a neighbouring bearing a quarter of one.
-        if (SteerMemory* steering = view.Steering)
-        {
-            if (steering->Bearing < BEARING_COUNT && steering->Bearing != bearing
-                && view.NowMs < steering->BearingMs + view.Options.JitterWindowMs)
-            {
-                uint32 const apart = (uint32(bearing) + BEARING_COUNT - steering->Bearing) % BEARING_COUNT;
-                result.BearingFlip += float(std::min(apart, BEARING_COUNT - apart)) / float(BEARING_COUNT / 2);
-            }
-            steering->Bearing = bearing;
-            steering->BearingMs = view.NowMs;
-        }
-        view.HeldBearing = bearing;
-        view.Option->Start(SeatOptionKind::MoveBearing, view.NowMs + view.Options.MoveBearingMs);
-        // Steer walks it on the next decision anyway; do it now so the seat is not still for one.
-        Steer(view);
+        result.KeyStillHeld = true;
         return;
     }
-
-    if (local == ACTION_HALT)
-    {
-        view.HeldBearing = 0xFF;
-        view.Option->Stop(SeatOptionKind::MoveBearing);
-        bot->StopMoving();
-        return;
-    }
-
-    if (local <= ACTION_FACE_HOLD)
-    {
-        view.FacingMode = uint8(local);
-        // A turn already held would otherwise keep running under a mode that overwrites it, and the turn actions
-        // are masked from here on, so nothing could stop it.
-        if (local == ACTION_FACE_TARGET)
-        {
-            view.TurnLeft = 0.0f;
-            view.Option->Stop(SeatOptionKind::MoveTurn);
-        }
-
-        // Steer settles the heading and carries it, whether the seat is walking (on the move spline) or standing
-        // still (as a turn on the spot). Choosing where to look should do something on the decision it is
-        // chosen, not on the next one the seat happens to move.
-        Steer(view);
-        return;
-    }
-
-    if (local >= ACTION_TURN_FIRST && local < ACTION_TURN_FIRST + TURN_COUNT)
-    {
-        // Left is counter-clockwise, which is the positive way round in WoW's orientation -- the same convention
-        // HeadingOf subtracts for a clockwise bearing. A policy learns whichever it is, but a scripted baseline
-        // and a reader of the traces do not.
-        float const angle = TURN_ANGLES[local - ACTION_TURN_FIRST];
-        int8 const sign = angle > 0.0f ? 1 : -1;
-
-        // A turn against one still under way, or against one chosen moments ago, is a head that twitches
-        // (Actions.Jitter). Turning about is not a reversal of anything: it is the one turn with no wrong way.
-        if (SteerMemory* steering = view.Steering)
-        {
-            bool const recent = steering->TurnSign != 0
-                && (view.TurnLeft != 0.0f || view.NowMs < steering->TurnMs + view.Options.JitterWindowMs);
-            if (recent && sign != steering->TurnSign && std::fabs(angle) < float(M_PI) - 0.01f)
-                ++result.TurnReversals;
-            steering->TurnSign = sign;
-            steering->TurnMs = view.NowMs;
-        }
-
-        // Replaces what is left of a turn already under way: the seat turns this far from where it faces now.
-        view.TurnLeft = angle;
-        uint32 const steps = uint32(std::ceil(std::fabs(angle) / TURN_RATE - 1e-3f));
-        view.Option->Start(SeatOptionKind::MoveTurn, view.NowMs + uint64(steps) * view.Options.MoveTurnMs);
-        // Turn now rather than a decision from now, so the choice does something on the decision it is made.
-        // Only the turn: re-running the whole of BeforeApply would step it a second time in the same 250 ms.
-        StepTurn(view);
-        Steer(view);
-        return;
-    }
-
-    if (local >= ACTION_PITCH_FIRST && local < ACTION_PITCH_FIRST + PITCH_COUNT)
-    {
-        float const target = PITCH_ANGLES[local - ACTION_PITCH_FIRST];
-        if (target == view.Pitch && target == view.PitchTarget)
-            return;
-
-        // Which way this tilts the head from where it is now; a pitch against one chosen moments ago, or still
-        // under way, is a seat bobbing up and down (Actions.Jitter), as a turn back is one twitching side to side.
-        int8 const sign = target > view.Pitch ? 1 : target < view.Pitch ? -1 : 0;
-        if (SteerMemory* steering = view.Steering; steering && sign != 0)
-        {
-            bool const recent = steering->PitchSign != 0
-                && (view.PitchTarget != view.Pitch || view.NowMs < steering->PitchMs + view.Options.JitterWindowMs);
-            if (recent && sign != steering->PitchSign)
-                ++result.PitchReversals;
-            steering->PitchSign = sign;
-            steering->PitchMs = view.NowMs;
-        }
-
-        view.PitchTarget = target;
-        uint32 const steps = uint32(std::ceil(std::fabs(target - view.Pitch) / PITCH_RATE - 1e-3f));
-        view.Option->Start(SeatOptionKind::MovePitch,
-            view.NowMs + uint64(std::max(1u, steps)) * view.Options.MovePitchMs);
-        StepPitch(view);
-        Steer(view);
-        return;
-    }
-
-    if (local == ACTION_JUMP)
-    {
-        if (Descending(bot) || (view.Probe && view.Probe->JumpDropPending))
-            return;
-
-        // The probe's landing while it still describes where the seat stands; measured again once the seat has
-        // moved or turned since, so the press never trusts a stale yes. A press with nowhere to land is counted
-        // (jumps_refused) rather than silently doing nothing: it is the one way the mask and the press can still
-        // disagree, and the number says how often.
-        JumpAim aim;
-        GroundProbe* probe = view.Probe;
-        bool const fresh = probe && probe->Valid && bot->GetExactDist(&probe->From) < 0.5f
-            && std::fabs(std::atan2(std::sin(view.Facing - probe->Facing), std::cos(view.Facing - probe->Facing)))
-                < 0.05f;
-        if (fresh && probe->CanJump)
-        {
-            aim.Landing = probe->JumpLanding;
-            aim.Drop = probe->JumpDrop;
-            aim.Ok = true;
-        }
-        else if (Map* map = bot->GetMap())
-            aim = JumpLandingTest(map, map->GetMapCollisionData().GetMMapData().GetNavMeshQuery(), bot,
-                view.Facing, view.JumpDropSearch);
-
-        if (!aim.Ok)
-        {
-            ++result.JumpsRefused;
-            return;
-        }
-
-        // The feet stop doing whatever they were doing: a jump is the whole move for as long as it lasts, and
-        // the clock that says so is what keeps the next decision from pressing a step and cancelling the arc.
-        // Over a drop the arc ends at the launch height above the edge and the fall does the rest
-        // (BeforeApply, Encoding::FallToGround): a spline aimed thirty yards down would glide there at run
-        // speed and never call HandleFall, so the damage would be nothing whatever the height. The clock is a
-        // floor for a drop -- computeFallTime for the plain fall, and Slow Fall is slower -- and BeforeApply ends
-        // the drop on the spline, not on the clock.
-        bool const dropping = aim.Drop > DROP_ABOVE;
-        float const landZ = dropping ? bot->GetPositionZ() : aim.Landing.GetPositionZ();
-        view.HeldBearing = 0xFF;
-        view.Option->Stop(SeatOptionKind::MoveBearing);
-        if (probe)
-        {
-            probe->JumpUntilMs = view.NowMs + JumpFlightMs()
-                + (dropping ? uint64(1000.0f * Movement::computeFallTime(aim.Drop, false)) : 0);
-            probe->JumpDropPending = dropping;
-        }
-        Encoding::JumpTo(bot, aim.Landing.GetPositionX(), aim.Landing.GetPositionY(), landZ,
-            std::max(1.0f, bot->GetSpeed(MOVE_RUN)), JUMP_SPEED_Z, &view.Facing);
-        ++result.Jumps;
-        result.JumpDrop = std::max(result.JumpDrop, aim.Drop);
-        result.JumpFeatherFall = bot->HasAuraType(SPELL_AURA_FEATHER_FALL) || bot->HasAuraType(SPELL_AURA_HOVER);
-    }
+    result.ControlChanged = true;
+    result.JitterWeight += pressed.JitterWeight;
+    result.BearingFlip += pressed.FeetFlip;
+    result.TurnReversals += pressed.TurnReversals;
+    result.PitchReversals += pressed.PitchReversals;
+    result.Weaves += pressed.Weaves;
+    result.EffortWeight = pressed.Effort;
 }

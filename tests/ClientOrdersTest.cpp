@@ -20,8 +20,8 @@
 // its GTests run), checked here against the stock core the realm runs: the module has no test target and a stock core
 // builds none for it, so this is a standalone program (outside src/, never built into the server):
 //
-//     g++ -std=c++20 -O1 -Wall -Wextra -pthread -I animus-lib/src/runtime/Movement tests/ClientOrdersTest.cpp \
-//         -o /tmp/client_orders_test && /tmp/client_orders_test
+//     g++ -std=c++20 -O1 -Wall -Wextra -pthread -I animus-lib/src/runtime/Movement -o /tmp/client_orders_test
+//         tests/ClientOrdersTest.cpp && /tmp/client_orders_test
 //
 // Packets are built byte for byte as the stock core writes them (the functions named beside each), and the flags a
 // client acknowledges with are checked against the stock core's ReadMovementInfo rules (StockStrips, copied from

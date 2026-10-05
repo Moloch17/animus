@@ -17,6 +17,7 @@
  */
 
 #include "CrowdBlock.h"
+#include "MoveSpline.h"
 #include "Creature.h"
 #include "DBCStores.h"
 #include "GameObject.h"
@@ -26,16 +27,12 @@
 #include "WorldActions.h"
 #include "SeatView.h"
 #include "EncoderSupport.h"
-#include "MotionMaster.h"
 #include <boost/json/object.hpp>
 #include <algorithm>
 #include <cmath>
 
 namespace
 {
-    constexpr uint32 ADVANCE_POINT_ID = 31;
-    constexpr uint32 APPROACH_OBJECT_POINT_ID = 32;
-    constexpr float ARRIVED_YARDS = 3.0f;
 
 }
 
@@ -64,7 +61,7 @@ void Animus::Curriculum::CrowdBlock::Observe(SeatView const& view, float* obs, u
         float const angle = bot->GetRelativeAngle(tank);
         obs[OBS_TANK_SIN] = std::sin(angle);
         obs[OBS_TANK_COS] = std::cos(angle);
-        for (uint32 slot = 0; slot < view.EnemyCount && slot < PACK_SLOTS; ++slot)
+        for (uint32 slot = 0; slot < view.EnemyCount && slot < NAMED_ENEMY_SLOTS; ++slot)
             if (view.Enemies[slot] && view.Enemies[slot] == tank->GetVictim())
                 obs[OBS_TANK_TARGET_FIRST + slot] = 1.0f;
     }
@@ -79,14 +76,9 @@ void Animus::Curriculum::CrowdBlock::Observe(SeatView const& view, float* obs, u
         obs[OBS_OBJECT_DOOR] = object->GetGoType() == GAMEOBJECT_TYPE_DOOR ? 1.0f : 0.0f;
         if (mask && bot->IsAlive() && !bot->IsInCombat() && CanUse(bot, object))
         {
-            bool const inReach = bot->IsWithinDistInMap(object, WorldActions::INTERACT_YARDS);
-            mask[ACTION_USE_OBJECT] = inReach ? 1 : 0;
-            mask[ACTION_APPROACH_OBJECT] = inReach ? 0 : 1;
+            mask[ACTION_USE_OBJECT] = bot->IsWithinDistInMap(object, WorldActions::INTERACT_YARDS) ? 1 : 0;
         }
     }
-    if (mask && bot->IsAlive() && view.HasObjective && bot->GetExactDist(&view.Objective) > ARRIVED_YARDS
-        && !bot->HasUnitState(Encoding::IMMOBILE_STATES))
-        mask[ACTION_ADVANCE] = 1;
 
     obs[OBS_PRESENT] = 1.0f;
     obs[OBS_ON_PARTY] = std::min(2.0f, float(crowd.OnParty) / 8.0f);
@@ -171,31 +163,9 @@ void Animus::Curriculum::CrowdBlock::Apply(SeatView& view, uint32 local, SeatAct
     Player* bot = view.Bot;
     if (!bot || !bot->IsAlive())
         return;
-    if (local == ACTION_ADVANCE)
-    {
-        // Along the dungeon's field route a few yards at a time, straight: it is ground the seat can walk, where the
-        // server's navmesh may not join it (a drop into a cavern). Off the route, the server's path.
-        if (view.Crowd.HasStep)
-        {
-            bot->GetMotionMaster()->Clear();
-            bot->GetMotionMaster()->MovePoint(ADVANCE_POINT_ID, view.Crowd.Step.GetPositionX(),
-                view.Crowd.Step.GetPositionY(), view.Crowd.Step.GetPositionZ(), FORCED_MOVEMENT_NONE, 0.0f, 0.0f,
-                false);
-        }
-        else if (view.HasObjective)
-            Encoding::MoveTo(bot, ADVANCE_POINT_ID, view.Objective.GetPositionX(), view.Objective.GetPositionY(),
-                view.Objective.GetPositionZ());
-        return;
-    }
     GameObject* object = view.Crowd.Object;
     if (bot->IsInCombat() || !object || !object->IsInMap(bot))
         return;
-    if (local == ACTION_APPROACH_OBJECT)
-    {
-        Encoding::MoveTo(bot, APPROACH_OBJECT_POINT_ID, object->GetPositionX(), object->GetPositionY(),
-            object->GetPositionZ());
-        return;
-    }
     if (local != ACTION_USE_OBJECT || !bot->IsWithinDistInMap(object, WorldActions::INTERACT_YARDS)
         || !CanUse(bot, object))
         return;
@@ -229,8 +199,6 @@ std::string Animus::Curriculum::CrowdBlock::ActionName(Layout const& /*layout*/,
     switch (local)
     {
         case ACTION_USE_OBJECT:         return "use_object";
-        case ACTION_ADVANCE:            return "advance";
-        case ACTION_APPROACH_OBJECT:    return "approach_object";
         default:                        return {};
     }
 }

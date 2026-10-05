@@ -19,6 +19,8 @@
 #ifndef ANIMUS_LIB_CURRICULUM_SEAT_VIEW_H
 #define ANIMUS_LIB_CURRICULUM_SEAT_VIEW_H
 
+#include "RouteShortcut.h"
+#include "MoveControls.h"
 #include "Aptitude.h"
 #include "Block.h"
 #include "ClassProfile.h"
@@ -66,6 +68,11 @@ namespace Animus::Curriculum
         /// walks, straight, where the server's navmesh does not join the way (a drop into a cavern).
         bool HasStep = false;
         Position Step;
+        /// The run an advance walks (movement-smooth A8): the route's corners about 18 yards on (Step the first), or
+        /// the detour's points back to it.
+        std::array<Position, 6> Path{};
+        uint32 PathPoints = 0;
+        bool AtDoor = false;                        // the run was cut at a closed door: nothing walks through it
     };
 
     /// The world outside a fight, as the life encounters read it for the WorldBlock (or the live module's life
@@ -126,6 +133,10 @@ namespace Animus::Curriculum
         bool HasEnder = false;
         Position EnderAt;
         std::array<JournalPlace, JOURNAL_PLACES> Places{};
+        /// A dungeon's way on in Places and the assignment (InstanceEncounter::View: the next packs, the next route
+        /// point, the tank) with no journal behind them: the goal block reads the places and the assignment, and
+        /// nothing else of the world view is live (Active stays false, so no world action changes).
+        bool RoutePlaces = false;
         uint8 ChainIndex = 0;                       // quests of the chain turned in
         uint8 ChainLength = 0;
         bool HasAssignment = false;                 // the area the coordinator gave the seat's group
@@ -135,45 +146,20 @@ namespace Animus::Curriculum
     /// One bot's situation at a decision: what the blocks cannot read from the world themselves. The scenario fills
     /// it; each part is only used by the blocks that need it.
     /// What a durative action ("option") the seat started is doing. One press stands for many decisions -- resting
-    /// until it is ready to fight, holding an interrupt for the target's next cast, walking a bearing -- which is
-    /// how a plan longer than a decision is expressed at all: 1800 decisions of a 450 s episode are far more than
+    /// until it is ready to fight, holding an interrupt for the target's next cast -- which is how a plan longer
+    /// than a decision is expressed at all: 1800 decisions of a 450 s episode are far more than
     /// credit reaches back over. The block that owns the action starts it, the block that can act runs it every
     /// decision until its own stop condition or UntilMs, and any other action the policy takes cancels it.
     ///
-    /// The duel's keep-range and stay-on-target are gone with the pathfinder moves they issued: a position
-    /// relative to the target is the policy's to hold with a bearing now, not the engine's to run to.
+    /// No option moves the seat: the duel's keep-range and stay-on-target, the held bearing and the companion's
+    /// follow went with every engine move of a seat (player-controller C3, C9). Its feet are the move block's keys.
     enum class SeatOptionKind : uint8
     {
         None = 0,
         RestUntilReady,     // eat and drink between pulls until health and mana are back
         HoldInterrupt,      // interrupt the target as soon as it casts
-        MoveBearing,        // walking a compass point of its own choosing (MoveBlock), until it chooses another
-        MoveTurn,           // turning to a chosen heading at the turn rate, while the feet do whatever they are doing
-        MovePitch,          // looking further up or down, the same way; only off the ground
-        /// Running to just behind the owner (CompanionBlock), re-aimed at where the owner is now every decision
-        /// until the seat is there and the owner has stopped, or the feet are told something else. Last on
-        /// purpose: the core block reports the clocks of every kind before it (CoreBlock's OPTION_KINDS), and a
-        /// kind added there would change every layout's observation; this one is reported by the companion block,
-        /// so only layouts that have the block change.
-        Follow,
         Count
     };
-
-    /// A positioning option owns the feet: the held bearing, or the companion's follow. Only the seat moving its feet
-    /// another way takes over from it: a fight is spells and swings between steps, and ending it on those left a
-    /// melee seat re-issuing its own movement every decision (stage1_duel 2026-09-17: the rogue pressed one every
-    /// 0.39 s while it stood in melee reach 96% of the time). Aiming does not end it either (IsAiming): a player
-    /// looks round while walking.
-    ///
-    /// **Nothing but the feet may end it.** DuelBlock::BeforeApply used to clear the positioning slot whenever
-    /// there was no living target, which was written for keep-range and became, the day the bearing joined this
-    /// list, the end of every bearing in every travel arena one decision after it was pressed (2026-09-21 to
-    /// 2026-09-23: 13,579 of 15,418 re-presses on stage1_move came exactly two decisions after the press, none
-    /// after one; the three-second hold was a one-decision hold and the "held key" was never trained on).
-    [[nodiscard]] constexpr bool IsPositioning(SeatOptionKind kind)
-    {
-        return kind == SeatOptionKind::MoveBearing || kind == SeatOptionKind::Follow;
-    }
 
     /// Holding an interrupt is a standby, not something the seat does: it waits for the target to cast while the seat
     /// keeps fighting, so every other action leaves it running. Cancelling it on any press left it lasting 0.6 s
@@ -195,20 +181,14 @@ namespace Animus::Curriculum
     /// already uses, with the triggers that matter here. A plain clock will not do, because at seven yards a
     /// second a one-second-old march is seven yards stale and the nearest cell it reports is six.
     ///
-    /// Sixteen rays rather than the eight bearings the seat can walk: a gully's mouth or a doorway sits between
-    /// two 45-degree rays as often as on one, and a seat that cannot see it cannot choose the turn that lines it
-    /// up. Ray 2 * b lies along bearing b.
+    /// Sixteen rays: a gully's mouth or a doorway sits between two 45-degree rays as often as on one, and a seat
+    /// that cannot see it cannot choose the turn that lines it up.
     struct GroundProbe
     {
         float Reach[SENSE_RAYS] = {};           // distance to the first obstruction along each ray / MARCH_MAX
         float Step[SENSE_RAYS] = {};            // the height change that stopped it, signed, / MAX_STEP
         float Shore[SENSE_RAYS] = {};           // how far dry ground runs that way / MARCH_MAX
         float Burns[SENSE_RAYS] = {};           // how near the magma or slime is, 1 at the feet, 0 for none
-        bool CanJump = false;                   // a jump along Facing had somewhere to land when measured
-        Position JumpLanding;                   // where, when it had: the ground under the end of the arc
-        float JumpDrop = 0.0f;                  // and how far below the seat that ground is (negative: a step up)
-        bool JumpDropPending = false;           // the arc has been launched over a drop; the fall is still to come
-        uint64 JumpUntilMs = 0;                 // a jump launched from here is still in the air until this clock
         float Clearance = 1.0f;                 // yards to the nearest edge of walkable space / CLEARANCE_RANGE
         float ClearanceSin = 0.0f;              // and which way is out, in the seat's frame when it was measured
         float ClearanceCos = 0.0f;
@@ -253,22 +233,6 @@ namespace Animus::Curriculum
         void Clear() { *this = MovementTrail(); }
     };
 
-    /// The seat's last turn and last bearing: which way and when, kept between decisions so the move block can tell
-    /// a steady course from a wobble (Actions.Jitter). A turn that undoes one chosen moments ago, or a bearing
-    /// swung far round from one just pressed, is the policy failing to commit -- on screen, a head that twitches and
-    /// feet that zigzag.
-    struct SteerMemory
-    {
-        uint64 TurnMs = 0;                      // the clock the last turn was chosen at
-        int8 TurnSign = 0;                      // and which way: +1 left, -1 right, 0 none yet
-        uint64 BearingMs = 0;                   // the clock the last bearing was pressed at
-        uint8 Bearing = 0xFF;                   // and which (MoveBlock::Bearing), 0xFF none yet
-        uint64 PitchMs = 0;                     // the clock the last pitch was chosen at
-        int8 PitchSign = 0;                     // and which way it tilted the head: +1 up, -1 down, 0 none yet
-
-        void Clear() { *this = SteerMemory(); }
-    };
-
     struct Hazard
     {
         float Distance = 0.0f;      // yards from the unit to its centre
@@ -282,7 +246,6 @@ namespace Animus::Curriculum
     {
         SeatOptionKind Kind = SeatOptionKind::None;
         uint64 UntilMs = 0;                         // the clock (SeatView::NowMs) it runs out at
-        uint64 AimedMs = 0;                         // a follow: the clock its run was last re-aimed at
 
         [[nodiscard]] bool Running(SeatOptionKind kind, uint64 nowMs) const
         {
@@ -290,64 +253,23 @@ namespace Animus::Curriculum
         }
     };
 
-    /// Which option a kind occupies: a seat runs one positioning option and one standby option at a time. Keeping a
-    /// caster at range and waiting for its cast are not alternatives, and with a single slot each press of one threw
-    /// the other away -- a melee seat holding an interrupt stopped staying on its target.
-    /// Aiming is not positioning. A player runs one way and looks another, and turning shares no slot with the feet
-    /// -- if it did, choosing a direction to look would cancel the direction being walked, and a strafe could not be
-    /// expressed. Yaw and pitch are separate again for the same reason a mouse moves in two axes at once.
-    [[nodiscard]] constexpr bool IsAiming(SeatOptionKind kind)
-    {
-        return kind == SeatOptionKind::MoveTurn || kind == SeatOptionKind::MovePitch;
-    }
-
+    /// The one slot an option occupies: resting and holding an interrupt are alternatives (a seat waiting out a pull
+    /// is not holding one), so a press of either replaces the other.
     enum class SeatOptionSlot : uint8
     {
-        Positioning = 0,
-        Standby,
-        Turn,
-        Pitch,
+        Standby = 0,
         Count
     };
 
-    [[nodiscard]] constexpr SeatOptionSlot SlotOf(SeatOptionKind kind)
+    [[nodiscard]] constexpr SeatOptionSlot SlotOf(SeatOptionKind /*kind*/)
     {
-        if (kind == SeatOptionKind::MoveTurn)
-            return SeatOptionSlot::Turn;
-        if (kind == SeatOptionKind::MovePitch)
-            return SeatOptionSlot::Pitch;
-
-        return IsPositioning(kind) ? SeatOptionSlot::Positioning : SeatOptionSlot::Standby;
+        return SeatOptionSlot::Standby;
     }
-
-    /// Where the owner has been, one sample a decision: the path a follow trails along (CompanionBlock), so a
-    /// companion goes through the door its owner went through rather than cutting the corner at the wall.
-    struct OwnerTrail
-    {
-        static constexpr uint32 SAMPLES = 12;       // three seconds at a decision a quarter second
-        std::array<Position, SAMPLES> At{};
-        uint32 Count = 0;
-        uint32 Next = 0;
-
-        void Add(Position const& where)
-        {
-            At[Next] = where;
-            Next = (Next + 1) % SAMPLES;
-            Count = std::min(Count + 1, SAMPLES);
-        }
-        /// The i-th newest sample (0 = the newest).
-        [[nodiscard]] Position const& Back(uint32 i) const { return At[(Next + SAMPLES - 1 - i) % SAMPLES]; }
-        void Clear() { Count = 0; Next = 0; }
-    };
 
     /// The durative actions a seat is running, one per slot.
     struct SeatOptionSet
     {
         std::array<SeatOption, std::size_t(SeatOptionSlot::Count)> Slots{};
-        OwnerTrail Trail;
-        /// A follow: since when the owner has stood still (0 while it moves). The run settles only once the owner
-        /// has stood a moment, so an owner pausing between steps does not end it and make the seat start again.
-        uint64 OwnerStillSinceMs = 0;
 
         [[nodiscard]] SeatOption& Of(SeatOptionKind kind) { return Slots[std::size_t(SlotOf(kind))]; }
         [[nodiscard]] SeatOption const& Of(SeatOptionKind kind) const { return Slots[std::size_t(SlotOf(kind))]; }
@@ -363,12 +285,7 @@ namespace Animus::Curriculum
 
         void Start(SeatOptionKind kind, uint64 untilMs) { Of(kind) = SeatOption{ kind, untilMs }; }
         void Stop(SeatOptionKind kind) { if (Of(kind).Kind == kind) Of(kind) = SeatOption(); }
-        void Clear()
-        {
-            Slots = {};
-            Trail.Clear();
-            OwnerStillSinceMs = 0;
-        }
+        void Clear() { Slots = {}; }
     };
 
     struct SeatView
@@ -401,7 +318,6 @@ namespace Animus::Curriculum
         SeatOptionSet* Option = nullptr;
         /// How long each durative action may run (CurriculumTuning::OptionTuning).
         CurriculumTuning::OptionTuning Options;
-        float JumpDropSearch = 200.0f;      // Actions.JumpDropSearch: how deep a landing is looked for
         /// What the actions aim at: the opponent, the selected enemy. May be null (between pulls).
         Unit* Target = nullptr;
         /// The target when the bot can neither see nor detect it (stealth, invisibility). Target is null then, so no
@@ -420,44 +336,19 @@ namespace Animus::Curriculum
         uint8 Race = 0;
         uint8 Spec = 0;
         Aptitude Apt;                               // what this character can do (SeatState::Apt)
-        /// The compass point the seat is walking (MoveBlock::Bearing), or BEARING_COUNT for none, and how it is
-        /// holding its head while it does (MoveBlock::ACTION_FACE_*). Feet and eyes are chosen apart, which is what
-        /// lets a seat strafe or back away without turning round.
-        uint8 HeldBearing = 0xFF;
-        uint8 FacingMode = 0xFF;
-        /// **Where the seat believes it is looking**, and the frame every bearing is measured off.
-        ///
-        /// Not bot->GetOrientation(), which is not the seat's to own: a spline writes the direction of travel
-        /// onto it every tick, and a knockback, a fall or another block's move overwrite it outright. Steering
-        /// off it meant the frame moved under the seat between one decision and the next, so a held bearing
-        /// rotated 45 degrees a decision and the seat spiralled instead of walking a line. This is the policy's
-        /// own heading: the spline is told to hold it, so the two normally agree, but when they disagree this is
-        /// the one that decides where "forward" is.
+        /// **Where the seat is looking**: the frame every bearing it observes is measured off. The controlled body's
+        /// yaw (Movement::BodyState::Yaw) once the controller steps it; seeded from the bot at an episode's start.
         float Facing = 0.0f;
         /// The seat's own ray march, borrowed rather than copied: Observe is const, but the march it reads is
         /// refreshed in place, exactly as the hazard search is.
         GroundProbe* Probe = nullptr;
         /// Where it has been, the same way: sampled in place by the move block once a second.
         MovementTrail* Trail = nullptr;
-        /// How much of a chosen turn is still to come, in radians: positive is left (orientation runs
-        /// counter-clockwise, so left is the positive way round), 0 not turning. A turn is chosen whole
-        /// (MoveBlock::ACTION_TURN_FIRST) and carried out at MoveBlock::TURN_RATE a decision, so a quarter turn
-        /// is one decision's choice rather than six held taps each able to overshoot.
-        float TurnLeft = 0.0f;
-        /// The head already moved TURN_RATE this decision (MoveBlock's StepTurn), so a turn chosen on the same
-        /// decision waits for the next: no seat turns 90 degrees in 250 ms by changing its mind. Per decision,
-        /// never carried.
-        bool TurnStepped = false;
-        /// The last turn and bearing, for the jitter charge (SteerMemory). Borrowed like the probe; null for a
-        /// view without one, which charges nothing.
-        SteerMemory* Steering = nullptr;
-        /// The pitch the seat has chosen (MoveBlock::PITCH_ANGLES) and the one it has reached, in radians above (+)
-        /// or below (-) level. Two fields because they are two things: where it was told to look, and where it is
-        /// looking on the way there (MoveBlock::PITCH_RATE a decision).
-        float PitchTarget = 0.0f;
-        float Pitch = 0.0f;
-        /// The head already tilted PITCH_RATE this decision, as TurnStepped. Per decision, never carried.
-        bool PitchStepped = false;
+        /// **The keys and mouse it holds** (MoveControls::SeatControls, MoveBlock), and the body the player
+        /// controller moves with them (Movement::BodyState). Borrowed like the probe; null for a view without them,
+        /// which holds nothing and moves nowhere.
+        MoveControls::SeatControls* Controls = nullptr;
+        Movement::BodyState* Body = nullptr;
         float SubmergedTime = 0.0f;                 // seconds its head has been under, 0 while it is up
         /// How much of its breath the seat has spent, 0 to 1 and past it while drowning: the core's own timer
         /// (WaterBreath.Timer, 180 s by default), run up under water and back down ten times as fast above it. 0
@@ -470,6 +361,10 @@ namespace Animus::Curriculum
         float EpisodeTime = 0.0f;                   // time into the episode / EPISODE_TIME_SCALE_MS, clamped
         SeatMemory const* Memory = nullptr;         // what the seat has been doing; null: none (features at rest)
         uint64 NowMs = 0;                           // the clock Memory was kept with
+        uint32 DecisionMs = 250;                    // how long a decision lasts (the scenario's decision clock)
+        /// The closed doors near a dungeon wing's party (InstanceEncounter's EnvInstance::ClosedDoors); null
+        /// elsewhere. Steer's runs stop at one, as the advance's do: a spline walks through anything.
+        std::vector<RouteShortcut::Door> const* ClosedDoors = nullptr;
 
         // Duel: time in combat, what the bot brought (potions, bandages, stones), whether it may resurrect itself, and
         // a hunter's beasts on offer.
@@ -690,33 +585,30 @@ namespace Animus::Curriculum
         uint32 PetAbilities = 0;                    // pet bar abilities the pet started
         uint32 PetOrders = 0;                       // pet stances, follow and stay, and sending the pet in
         PetOrder PetOrderGiven = PetOrder::None;    // which of them, when one was given
-        /// The feet leaving the ground (MoveBlock): jumps launched, jumps pressed with nowhere to land, how far
-        /// below the seat the landing was, whether a feather-fall aura was on at the launch; and the falls that
-        /// followed (Encoding::FallToGround), how far and what they cost in health.
-        uint32 Jumps = 0;
-        uint32 JumpsRefused = 0;
-        float JumpDrop = 0.0f;
-        bool JumpFeatherFall = false;
-        uint32 Falls = 0;
-        float FallYards = 0.0f;
-        float FallDamage = 0.0f;                    // fraction of maximum health
-        /// Steering that failed to commit (MoveBlock, Actions.Jitter): a turn chosen against one chosen within
-        /// JitterWindowMs, and a bearing pressed within it that swings the feet round from the last one -- as the
-        /// share of a half turn it swings (a reversal is 1, a quarter turn 0.5).
+        /// Steering that failed to commit (MoveBlock, Actions.Jitter, MoveControls::Press): a turn or pitch rate, or
+        /// a climb, against the last one within 1500 ms (MovePrice::COUNT_MS), the feet reversed within it (forward to
+        /// back, left to right: BearingFlip, in half turns), and any of them 1.5 to 4 s on (Weaves).
         uint32 TurnReversals = 0;
         float BearingFlip = 0.0f;
-        uint32 PitchReversals = 0;                  // a pitch chosen against one chosen within the window
-        /// A follow (CompanionBlock): runs started or re-aimed this decision, and the yards to the owner while one
-        /// ran (negative: none ran).
-        uint32 FollowAims = 0;
-        uint32 FollowStarts = 0;        // ... of which a follow begun anew (none was running)
-        float FollowDistance = -1.0f;
+        uint32 PitchReversals = 0;
+        uint32 Weaves = 0;
+        /// ... and what they cost, in quarter turns undone weighed by how recent the choice undone was
+        /// (MovePrice::Undone, Recency): the Actions.Jitter charge.
+        float JitterWeight = 0.0f;
+        /// The share of a full press this press costs in Actions.Effort: a steering press by its angle
+        /// (MovePrice::EffortOf), everything else 1.
+        float EffortWeight = 1.0f;
         /// What a spell press was aimed at, for judging it against the seat's goal (StageScenario::JudgePress):
         /// the unit it went to (the enemy for a harmful spell, the friend or the seat for a helpful one), whether
         /// it was harmful, and whether it came from the tactical list (crowd control, interrupts, taunts).
         ObjectGuid CastAt;
         bool CastHarmful = false;
         bool CastTactical = false;
+        bool CastTaunt = false;                     // a taunt (Taunt, Growl, Hand of Reckoning, Dark Command, ...)
+        bool CastTankMode = false;                  // a tank's stance, form, aura or presence
+        uint32 RefusedCast = 0;                     // a press that did not start: the core's SpellCastResult
+        bool KeyStillHeld = false;                  // the control already held, pressed again: not a press
+        bool ControlChanged = false;                // a move press that changed a held control (MoveBlock)
         bool CastTrap = false;                      // a trap laid (a trap object summoned, or a missile that drops one)
         bool CastDispel = false;
         bool CastReachesFocus = false;              // an area spell with no unit: the focus was inside its radius

@@ -43,7 +43,13 @@ namespace
     /// 7: the jump can drop off a ledge, and the move block says how far the landing is below the seat
     /// (OBS_JUMP_DROP) and whether it is in the air (OBS_FALLING); Slow Fall and Levitate joined the mage's and
     /// the priest's catalogs. The move block changed shape for every layout, the core block for those two.
-    constexpr uint32 MANIFEST_FORMAT = 7;
+    /// 8: the move block is a player's keys and mouse driving the player controller (move revision 2, 25 actions;
+    /// player-controller C3), and the core block lost the move options' three clocks (core revision 1). Every layout
+    /// changed shape: a runtime holding a format 7 model must refuse it, not read it through this layout.
+    /// 9: the seats' engine moves are gone (player-controller C9): the crowd block's advance and approach, the party
+    /// block's follow-the-tank, the companion block's follow and its clock, the death block's corpse run (each block at
+    /// revision 1). Layouts with any of those blocks changed shape.
+    constexpr uint32 MANIFEST_FORMAT = 9;
 
     /// The catalog's long buffs, grouped by what a unit can have at once: chains joined when any of their ranks share
     /// a spell group (spell_group, whose stack rules keep one of them per target) or an exclusive kind (a seal, an
@@ -128,23 +134,6 @@ std::string_view Animus::Curriculum::GoalName(SeatGoal goal)
         case SeatGoal::Count:    break;
     }
 
-    return "unknown";
-}
-
-std::string_view Animus::Curriculum::OrderKindName(OrderKind kind)
-{
-    switch (kind)
-    {
-        case OrderKind::None:      return "none";
-        case OrderKind::Focus:     return "focus";
-        case OrderKind::Tank:      return "tank";
-        case OrderKind::Interrupt: return "interrupt";
-        case OrderKind::Control:   return "control";
-        case OrderKind::Heal:      return "heal";
-        case OrderKind::GoTo:      return "go_to";
-        case OrderKind::Objective: return "objective";
-        case OrderKind::Count:     break;
-    }
     return "unknown";
 }
 
@@ -425,6 +414,8 @@ std::string Animus::Curriculum::Layout::Manifest() const
         block["name"] = BlockName(id);
         block["obs"] = Span(slice.ObsFirst, slice.ObsCount);
         block["actions"] = Span(slice.ActionFirst, slice.ActionCount);
+        if (uint32 const revision = GetBlock(id).Revision())
+            block["revision"] = revision;
         GetBlock(id).DescribeManifest(*this, block);
     }
 

@@ -86,6 +86,15 @@ namespace
     }
 }
 
+// The observation's segments do not overlap (every block with hand-written offsets has these).
+static_assert(uint32(Animus::Curriculum::SupportBlock::OBS_SELECTED_FIRST) + Animus::Curriculum::FRIEND_SLOTS
+    <= uint32(Animus::Curriculum::SupportBlock::OBS_RANK_TIER_FIRST));
+static_assert(uint32(Animus::Curriculum::SupportBlock::OBS_RANK_TIER_FIRST) + Animus::Curriculum::RANK_TIERS
+    <= uint32(Animus::Curriculum::SupportBlock::OBS_GLOBAL_COUNT));
+static_assert(uint32(Animus::Curriculum::SupportBlock::FRIEND_APTITUDE_FIRST)
+    + uint32(Animus::Curriculum::Aptitude::BRIEF_COUNT)
+    <= uint32(Animus::Curriculum::SupportBlock::FRIEND_OWN_HEAL_OVER_TIME));
+
 Animus::Curriculum::BlockSize Animus::Curriculum::SupportBlock::Size(Layout const& /*layout*/) const
 {
     return { OBS_GLOBAL_COUNT + FRIEND_SLOTS * FRIEND_FEATURES, ACTION_COUNT };
@@ -144,7 +153,7 @@ void Animus::Curriculum::SupportBlock::Observe(SeatView const& view, float* obs,
                 ++attackers;
         if (view.Opponent && view.Opponent->IsAlive() && view.Opponent->GetVictim() == other && !view.EnemyCount)
             ++attackers;
-        features[FRIEND_ATTACKERS] = std::min(1.0f, float(attackers) / float(PACK_SLOTS));
+        features[FRIEND_ATTACKERS] = std::min(1.0f, float(attackers) / ENEMY_COUNT_SCALE);
 
         if (std::optional<Aptitude> aptitude = AptitudeOf(view, slot))
             aptitude->WriteBrief(features + FRIEND_APTITUDE_FIRST);

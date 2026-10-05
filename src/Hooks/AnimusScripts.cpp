@@ -181,7 +181,14 @@ namespace
             { PLAYERHOOK_ON_LOGOUT, PLAYERHOOK_CAN_PLAYER_USE_PRIVATE_CHAT, PLAYERHOOK_ON_DELETE,
                 PLAYERHOOK_CAN_SEND_MAIL, PLAYERHOOK_CAN_GIVE_MAIL_REWARD_AT_GIVE_LEVEL,
                 PLAYERHOOK_ON_BEFORE_ACHI_COMPLETE, PLAYERHOOK_ON_PLAYER_QUEST_ACCEPT,
-                PLAYERHOOK_ON_QUEST_ABANDON, PLAYERHOOK_ON_MAP_CHANGED }) { }
+                PLAYERHOOK_ON_QUEST_ABANDON, PLAYERHOOK_ON_MAP_CHANGED, PLAYERHOOK_ON_AFTER_UPDATE }) { }
+
+        /// Every player's update, on its map's thread: a companion's client steps its body and reports it, as a real
+        /// client's movement is handled on that thread (CompanionClient). Any other player returns at once.
+        void OnPlayerAfterUpdate(Player* player, uint32 diff) override
+        {
+            Animus::Client::Clients::OnPlayerAfterUpdate(player, diff);
+        }
 
         void OnPlayerLogout(Player* player) override { sAnimusMod->OnPlayerLogout(player); }
 

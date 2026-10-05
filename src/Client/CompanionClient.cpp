@@ -18,28 +18,86 @@
 
 #include "CompanionClient.h"
 #include "Log.h"
+#include "MapWorldQuery.h"
 #include "MoveSpline.h"
 #include "Player.h"
 #include "Timer.h"
+#include "UnitBody.h"
 #include "WorldPacket.h"
 #include "WorldSession.h"
+#include <atomic>
 #include <shared_mutex>
 #include <unordered_map>
 
 namespace
 {
     /// The client's clock starts this far ahead of the server's (Clock): the time-sync delta is then about -1000 ms,
-    /// never within the 25 ms the core needs to replace its "never synced" 0.
+    /// never within the 25 ms the core needs to replace its "never synced" 0 (ComputeNewClockDelta).
     constexpr uint32 CLOCK_LEAD_MS = 1000;
 
     std::shared_mutex RegistryMutex;
     std::unordered_map<WorldSession*, std::shared_ptr<Animus::Client::CompanionClient>> Registry;
+    /// How many clients are registered: the per-player tick hook returns at once while there are none.
+    std::atomic<uint32> Registered{ 0 };
 
-    bool SamePosition(Position const& a, Position const& b)
+    enum class AckHandler : uint8
     {
-        // Floats written and read back through a packet are bit-exact, so anything but equality is a change.
-        return a.GetPositionX() == b.GetPositionX() && a.GetPositionY() == b.GetPositionY()
-            && a.GetPositionZ() == b.GetPositionZ() && a.GetOrientation() == b.GetOrientation();
+        None,               // a movement packet: HandleMovementOpcodes
+        Root,               // HandleMoveRootAck
+        Speed,              // HandleForceSpeedChangeAck
+        Knockback,          // HandleMoveKnockBackAck
+        Flag,               // HandleMoveFlagChangeOpcode, with "is applied"
+        Gravity,            // HandleMoveFlagChangeOpcode, without
+    };
+
+    AckHandler HandlerOf(uint16 opcode)
+    {
+        switch (opcode)
+        {
+            case CMSG_FORCE_MOVE_ROOT_ACK:
+            case CMSG_FORCE_MOVE_UNROOT_ACK:
+                return AckHandler::Root;
+            case CMSG_FORCE_WALK_SPEED_CHANGE_ACK:
+            case CMSG_FORCE_RUN_SPEED_CHANGE_ACK:
+            case CMSG_FORCE_RUN_BACK_SPEED_CHANGE_ACK:
+            case CMSG_FORCE_SWIM_SPEED_CHANGE_ACK:
+            case CMSG_FORCE_SWIM_BACK_SPEED_CHANGE_ACK:
+            case CMSG_FORCE_TURN_RATE_CHANGE_ACK:
+            case CMSG_FORCE_FLIGHT_SPEED_CHANGE_ACK:
+            case CMSG_FORCE_FLIGHT_BACK_SPEED_CHANGE_ACK:
+            case CMSG_FORCE_PITCH_RATE_CHANGE_ACK:
+                return AckHandler::Speed;
+            case CMSG_MOVE_KNOCK_BACK_ACK:
+                return AckHandler::Knockback;
+            case CMSG_MOVE_HOVER_ACK:
+            case CMSG_MOVE_FEATHER_FALL_ACK:
+            case CMSG_MOVE_WATER_WALK_ACK:
+            case CMSG_MOVE_SET_CAN_FLY_ACK:
+                return AckHandler::Flag;
+            case CMSG_MOVE_GRAVITY_DISABLE_ACK:
+            case CMSG_MOVE_GRAVITY_ENABLE_ACK:
+                return AckHandler::Gravity;
+            default:
+                return AckHandler::None;
+        }
+    }
+
+    MovementInfo InfoOf(Player const* bot, Animus::Movement::Report const& report)
+    {
+        MovementInfo info;
+        info.guid = bot->GetGUID();
+        info.flags = report.Flags;
+        info.flags2 = 0;
+        info.time = report.TimeMs;
+        info.pos.Relocate(report.X, report.Y, report.Z, report.Yaw);
+        info.transport.Reset();
+        info.pitch = report.Pitch;
+        info.fallTime = report.FallMs;
+        info.jump.zspeed = report.JumpZSpeed;
+        info.jump.sinAngle = report.JumpSin;
+        info.jump.cosAngle = report.JumpCos;
+        info.jump.xyspeed = report.JumpXYSpeed;
+        return info;
     }
 }
 
@@ -86,26 +144,8 @@ void Animus::Client::CompanionClient::RequestTimeSync(Player* bot)
     bot->GetSession()->SendTimeSync();
 }
 
-std::vector<Animus::Client::Order> Animus::Client::CompanionClient::TakeOrders(Player* bot)
-{
-    _inbox.Drain(_taken);
-    std::vector<Order> orders;
-    orders.reserve(_taken.size());
-    for (Order const& order : _taken)
-    {
-        if (order.Kind == OrderKind::TimeSync)
-            AnswerTimeSync(bot, order);
-        else
-            orders.push_back(order);
-    }
-    return orders;
-}
-
 void Animus::Client::CompanionClient::AnswerTimeSync(Player* bot, Order const& order)
 {
-    if (!bot || !bot->GetSession())
-        return;
-
     // CMSG_TIME_SYNC_RESP: the request's counter and the client's clock when it handled it. The handler measures the
     // round trip from the packet's receive time (WorldPacket::GetReceivedTime), so the answer is stamped as received
     // the moment the request arrived, which is when a client on a perfect link would have answered it.
@@ -116,24 +156,81 @@ void Animus::Client::CompanionClient::AnswerTimeSync(Player* bot, Order const& o
     bot->GetSession()->HandleTimeSyncResp(received);
 }
 
-void Animus::Client::CompanionClient::AppendMovement(WorldSession* session, WorldPacket& packet, MovementInfo& info)
+void Animus::Client::CompanionClient::Reset()
+{
+    _mover = Movement::Client();
+    Controls.Clear();
+}
+
+void Animus::Client::CompanionClient::Tick(Player* bot, uint32 diff)
+{
+    if (!bot || !bot->IsInWorld() || !bot->FindMap() || !bot->GetSession())
+        return;
+
+    RealmLink link(bot, *this);
+    Movement::MapWorldQuery const world(bot->GetMap(), bot->GetPhaseMask());
+    Movement::Body const shape = Movement::ShapeOf(bot);
+    uint32 const nowMs = _clock.Now();
+
+    // Dead, a body or a ghost: nothing is held and nothing moves. A ghost's run back to its corpse is a skill the
+    // companions will learn in a later stage (movement-curriculum §6); until then there is no corpse run at all.
+    // The orders still get their answers, as a client's do.
+    bool const alive = bot->IsAlive();
+    if (!alive)
+        Controls.Clear();
+
+    if (!_mover.Started())
+        _mover.Start(link, shape, world, nowMs);
+
+    _inbox.Drain(_taken);
+    for (Order const& order : _taken)
+    {
+        if (order.Kind == OrderKind::TimeSync)
+            AnswerTimeSync(bot, order);
+        else
+            _mover.Order(order, link, shape, world, nowMs);
+    }
+
+    if (alive)
+        _mover.Tick(Controls.Held, Movement::SpeedsOf(bot), shape, world, diff, nowMs, link);
+}
+
+void Animus::Client::CompanionClient::CountRefusal(Player* bot, Refusal cause, uint16 opcode, float x, float y,
+    float z)
+{
+    ++_refused[std::size_t(cause)];
+    if (cause == Refusal::InvalidPosition)
+        LOG_ERROR("module.animus", "Companion {} reported an invalid position ({}, {}, {}) with opcode {:#x}",
+            bot->GetName(), x, y, z, opcode);
+    else if (!_logged[std::size_t(cause)])
+    {
+        _logged[std::size_t(cause)] = true;
+        LOG_INFO("module.animus", "Companion {}: the server refused a movement report ({}, opcode {:#x}); further "
+            "refusals for this reason are counted only", bot->GetName(), RefusalName(cause), opcode);
+    }
+}
+
+void Animus::Client::RealmLink::AppendMovement(WorldPacket& packet, Movement::Report const& report) const
 {
     // The stock serializer writes the packed guid first; the acks put their counter between the two, so the guid's
     // bytes are skipped here and the rest appended as it wrote it.
+    MovementInfo info = InfoOf(_bot, report);
     WorldPacket whole(packet.GetOpcode(), 64);
-    session->WriteMovementInfo(&whole, &info);
+    _bot->GetSession()->WriteMovementInfo(&whole, &info);
     std::size_t const guidBytes = info.guid.WriteAsPacked().size();
     if (whole.size() > guidBytes)
         packet.append(whole.contents() + guidBytes, whole.size() - guidBytes);
 }
 
-void Animus::Client::CompanionClient::Ack(Player* bot, Order const& order, MovementInfo info)
+bool Animus::Client::RealmLink::Apply(Movement::Report const& report)
 {
-    if (!bot || !bot->GetSession() || order.Kind == OrderKind::TimeSync)
-        return;
-
+    Player* bot = _bot;
+    if (!bot || !bot->IsInWorld() || bot->IsDuringRemoveFromWorld() || !bot->GetSession())
+        return false;
     WorldSession* session = bot->GetSession();
-    if (order.Kind == OrderKind::Teleport)
+    uint16 const opcode = report.Opcode;
+
+    if (opcode == MSG_MOVE_TELEPORT_ACK)
     {
         // A near teleport waits for the same opcode back (HandleMoveTeleportAck: guid, counter, time). The module's
         // own teleports acknowledge themselves at once (BotFactory), so by now there may be nothing waiting.
@@ -141,108 +238,88 @@ void Animus::Client::CompanionClient::Ack(Player* bot, Order const& order, Movem
         {
             WorldPacket ack(MSG_MOVE_TELEPORT_ACK, 16);
             ack << bot->GetPackGUID();
-            ack << uint32(order.Counter) << uint32(_clock.Now());
+            ack << uint32(report.Counter) << uint32(report.TimeMs);
             session->HandleMoveTeleportAck(ack);
-            ++_acks;
         }
-        return;
+        ++_client._applied;
+        return true;
     }
-    info.guid = _bot;
-    info.time = _clock.Now();
-    // A knockback is acknowledged as the fall it launches: HandleMoveKnockBackAck relays these jump fields to every
-    // watching player, and they are written only with FALLING set.
-    if (order.Kind == OrderKind::Knockback)
+
+    AckHandler const handler = HandlerOf(opcode);
+    // The unroot ack's pre-check: a stock core never holds MOVEMENTFLAG_ROOT for a client-controlled player (the
+    // client's ROOT is stripped by ReadMovementInfo), so HandleMoveRootAck returns before it reads the movement. The
+    // ack is still sent, as a client sends it; there is nothing for the server to keep.
+    bool const unrootIgnored = opcode == CMSG_FORCE_MOVE_UNROOT_ACK
+        && !bot->m_movementInfo.HasMovementFlag(MOVEMENTFLAG_ROOT);
+
+    WorldPacket packet(opcode, 80);
+    if (handler == AckHandler::None)
     {
-        info.AddMovementFlag(MOVEMENTFLAG_FALLING);
-        info.RemoveMovementFlag(MOVEMENTFLAG_ROOT);
-        info.SetFallTime(0);
-        info.jump.zspeed = order.SpeedZ;
-        info.jump.sinAngle = order.Sin;
-        info.jump.cosAngle = order.Cos;
-        info.jump.xyspeed = order.SpeedXY;
+        MovementInfo info = InfoOf(bot, report);
+        session->WriteMovementInfo(&packet, &info);
+        session->HandleMovementOpcodes(packet);
     }
-
-    // The stock ack handlers read: packed guid, the counter (the knockback ack's "unk" is the same counter), the
-    // client's movement, then the speed (speed acks) or "is applied" (flag acks other than gravity).
-    WorldPacket ack(AckOpcode(order), 80);
-    ack << info.guid.WriteAsPacked();
-    ack << uint32(order.Counter);
-    AppendMovement(session, ack, info);
-    if (order.Kind == OrderKind::Speed)
-        ack << float(order.Value);
-    else if (AckCarriesApplied(order.Kind))
-        ack << uint32(Applies(order.Kind) ? 1 : 0);
-
-    switch (order.Kind)
+    else
     {
-        case OrderKind::Root:
-        case OrderKind::Unroot:
-            session->HandleMoveRootAck(ack);
-            break;
-        case OrderKind::Speed:
-            session->HandleForceSpeedChangeAck(ack);
-            break;
-        case OrderKind::Knockback:
-            session->HandleMoveKnockBackAck(ack);
-            break;
-        default:
-            session->HandleMoveFlagChangeOpcode(ack);
-            break;
+        // The stock ack handlers read: packed guid, the counter (the knockback ack's "unk" is the same counter), the
+        // client's movement, then the speed (speed acks) or "is applied" (flag acks other than gravity).
+        packet << bot->GetPackGUID();
+        packet << uint32(report.Counter);
+        AppendMovement(packet, report);
+        switch (handler)
+        {
+            case AckHandler::Root:
+                session->HandleMoveRootAck(packet);
+                break;
+            case AckHandler::Speed:
+                packet << float(report.Speed);
+                session->HandleForceSpeedChangeAck(packet);
+                break;
+            case AckHandler::Knockback:
+                session->HandleMoveKnockBackAck(packet);
+                break;
+            case AckHandler::Flag:
+                packet << uint32(report.Applied ? 1 : 0);
+                session->HandleMoveFlagChangeOpcode(packet);
+                break;
+            default:
+                session->HandleMoveFlagChangeOpcode(packet);
+                break;
+        }
     }
-    ++_acks;
-}
 
-Animus::Client::ReportResult Animus::Client::CompanionClient::Report(Player* bot, MovementInfo info, uint16 opcode)
-{
-    ReportResult result;
-    if (!bot || !bot->GetSession())
+    if (unrootIgnored)
     {
-        result.Cause = Refusal::Other;
-        return result;
+        ++_client._applied;
+        return true;
     }
-
-    info.guid = _bot;
-    info.time = _clock.Now();
-
-    WorldPacket packet(opcode, 64);
-    bot->GetSession()->WriteMovementInfo(&packet, &info);
-    bot->GetSession()->HandleMovementOpcodes(packet);
-    ++_reports;
 
     // The post-check: what the server kept is what a player's client is credited with. Kept as sent, apart from
     // flags ReadMovementInfo strips (a flag the client may not claim), is applied; anything else is a refusal.
     MovementInfo const& kept = bot->m_movementInfo;
-    uint32 const stripped = info.flags & ~kept.flags;
-    if (SamePosition(kept.pos, info.pos) && (kept.flags | stripped) == info.flags)
+    uint32 const stripped = report.Flags & ~kept.flags;
+    bool const samePosition = kept.pos.GetPositionX() == report.X && kept.pos.GetPositionY() == report.Y
+        && kept.pos.GetPositionZ() == report.Z && kept.pos.GetOrientation() == report.Yaw;
+    if (samePosition && (kept.flags | stripped) == report.Flags)
     {
-        result.Applied = true;
-        result.Stripped = stripped;
-        return result;
+        ++_client._applied;
+        return true;
     }
 
-    result.Cause = Classify(bot, info);
-    ++_refused[std::size_t(result.Cause)];
-    if (result.Cause == Refusal::InvalidPosition)
-        LOG_ERROR("module.animus", "Companion {} reported an invalid position ({}, {}, {}, {}) with opcode {:#x}",
-            bot->GetName(), info.pos.GetPositionX(), info.pos.GetPositionY(), info.pos.GetPositionZ(),
-            info.pos.GetOrientation(), opcode);
-    else if (!_logged[std::size_t(result.Cause)])
-    {
-        _logged[std::size_t(result.Cause)] = true;
-        LOG_INFO("module.animus", "Companion {}: the server refused a movement report ({}, opcode {:#x}); further "
-            "refusals for this reason are counted only", bot->GetName(), RefusalName(result.Cause), opcode);
-    }
-    return result;
+    _client.CountRefusal(bot, Classify(report), opcode, report.X, report.Y, report.Z);
+    return false;
 }
 
-Animus::Client::Refusal Animus::Client::CompanionClient::Classify(Player* bot, MovementInfo const& sent) const
+Animus::Client::Refusal Animus::Client::RealmLink::Classify(Movement::Report const& report) const
 {
     // The handler's own reasons, in the order it tests them (HandleMovementOpcodes, then VerifyMovementInfo).
+    Player* bot = _bot;
     if (bot->IsBeingTeleported())
         return Refusal::Teleporting;
     if (static_cast<Unit*>(bot->m_mover) != bot)
         return Refusal::NotMover;
-    if (!sent.pos.IsPositionValid())
+    Position const pos(report.X, report.Y, report.Z, report.Yaw);
+    if (!pos.IsPositionValid())
         return Refusal::InvalidPosition;
     if (!bot->movespline->Finalized())
         return Refusal::Spline;
@@ -253,22 +330,50 @@ Animus::Client::Refusal Animus::Client::CompanionClient::Classify(Player* bot, M
     return Refusal::Other;
 }
 
+Animus::Movement::ServerState Animus::Client::RealmLink::State() const
+{
+    Movement::ServerState state;
+    Player const* bot = _bot;
+    if (!bot)
+    {
+        state.Imposed = true;
+        return state;
+    }
+    state.X = bot->GetPositionX();
+    state.Y = bot->GetPositionY();
+    state.Z = bot->GetPositionZ();
+    state.Yaw = bot->GetOrientation();
+    // What a client is made to yield to, read off the unit every tick: the forge's rule (PlayerLink::State) -- a root,
+    // a stun, a fear or confuse, a spline (a charge, a taxi), a teleport under way, a charm, a corpse -- and on the
+    // realm also a vehicle seat or a transport (the session moves another unit, or v1's controller does not ride).
+    state.Imposed = !bot->IsInWorld() || bot->IsBeingTeleported()
+        || bot->HasUnitState(UNIT_STATE_ROOT | UNIT_STATE_STUNNED | UNIT_STATE_CONFUSED | UNIT_STATE_FLEEING)
+        || bot->HasUnitFlag(UNIT_FLAG_DISABLE_MOVE) || !bot->movespline->Finalized() || bot->IsCharmed()
+        || (bot->isDead() && !bot->HasPlayerFlag(PLAYER_FLAGS_GHOST))
+        || static_cast<Unit const*>(bot->m_mover) != bot || bot->GetVehicle() || bot->GetTransport();
+    return state;
+}
+
 void Animus::Client::Clients::Register(WorldSession* session, std::shared_ptr<CompanionClient> client)
 {
-    if (!session)
+    if (!session || !client)
         return;
     std::unique_lock<std::shared_mutex> lock(RegistryMutex);
     Registry[session] = std::move(client);
+    Registered.store(uint32(Registry.size()), std::memory_order_relaxed);
 }
 
 void Animus::Client::Clients::Unregister(WorldSession* session)
 {
     std::unique_lock<std::shared_mutex> lock(RegistryMutex);
     Registry.erase(session);
+    Registered.store(uint32(Registry.size()), std::memory_order_relaxed);
 }
 
 std::shared_ptr<Animus::Client::CompanionClient> Animus::Client::Clients::Find(WorldSession* session)
 {
+    if (!Registered.load(std::memory_order_relaxed))
+        return nullptr;
     std::shared_lock<std::shared_mutex> lock(RegistryMutex);
     auto const found = Registry.find(session);
     return found == Registry.end() ? nullptr : found->second;
@@ -284,4 +389,12 @@ void Animus::Client::Clients::OnPacketSent(WorldSession* session, WorldPacket co
         return;
 
     client->Push(packet.GetOpcode(), packet.contents(), packet.size());
+}
+
+void Animus::Client::Clients::OnPlayerAfterUpdate(Player* player, uint32 diff)
+{
+    if (!Registered.load(std::memory_order_relaxed) || !player)
+        return;
+    if (std::shared_ptr<CompanionClient> client = Find(player->GetSession()))
+        client->Tick(player, diff);
 }

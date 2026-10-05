@@ -29,22 +29,11 @@ namespace
 {
     using namespace Animus::Curriculum;
 
-    constexpr uint32 FOLLOW_TANK_MOVE_POINT_ID = 4;
-    constexpr float FOLLOW_TANK_DISTANCE = 4.0f;
-    constexpr float FOLLOW_TANK_MIN_DISTANCE = 8.0f;
-
     bool IsAllowed(SeatView const& view, uint32 action)
     {
         Player* bot = view.Bot;
         if (!bot->IsAlive())
             return false;
-
-        if (action == PartyBlock::ACTION_FOLLOW_TANK)
-        {
-            Player* tank = view.Tank;
-            return tank && tank != bot && !bot->IsNonMeleeSpellCast(false, false, true)
-                && !bot->HasUnitState(Encoding::IMMOBILE_STATES) && bot->GetDistance(tank) > FOLLOW_TANK_MIN_DISTANCE;
-        }
 
         if (action < PartyBlock::ACTION_GUARD_FIRST)
         {
@@ -70,6 +59,18 @@ namespace
     }
 }
 
+// The observation's segments do not overlap (every block with hand-written offsets has these).
+static_assert(uint32(Animus::Curriculum::PartyBlock::MEMBER_APTITUDE_FIRST)
+    + uint32(Animus::Curriculum::Aptitude::BRIEF_COUNT) <= uint32(Animus::Curriculum::PartyBlock::MEMBER_CLASS_FIRST));
+static_assert(uint32(Animus::Curriculum::PartyBlock::MEMBER_CLASS_FIRST) + Animus::Curriculum::PLAYABLE_CLASSES.size()
+    <= uint32(Animus::Curriculum::PartyBlock::MEMBER_ATTACKERS));
+static_assert(uint32(Animus::Curriculum::PartyBlock::MEMBER_TARGET_FIRST) + Animus::Curriculum::NAMED_ENEMY_SLOTS
+    <= uint32(Animus::Curriculum::PartyBlock::MEMBER_NO_TARGET));
+static_assert(uint32(Animus::Curriculum::PartyBlock::MEMBER_SLOT_ON_FIRST) + Animus::Curriculum::NAMED_ENEMY_SLOTS
+    <= uint32(Animus::Curriculum::PartyBlock::MEMBER_GOAL_FIRST));
+static_assert(uint32(Animus::Curriculum::PartyBlock::MEMBER_GOAL_FIRST) + Animus::Curriculum::GOAL_COUNT
+    <= uint32(Animus::Curriculum::PartyBlock::MEMBER_FEATURES));
+
 Animus::Curriculum::BlockSize Animus::Curriculum::PartyBlock::Size(Layout const& layout) const
 {
     return { OBS_GLOBAL_COUNT + PARTY_MEMBERS * MEMBER_FEATURES,
@@ -92,8 +93,6 @@ std::string Animus::Curriculum::PartyBlock::ActionName(Layout const& layout, uin
             : Acore::StringFormat("spotlight_{}", member - GROUP_MEMBERS);
     };
 
-    if (local == ACTION_FOLLOW_TANK)
-        return "follow_tank";
     if (local < ACTION_GUARD_FIRST)
         return "assist_" + slotName(local - ACTION_ASSIST_FIRST);
     if (local < ACTION_REVIVE_FIRST)
@@ -146,10 +145,11 @@ void Animus::Curriculum::PartyBlock::Observe(SeatView const& view, float* obs, u
         if (int32 const kind = GoalKindOf(other.Goal); kind >= 0 && kind < int32(GOAL_COUNT))
             features[MEMBER_GOAL_FIRST + kind] = 1.0f;
 
+        // A target past the named slots is neither one of them nor none: both stay 0.
         int32 const target = Encoding::SlotOf(view, teammate->GetVictim());
-        if (target >= 0)
+        if (target >= 0 && target < int32(NAMED_ENEMY_SLOTS))
             features[MEMBER_TARGET_FIRST + target] = 1.0f;
-        else
+        else if (target < 0)
             features[MEMBER_NO_TARGET] = 1.0f;
 
         uint32 attackers = 0;
@@ -158,11 +158,12 @@ void Animus::Curriculum::PartyBlock::Observe(SeatView const& view, float* obs, u
             Unit* enemy = view.Enemies[slot];
             if (enemy && enemy->IsAlive() && enemy->GetVictim() == teammate)
             {
-                features[MEMBER_SLOT_ON_FIRST + slot] = 1.0f;
+                if (slot < NAMED_ENEMY_SLOTS)
+                    features[MEMBER_SLOT_ON_FIRST + slot] = 1.0f;
                 ++attackers;
             }
         }
-        features[MEMBER_ATTACKERS] = float(attackers) / float(PACK_SLOTS);
+        features[MEMBER_ATTACKERS] = float(attackers) / ENEMY_COUNT_SCALE;
 
         if (teammate->IsAlive())
         {
@@ -195,20 +196,6 @@ void Animus::Curriculum::PartyBlock::Apply(SeatView& view, uint32 local, SeatAct
 {
     if (!IsAllowed(view, local))
         return;
-
-    Player* bot = view.Bot;
-
-    if (local == ACTION_FOLLOW_TANK)
-    {
-        Player* tank = view.Tank;
-        float x = 0.0f;
-        float y = 0.0f;
-        float z = 0.0f;
-        tank->GetNearPoint(bot, x, y, z, bot->GetCombatReach(), FOLLOW_TANK_DISTANCE,
-            Position::NormalizeOrientation(tank->GetOrientation() + float(M_PI)));
-        Encoding::MoveTo(bot, FOLLOW_TANK_MOVE_POINT_ID, x, y, z);
-        return;
-    }
 
     if (local < ACTION_REVIVE_FIRST)
     {

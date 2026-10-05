@@ -158,6 +158,9 @@ namespace Animus
         /// A companion character that exists (created or loaded) joins the owner's party under `record`; false with
         /// `message` when it could not, the record left as it was.
         bool Adopt(Player* owner, Player* bot, CompanionRegistry::Record& record, std::string& message);
+        /// Whether `layout`'s model is one this server can play; else false with `message` saying why. No model, no
+        /// companion: nothing is made, summoned or filled without one.
+        bool HasModel(Curriculum::Layout const& layout, std::string& message);
         /// Save the party's companion and the registry's record of it, then take it out of the world.
         void SaveParty(ObjectGuid owner);
         /// The words of a race and class, checked against each other and the owner's faction.

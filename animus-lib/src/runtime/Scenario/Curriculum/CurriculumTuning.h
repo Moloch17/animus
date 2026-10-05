@@ -85,10 +85,10 @@ namespace Animus::Curriculum
             float TeammateDamageTakenProtector = 1.0f;  // tanks and healers
             float TeammateHealing = 2.0f;               // healers: effective healing, fraction of its health
             /// A healer's pay for keeping the others up (TeammateHealing, Raid.KeepUp's above-half share) while it
-            /// holds no Protect goal, as a share of the full: protecting is how healing pays. Party healers chose
-            /// Protect 2% of the time through the group stage, healing anyway on the pay a Fight goal also earned
-            /// (2026-10-02). 1 pays it whatever the goal; a seat with no goal held is paid in full.
-            float HealOffGoal = 0.25f;
+            /// holds no Protect goal, as a share of the full. 1 pays it whatever the goal: at 0.25 healers held Protect
+            /// 0.2% of the time and their healing was paid a quarter, which the overheal charge then outweighed
+            /// (2026-10-03, stage6).
+            float HealOffGoal = 1.0f;
             /// A party's or raid's tank: its damage dealt, as a share of what a damage dealer is paid for it. Holding
             /// the enemies (Raid.TankHold) is the tank's pay; hitting them is the damage dealers'.
             float TankDamageShare = 0.25f;
@@ -115,6 +115,9 @@ namespace Animus::Curriculum
             /// off the tank, per decision.
             float TankTarget = 0.3f;
             float PulledOff = 0.004f;
+            /// A party's damage dealer or healer, per enemy on it while the party's tank is alive and not yet in
+            /// combat, per decision (RewardTerm::EarlyPull, a cost): the pull opened before the tank engaged.
+            float EarlyPull = 0.01f;
             /// A drill's drilled seat (ArenaDefinition::DrillRole): its role's terms times this.
             float DrillWeight = 3.0f;
             /// Healers in a party or a raid: per member of its group above 50% health, per decision; the same
@@ -122,10 +125,11 @@ namespace Animus::Curriculum
             /// about 5, a kill's worth, not the 100-plus that 0.004 would have.
             float KeepUp = 0.0002f;
             /// Healers in a party or a raid: the healing they cast that landed on nobody's missing health, as a share
-            /// of their own health. Party healers overhealed 62-73% of what they cast on the drills' easy rungs
-            /// (2026-10-02, stage6 at 41M): healing late, big, and on the full. At 1.0 it stayed at 50% through the
-            /// stage.
-            float Overheal = 2.0f;
+            /// of their own health, charged at this share of what effective healing pays (Party.TeammateHealing). At
+            /// 0.5 a heal two-thirds wasted breaks even and anything less wasted pays. Charged at 2.0 outright (four
+            /// times the off-goal pay, three times more in a drill) a heal half wasted cost five times what it earned,
+            /// and the healers stopped healing (2026-10-03, stage6).
+            float Overheal = 0.5f;
             /// Tanks in a party or a raid, per decision in a fight: in the spec's tanking stance, form or aura
             /// (Defensive Stance, Bear Form, Righteous Fury, Frost Presence). Warrior tanks finished 27 of 38 drill
             /// fights in Battle Stance (stage6 at 41M).
@@ -623,13 +627,14 @@ namespace Animus::Curriculum
             float Repeat = 0.03f;
             uint32 RepeatWindowMs = 10000;
             uint32 RepeatFree = 3;              // presses of one action within the window that cost nothing
-            /// Steering that does not commit: a turn or a pitch chosen against one chosen within
-            /// Options.JitterWindowMs, and a bearing pressed within it that swings the feet round from the last one,
-            /// charged per reversal (a bearing by the share of a half turn it swings). Nothing in the rewards cared how
-            /// a seat got where it was going, so a wobble that cost nothing was learned as harmless: in the first full
-            /// run's final evaluations 63-70% of the ground stages' turns were undone within three decisions, and in
-            /// flight the feet changed bearing every quarter second (2026-09-28). Small, like Repeat: a steady course
-            /// is the habit it teaches, and a real reason to turn back -- a target that moved -- still outweighs it.
+            /// Steering that does not commit, per quarter turn a turn, a pitch or a bearing takes back of the one
+            /// before it, weighed by how recent that was (e^(-dt / Options.JitterDecayMs)); a facing mode taken back
+            /// and a start moments after a stop at one each (MovePrice, movement-smooth C). Nothing in the rewards
+            /// cared how a seat got where it was going, so a wobble that cost nothing was learned as harmless: in the
+            /// first full run's final evaluations 63-70% of the ground stages' turns were undone within three
+            /// decisions, and in flight the feet changed bearing every quarter second (2026-09-28). Small, like Repeat:
+            /// a steady course is the habit it teaches, and a real reason to turn back -- a target that moved -- still
+            /// outweighs it.
             /// Raised from 0.02 after the next-run trial, where bearing flips ran twice the last run's and did not
             /// fall over 20M steps (2026-09-30).
             float Jitter = 0.05f;
@@ -659,6 +664,17 @@ namespace Animus::Curriculum
             float AimlessModeFlip = 0.03f;
             float AimlessModeReverse = 0.06f;
             float AimlessNeedlessMove = 0.02f;
+            /// A taunt from a healer or damage dealer beside a living tank (holy paladins taunted four times a fight
+            /// from the healer's seat, 2026-10-03). At 0.04 Hand of Reckoning from the healer's seat rose through
+            /// stage6, 3.3 to 4.1 a fight between 20M and 62M steps, while Righteous Fury at the same price halved.
+            float AimlessTauntOffRole = 0.15f;
+            /// A tank's stance, form, aura or presence from a seat that is not the tank, beside a living one (holy
+            /// paladins took up Righteous Fury three and a half times a fight from the healer's seat, 2026-10-03).
+            float AimlessTankModeOffRole = 0.04f;
+            /// A press that failed for something the seat controls: facing away (or not behind), out of range or too
+            /// close, out of sight, a cast time pressed on the move, short of power. Offered rather than masked, so
+            /// the seat learns to put each right before it presses (2026-10-04).
+            float AimlessCastFailed = 0.02f;
             /// Every aspect, stance, form or presence changed, justified or not: a change has to be worth something.
             float ModeSwitch = 0.01f;
             /// Every food or drink consumed: a supply spent at full health is gone when it is needed.
@@ -674,13 +690,12 @@ namespace Animus::Curriculum
             /// ground to step out of: the shuffle that reads as a bot. Moving to reach range, to dodge, or out of a
             /// fight is untouched.
             float Fidget = 0.01f;
+            /// How long Fidget's and NeedlessMove's conditions must hold before they are charged (ms): a seat that
+            /// runs into the band it wants and stops within it is not fidgeting, and a range that flickers at its
+            /// edge is not charged on every flicker (movement-smooth C).
+            uint32 SettleGraceMs = 500;
             /// How much the gap to the wanted range has to change for a step to count as closing or opening it.
             float IntentSlackYards = 0.5f;
-            /// How far below where a jump would come down the ground is looked for before the jump is refused.
-            /// The only limit on a drop: a landing this deep is a fall the seat can choose, and what it costs --
-            /// nothing with Slow Fall, health past fourteen yards, death past about seventy -- is the seat's to
-            /// learn from OBS_JUMP_DROP and from what happens. Only the void is masked.
-            float JumpDropSearch = 200.0f;
         } Actions;
 
         /// Packs and the gauntlet's pull after pull.
@@ -869,28 +884,15 @@ namespace Animus::Curriculum
         {
             uint32 RestMaxMs = 30000;           // eat and drink until health and mana are back
             uint32 HoldInterruptMs = 10000;     // interrupt the target as soon as it casts
-            /// How long a chosen bearing keeps being walked before it lapses (MoveBlock). Shorter than the two
-            /// above on purpose: resting and holding an interrupt are standing instructions that stay true while
-            /// the fight does, where a direction chosen against the ground goes stale as soon as the seat has
-            /// covered it. The policy re-presses to keep going, which is what a held key is.
-            uint32 MoveBearingMs = 3000;
-            /// How long each MoveBlock::TURN_RATE step of a chosen turn stands on the option clock: the decision
-            /// interval, so the clock the core block reports runs out as the turn does. A turn itself ends when it
-            /// has turned, not on this.
-            uint32 MoveTurnMs = 250;
-            /// The same for each MoveBlock::PITCH_RATE step of a chosen pitch: the decision interval.
-            uint32 MovePitchMs = 250;
-            /// How soon after a turn, a pitch or a bearing another one that undoes it counts as jitter
-            /// (Actions.Jitter). About three decisions: long enough to catch a head twitching side to side, short
+            /// How fast a steering choice stops weighing on the one that undoes it (Actions.Jitter): its weight is
+            /// e^(-dt / this). Replaces a window, JitterWindowMs (1500), that charged in full up to its edge and
+            /// nothing past it, so a slow weave (a period of two seconds or more) was free. At 2500 a reversal 2 s on
+            /// weighs 0.45, 3 s 0.30, and a deliberate correction 5 s on 0.14 (movement-smooth C).
+            /// The window's history: about three decisions: long enough to catch a head twitching side to side, short
             /// enough that a seat that walked one way for a moment and then chose another is not charged for having
             /// changed its mind. Six decisions since the next-run trial (2026-09-30): at three, a seat that swung back
             /// a second later went uncharged, and bearing flips did not fall.
-            uint32 JitterWindowMs = 1500;
-            /// How long a companion's follow keeps after the owner before it lapses (CompanionBlock). Longer than a
-            /// bearing: where the owner is going is the owner's to know, and a follow that ends every three seconds
-            /// behind a running owner is three seconds of re-pressing for nothing chosen. Ends on its own when the
-            /// seat is there and the owner has stopped.
-            uint32 FollowMs = 6000;
+            uint32 JitterDecayMs = 2500;
         } Options;
 
         /// Ground effects: damage from something standing on the ground rather than aimed at the seat (a fire pool,
@@ -1143,6 +1145,7 @@ namespace Animus::Curriculum
             f("Raid.TankLoose", tuning.Raid.TankLoose);
             f("Raid.TankTarget", tuning.Raid.TankTarget);
             f("Raid.PulledOff", tuning.Raid.PulledOff);
+            f("Raid.EarlyPull", tuning.Raid.EarlyPull);
             f("Raid.DrillWeight", tuning.Raid.DrillWeight);
             f("Raid.KeepUp", tuning.Raid.KeepUp);
             f("Raid.Overheal", tuning.Raid.Overheal);
@@ -1294,13 +1297,16 @@ namespace Animus::Curriculum
             f("Actions.Aimless.ModeFlip", tuning.Actions.AimlessModeFlip);
             f("Actions.Aimless.ModeReverse", tuning.Actions.AimlessModeReverse);
             f("Actions.Aimless.NeedlessMove", tuning.Actions.AimlessNeedlessMove);
+            f("Actions.Aimless.TauntOffRole", tuning.Actions.AimlessTauntOffRole);
+            f("Actions.Aimless.TankModeOffRole", tuning.Actions.AimlessTankModeOffRole);
+            f("Actions.Aimless.CastFailed", tuning.Actions.AimlessCastFailed);
             f("Actions.ModeSwitch", tuning.Actions.ModeSwitch);
             f("Actions.SupplySpent", tuning.Actions.SupplySpent);
             f("Actions.ConsumeFullPct", tuning.Actions.ConsumeFullPct);
             f("Actions.Effort", tuning.Actions.Effort);
             f("Actions.Fidget", tuning.Actions.Fidget);
+            f("Actions.SettleGraceMs", tuning.Actions.SettleGraceMs);
             f("Actions.IntentSlackYards", tuning.Actions.IntentSlackYards);
-            f("Actions.JumpDropSearch", tuning.Actions.JumpDropSearch);
 
             f("Goals.Reached", tuning.Goals.Reached);
             f("Goals.Switch", tuning.Goals.Switch);
@@ -1433,11 +1439,7 @@ namespace Animus::Curriculum
             f("Dummy.Resource", tuning.Dummy.Resource);
             f("Dummy.AddEveryMs", tuning.Dummy.AddEveryMs);
             f("Dummy.MaxAdds", tuning.Dummy.MaxAdds);
-            f("Options.MoveBearingMs", tuning.Options.MoveBearingMs);
-            f("Options.MoveTurnMs", tuning.Options.MoveTurnMs);
-            f("Options.MovePitchMs", tuning.Options.MovePitchMs);
-            f("Options.JitterWindowMs", tuning.Options.JitterWindowMs);
-            f("Options.FollowMs", tuning.Options.FollowMs);
+            f("Options.JitterDecayMs", tuning.Options.JitterDecayMs);
             f("Owner.LevelSpread", tuning.Owner.LevelSpread);
             f("Owner.TankChance", tuning.Owner.TankChance);
             f("Owner.HealerChance", tuning.Owner.HealerChance);

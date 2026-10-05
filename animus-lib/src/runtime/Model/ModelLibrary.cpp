@@ -25,6 +25,7 @@
 #include <filesystem>
 #include <fstream>
 #include <sstream>
+#include <vector>
 
 namespace
 {
@@ -72,6 +73,61 @@ namespace
         return {};
     }
 
+    /// The first block, by name, whose revision (Block::Revision; absent = 0) or widths differ between the two
+    /// manifests: "block support: revision 1 here, 0 in the model's; obs width 156 here, 152 in the model's". A model
+    /// of a re-laid block is refused saying which block and which layouts, not only the first column that moved.
+    std::string BlockDifference(boost::json::value const& server, boost::json::value const& model)
+    {
+        auto const blocksOf = [](boost::json::value const& manifest) -> boost::json::array const*
+        {
+            boost::json::object const* object = manifest.if_object();
+            boost::json::value const* blocks = object ? object->if_contains("blocks") : nullptr;
+            return blocks ? blocks->if_array() : nullptr;
+        };
+        auto const field = [](boost::json::object const& block, std::string_view key, std::size_t index) -> int64
+        {
+            boost::json::value const* value = block.if_contains(key);
+            if (!value)
+                return 0;
+            if (boost::json::array const* span = value->if_array())
+                return span->size() > index && (*span)[index].is_int64() ? (*span)[index].as_int64() : -1;
+            return value->is_int64() ? value->as_int64() : -1;
+        };
+        boost::json::array const* ours = blocksOf(server);
+        boost::json::array const* theirs = blocksOf(model);
+        if (!ours || !theirs)
+            return {};
+        for (boost::json::value const& entry : *ours)
+        {
+            boost::json::object const* block = entry.if_object();
+            if (!block || !block->contains("name"))
+                continue;
+            for (boost::json::value const& other : *theirs)
+            {
+                boost::json::object const* match = other.if_object();
+                if (!match || !match->contains("name") || match->at("name") != block->at("name"))
+                    continue;
+                std::vector<std::string> parts;
+                if (field(*block, "revision", 0) != field(*match, "revision", 0))
+                    parts.push_back(Acore::StringFormat("revision {} here, {} in the model's",
+                        field(*block, "revision", 0), field(*match, "revision", 0)));
+                for (std::string_view key : { "obs", "actions" })
+                    if (field(*block, key, 1) != field(*match, key, 1))
+                        parts.push_back(Acore::StringFormat("{} width {} here, {} in the model's", key,
+                            field(*block, key, 1), field(*match, key, 1)));
+                if (!parts.empty())
+                {
+                    std::string text = Acore::StringFormat("block {}: {}", boost::json::serialize(block->at("name")),
+                        parts.front());
+                    for (std::size_t i = 1; i < parts.size(); ++i)
+                        text += "; " + parts[i];
+                    return text;
+                }
+            }
+        }
+        return {};
+    }
+
     std::string ManifestDifference(std::string const& server, std::string const& model)
     {
         boost::system::error_code error;
@@ -81,6 +137,8 @@ namespace
         boost::json::value const theirs = boost::json::parse(model, error);
         if (error)
             return "the model's manifest does not parse: " + error.message();
+        if (std::string block = BlockDifference(ours, theirs); !block.empty())
+            return block;
         std::string found = FirstDifference(ours, theirs, "");
         return found.empty() ? "they differ only in formatting" : found;
     }

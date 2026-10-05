@@ -70,29 +70,29 @@ namespace Animus::Curriculum
             /// these heals", and the second is true of a build nobody planned.
             MEMBER_APTITUDE_FIRST       = 8,
             MEMBER_CLASS_FIRST          = 14,   // one-hot over PLAYABLE_CLASSES
-            MEMBER_ATTACKERS            = 24,   // enemies attacking it / PACK_SLOTS
-            MEMBER_TARGET_FIRST         = 25,   // one-hot: which enemy slot it attacks
-            MEMBER_NO_TARGET            = 29,
-            MEMBER_SLOT_ON_FIRST        = 30,   // per enemy slot: attacking it
+            MEMBER_ATTACKERS            = 24,   // enemies attacking it / ENEMY_COUNT_SCALE
+            MEMBER_TARGET_FIRST         = 25,   // one-hot: which of the NAMED_ENEMY_SLOTS it attacks
+            MEMBER_NO_TARGET            = 29,   // it attacks nothing (past the named slots: this and those all 0)
+            MEMBER_SLOT_ON_FIRST        = 30,   // per named enemy slot: attacking it
             MEMBER_GOAL_FIRST           = 34,   // one-hot over GOAL_COUNT: the goal it is pursuing (none: all 0)
             MEMBER_FEATURES             = 34 + GOAL_COUNT
         };
 
         enum Action : uint32
         {
-            ACTION_FOLLOW_TANK          = 0,
-            ACTION_ASSIST_FIRST         = 1,                        // + member
-            ACTION_GUARD_FIRST          = 1 + PARTY_MEMBERS,        // + member
-            ACTION_REVIVE_FIRST         = 1 + 2 * PARTY_MEMBERS     // + member * revives + revive
+            ACTION_ASSIST_FIRST         = 0,                        // + member
+            ACTION_GUARD_FIRST          = PARTY_MEMBERS,            // + member
+            ACTION_REVIVE_FIRST         = 2 * PARTY_MEMBERS         // + member * revives + revive
         };
 
-        [[nodiscard]] BlockId Id() const override { return BlockId::Party; }
         [[nodiscard]] BlockSize Size(Layout const& layout) const override;
         [[nodiscard]] std::string ActionName(Layout const& layout, uint32 local) const override;
         void DescribeManifest(Layout const& layout, boost::json::object& block) const override;
         void Observe(SeatView const& view, float* obs, uint8* mask) const override;
         void Apply(SeatView& view, uint32 local, SeatActionResult& result) const override;
-        [[nodiscard]] bool IsMovement(uint32 local) const override { return local == ACTION_FOLLOW_TANK; }
+        /// 1: the engine-run follow-the-tank action is gone (player-controller C9); keeping up with the party is the
+        /// move block's keys, so every action after it moved down by one.
+        [[nodiscard]] uint32 Revision() const override { return 1; }
     };
 }
 

@@ -42,14 +42,13 @@ namespace
     };
 
     constexpr float RUNE_COOLDOWN_MS = 10000.0f;
-    /// The durative actions every seat can be running (SeatOptionKind without None, up to the companion's follow,
-    /// which the companion block reports itself), and the scale their time left is reported on.
-    constexpr uint32 OPTION_KINDS = uint32(SeatOptionKind::Follow) - 1;
+    /// The durative actions every seat can be running (SeatOptionKind without None), and the scale their time left
+    /// is reported on.
+    constexpr uint32 OPTION_KINDS = uint32(SeatOptionKind::Count) - 1;
     constexpr float OPTION_SCALE_MS = 30000.0f;
-    constexpr float TALENT_POINTS_AT_MAX_LEVEL = 71.0f;
     constexpr float GOAL_ESCAPE_HEALTH_PCT = 35.0f;
 
-    bool IsActionAllowed(SeatView const& view, uint32 action)
+    bool IsActionAllowed(SeatView const& view, uint32 action, Encoding::SpellReadiness* readiness = nullptr)
     {
         ActionCatalog::Action const& def = view.L->Catalog().Actions()[action];
         Player* bot = view.Bot;
@@ -73,7 +72,7 @@ namespace
                 break;
         }
 
-        return Encoding::IsSpellActionAllowed(view, view.Target, def);
+        return Encoding::IsSpellActionAllowed(view, view.Target, def, readiness);
     }
 
     /// **The goal shapes what can be pressed** (Component H): a spell that works against the goal the seat holds is
@@ -132,6 +131,14 @@ namespace
     }
 }
 
+// The observation's segments do not overlap (every block with hand-written offsets has these).
+static_assert(uint32(Animus::Curriculum::CoreBlock::OBS_RACE_FIRST) + Animus::Curriculum::PLAYABLE_RACES.size()
+    <= uint32(Animus::Curriculum::CoreBlock::OBS_APTITUDE_FIRST));
+static_assert(uint32(Animus::Curriculum::CoreBlock::OBS_RUNE_FIRST) + MAX_RUNES
+    <= uint32(Animus::Curriculum::CoreBlock::OBS_COMBO_POINTS));
+static_assert(uint32(Animus::Curriculum::CoreBlock::OBS_FORM_FIRST) + TRACKED_FORMS.size()
+    <= uint32(Animus::Curriculum::CoreBlock::OBS_GCD));
+
 Animus::Curriculum::BlockSize Animus::Curriculum::CoreBlock::Size(Layout const& layout) const
 {
     uint32 const actions = uint32(layout.Catalog().Actions().size());
@@ -144,6 +151,23 @@ uint32 Animus::Curriculum::CoreBlock::TalentObsFirst(Layout const& layout)
 {
     return layout.Slice(BlockId::Core).ObsFirst + OBS_GLOBAL_COUNT
         + uint32(layout.Catalog().Actions().size()) * ACTION_FEATURES;
+}
+
+void Animus::Curriculum::CoreBlock::DescribeRescaled(Layout const& layout, boost::json::array& out) const
+{
+    // The talent trees as a share of the points spent, not of a full build's 71 (2026-10-03): the aptitude's and the
+    // block's own, relative to the block.
+    uint32 const first = layout.Slice(BlockId::Core).ObsFirst;
+    auto const add = [&out](uint32 at, uint32 count)
+    {
+        boost::json::object columns;
+        columns["tag"] = "tree_share";
+        columns["first"] = at;
+        columns["count"] = count;
+        out.emplace_back(std::move(columns));
+    };
+    add(OBS_APTITUDE_FIRST + Aptitude::TREE_POINTS_FIRST, TalentBuilder::TREE_COUNT);
+    add(TreeObsFirst(layout) - first, TalentBuilder::TREE_COUNT);
 }
 
 uint32 Animus::Curriculum::CoreBlock::TreeObsFirst(Layout const& layout)
@@ -269,9 +293,13 @@ void Animus::Curriculum::CoreBlock::ObserveCharacter(SeatView const& view, float
     for (uint32 i = 0; i < talents.size() && i < view.Build->Ranks.size(); ++i)
         talentObs[i] = float(view.Build->Ranks[i]) / float(std::max<uint8>(1, talents[i].MaxRank));
 
+    // Each tree's points as a share of those spent (Aptitude::Measure's reading), and how far the build has come.
     float* treeObs = obs + TreeObsFirst(layout);
+    uint32 spent = 0;
+    for (uint32 points : view.Build->TreePoints)
+        spent += points;
     for (uint32 tree = 0; tree < TalentBuilder::TREE_COUNT; ++tree)
-        treeObs[tree] = float(view.Build->TreePoints[tree]) / TALENT_POINTS_AT_MAX_LEVEL;
+        treeObs[tree] = spent ? float(view.Build->TreePoints[tree]) / float(spent) : 0.0f;
 }
 
 void Animus::Curriculum::CoreBlock::Observe(SeatView const& view, float* obs, uint8* mask) const
@@ -375,10 +403,18 @@ void Animus::Curriculum::CoreBlock::Observe(SeatView const& view, float* obs, ui
         else if (actions[action].Type == ActionCatalog::Kind::Trinket)
             info = Encoding::TrinketSpell(bot->GetItemByPos(INVENTORY_SLOT_BAG_0, actions[action].EquipmentSlot));
 
+        // Offered or not, and whether it would work: one check for the mask and the readiness features alike.
+        Encoding::SpellReadiness readiness;
+        bool const allowed = action > 0 && bot->IsAlive() && IsActionAllowed(view, action, &readiness);
+        if (actions[action].Type == ActionCatalog::Kind::Trinket)
+            readiness = { allowed, true };
+
         if (info)
         {
             float* features = obs + OBS_GLOBAL_COUNT + action * ACTION_FEATURES;
             float stacks = 0.0f;
+            features[ACTION_READY] = readiness.Ready ? 1.0f : 0.0f;
+            features[ACTION_AFFORDABLE] = readiness.Affordable ? 1.0f : 0.0f;
             features[0] = 1.0f;
             features[1] = Animus::SpellChecks::CooldownFraction(bot, info);
             features[2] = target ? Animus::SpellChecks::AuraFraction(target, info->Id, botGuid, &stacks) : 0.0f;
@@ -393,7 +429,7 @@ void Animus::Curriculum::CoreBlock::Observe(SeatView const& view, float* obs, ui
             ? memory->SincePressed(view.L->Slice(BlockId::Core).ActionFirst + action, view.NowMs) : 1.0f;
 
         if (mask && action > 0)
-            mask[action] = IsActionAllowed(view, action) && !GoalCloses(view, actions[action]) ? 1 : 0;
+            mask[action] = allowed && !GoalCloses(view, actions[action]) ? 1 : 0;
     }
 
     // The rank tier to cast rankable spells at: always offered but the one already chosen, so a press is a change.
@@ -443,8 +479,22 @@ void Animus::Curriculum::CoreBlock::Apply(SeatView& view, uint32 local, SeatActi
             break;
     }
 
-    if (Encoding::ApplySpellAction(view, view.Target, def, result) && def.From == ActionCatalog::Group::Sustain)
+    bool const started = Encoding::ApplySpellAction(view, view.Target, def, result);
+    if (started && def.From == ActionCatalog::Group::Sustain)
         ++result.SustainCasts;
+    // The keys the seat holds are its own (MoveBlock): a cast does not let go of them for it, as no client lets go of
+    // a player's. Casting while moving is refused or cancelled by the core's own rules, read off the real movement
+    // state (player-controller §5), and the seat learns to stop first.
+}
+
+bool Animus::Curriculum::CoreBlock::PressesFirst(Layout const& layout, uint32 local) const
+{
+    // A spell or an item use meets the world the seat observed: a held interrupt fired first put it on the global
+    // cooldown or mid-cast, and a walk stepped first turned it from its target, and the policy's own press failed
+    // for something it never chose (2026-10-04: three in four refused presses).
+    std::vector<ActionCatalog::Action> const& actions = layout.Catalog().Actions();
+    return local < actions.size()
+        && (actions[local].Type == ActionCatalog::Kind::Spell || actions[local].Type == ActionCatalog::Kind::Trinket);
 }
 
 void Animus::Curriculum::CoreBlock::BeforeApply(SeatView& view, SeatActionResult& result) const

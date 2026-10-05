@@ -29,7 +29,10 @@
 namespace
 {
     constexpr char AMDL_MAGIC[4] = { 'A', 'M', 'D', 'L' };
-    constexpr uint32 AMDL_VERSION = 7;
+    constexpr uint32 AMDL_VERSION = 9;
+    /// The oldest format still read: a version 7 model is a version 8 one without the seat sets, an 8 a 9 without the
+    /// attention flag.
+    constexpr uint32 AMDL_OLDEST_VERSION = 7;
 
     /// Guards against a corrupt header asking for gigabytes.
     constexpr uint32 MAX_LAYER_WIDTH = 1 << 16;
@@ -102,9 +105,10 @@ bool Animus::MlpPolicy::Load(std::string const& path, std::string const& scenari
         return false;
     }
 
-    if (!reader.Read(version) || version != AMDL_VERSION)
+    if (!reader.Read(version) || version < AMDL_OLDEST_VERSION || version > AMDL_VERSION)
     {
-        error = Acore::StringFormat("{} has model version {}, expected {}", path, version, AMDL_VERSION);
+        error = Acore::StringFormat("{} has model version {}, expected {} to {}", path, version, AMDL_OLDEST_VERSION,
+            AMDL_VERSION);
         return false;
     }
 
@@ -373,6 +377,80 @@ bool Animus::MlpPolicy::Load(std::string const& path, std::string const& scenari
         }
     }
 
+    // A seat layout's sets (version 8).
+    uint8 hasSeatSets = 0;
+    uint32 seatEmbed = 0;
+    std::vector<SeatSet> seatSets;
+    std::vector<float> seatPoolWeight, seatPoolBias;
+    std::vector<SeatPointer> seatPointers;
+    uint8 attending = 0;
+    SeatAttention attention;
+    if (version >= 8 && !reader.Read(hasSeatSets))
+    {
+        error = Acore::StringFormat("{} is truncated before its seat sets", path);
+        return false;
+    }
+    if (hasSeatSets)
+    {
+        uint32 count = 0;
+        bool ok = reader.Read(seatEmbed) && seatEmbed > 0 && seatEmbed <= MAX_LAYER_WIDTH && reader.Read(count)
+            && count > 0 && count <= 8 && (version < 9 || reader.Read(attending));
+        for (uint32 i = 0; ok && i < count; ++i)
+        {
+            SeatSet set;
+            uint32 segments = 0;
+            ok = reader.Read(set.Slots) && reader.Read(set.Width) && reader.Read(set.Present)
+                && reader.Read(set.PresentStride) && reader.Read(segments) && set.Slots > 0 && set.Slots <= 64
+                && set.Width > 0 && set.Width <= MAX_LAYER_WIDTH && segments > 0 && segments <= 4
+                && set.Present + (set.Slots - 1) * set.PresentStride < obsDim;
+            uint32 width = 0;
+            for (uint32 s = 0; ok && s < segments; ++s)
+            {
+                uint32 first = 0, stride = 0;
+                ok = reader.Read(first) && reader.Read(stride) && stride > 0 && first + set.Slots * stride <= obsDim;
+                width += stride;
+                set.Segments.emplace_back(first, stride);
+            }
+            ok = ok && width == set.Width && reader.ReadFloats(set.W1, std::size_t(seatEmbed) * set.Width)
+                && reader.ReadFloats(set.B1, seatEmbed) && reader.ReadFloats(set.W2, std::size_t(seatEmbed) * seatEmbed)
+                && reader.ReadFloats(set.B2, seatEmbed);
+            seatSets.push_back(std::move(set));
+        }
+        if (ok && attending)
+        {
+            std::size_t const e = seatEmbed;
+            SeatAttention& a = attention;
+            ok = reader.Read(a.Heads) && a.Heads > 0 && seatEmbed % a.Heads == 0
+                && reader.ReadFloats(a.TypeEmbed, count * e) && reader.ReadFloats(a.OwnToken, e)
+                && reader.ReadFloats(a.NormAttendW, e) && reader.ReadFloats(a.NormAttendB, e)
+                && reader.ReadFloats(a.InProjW, 3 * e * e) && reader.ReadFloats(a.InProjB, 3 * e)
+                && reader.ReadFloats(a.OutProjW, e * e) && reader.ReadFloats(a.OutProjB, e)
+                && reader.ReadFloats(a.NormMixW, e) && reader.ReadFloats(a.NormMixB, e)
+                && reader.ReadFloats(a.MixInW, 2 * e * e) && reader.ReadFloats(a.MixInB, 2 * e)
+                && reader.ReadFloats(a.MixOutW, 2 * e * e) && reader.ReadFloats(a.MixOutB, e);
+        }
+        uint32 const adapterOut = layers.front().Out;
+        std::size_t const pooledWidth = std::size_t(2) * seatEmbed * count + (attending ? seatEmbed : 0);
+        ok = ok && reader.ReadFloats(seatPoolWeight, std::size_t(adapterOut) * pooledWidth)
+            && reader.ReadFloats(seatPoolBias, adapterOut);
+        uint32 pointerCount = 0;
+        ok = ok && reader.Read(pointerCount) && pointerCount <= 16;
+        for (uint32 i = 0; ok && i < pointerCount; ++i)
+        {
+            SeatPointer pointer;
+            ok = reader.Read(pointer.First) && reader.Read(pointer.Set) && pointer.Set < count
+                && reader.ReadFloats(pointer.Weight, std::size_t(seatEmbed) * featureWidth)
+                && reader.ReadFloats(pointer.Bias, seatEmbed)
+                && pointer.First + seatSets[pointer.Set].Slots <= numActions;
+            seatPointers.push_back(std::move(pointer));
+        }
+        if (!ok)
+        {
+            error = Acore::StringFormat("{} is truncated or inconsistent in its seat sets", path);
+            return false;
+        }
+    }
+
     if (!reader.AtEnd())
     {
         error = Acore::StringFormat("{} has trailing data", path);
@@ -438,8 +516,36 @@ bool Animus::MlpPolicy::Load(std::string const& path, std::string const& scenari
     _enemyCodes.assign(std::size_t(_enemies.Slots) * embed, 0.0f);
     _pooled.assign(std::size_t(4) * embed, 0.0f);
     _setExtra.assign(_sets ? _layers.front().Out : 0, 0.0f);
-    _query.assign(embed, 0.0f);
-    _setHidden.assign(embed, 0.0f);
+    _query.assign(std::max(embed, seatEmbed), 0.0f);
+    _setHidden.assign(std::max(embed, seatEmbed), 0.0f);
+    _seatSets = hasSeatSets != 0;
+    _seatEmbed = seatEmbed;
+    _seatSetList = std::move(seatSets);
+    _seatPoolWeight = std::move(seatPoolWeight);
+    _seatPoolBias = std::move(seatPoolBias);
+    _seatPointers = std::move(seatPointers);
+    _seatCodes.clear();
+    uint32 seatWidest = 0;
+    for (SeatSet const& set : _seatSetList)
+    {
+        _seatCodes.emplace_back(std::size_t(set.Slots) * seatEmbed, 0.0f);
+        seatWidest = std::max(seatWidest, set.Width);
+    }
+    _seatAttention = attending != 0;
+    _attention = std::move(attention);
+    uint32 tokens = 1;
+    for (SeatSet const& set : _seatSetList)
+        tokens += set.Slots;
+    _tokens.assign(_seatAttention ? std::size_t(tokens) * seatEmbed : 0, 0.0f);
+    _normed.assign(_tokens.size(), 0.0f);
+    _merged.assign(_tokens.size(), 0.0f);
+    _qkv.assign(_tokens.size() * 3, 0.0f);
+    _mixed.assign(_seatAttention ? std::size_t(2) * seatEmbed : 0, 0.0f);
+    _scores.assign(_seatAttention ? tokens : 0, 0.0f);
+    _keys.assign(_seatAttention ? tokens : 0, 0);
+    _seatPooled.assign(std::size_t(2) * seatEmbed * _seatSetList.size() + (_seatAttention ? seatEmbed : 0), 0.0f);
+    _seatExtra.assign(_seatSets ? _layers.front().Out : 0, 0.0f);
+    _seatRaw.assign(seatWidest, 0.0f);
     _slowHiddenGates.assign(std::size_t(3) * slowSize, 0.0f);
     _slowOut.assign(slowSize, 0.0f);
     widest = std::max(widest, recurrentSize);
@@ -504,6 +610,25 @@ void Animus::MlpPolicy::Unload()
     _poolWeight.clear();
     _poolBias.clear();
     _pointers.clear();
+    _seatSets = false;
+    _seatAttention = false;
+    _attention = SeatAttention();
+    _tokens.clear();
+    _normed.clear();
+    _qkv.clear();
+    _merged.clear();
+    _mixed.clear();
+    _scores.clear();
+    _keys.clear();
+    _seatEmbed = 0;
+    _seatSetList.clear();
+    _seatPoolWeight.clear();
+    _seatPoolBias.clear();
+    _seatPointers.clear();
+    _seatCodes.clear();
+    _seatPooled.clear();
+    _seatExtra.clear();
+    _seatRaw.clear();
     _obsDim = 0;
     _numAgents = 0;
     _numActions = 0;
@@ -554,8 +679,144 @@ int32 Animus::MlpPolicy::SecondaryOf(State const& state) const
 
 int32 Animus::MlpPolicy::Decide(float const* obs, uint8 const* mask, State* state)
 {
-    if (_layers.empty())
+    float const* logits = Forward(obs, state);
+    if (!logits)
         return 0;
+
+    int32 best = 0;
+    float bestLogit = -std::numeric_limits<float>::infinity();
+    bool anyAllowed = false;
+
+    for (uint32 action = 0; action < _numActions; ++action)
+    {
+        if (!mask[action])
+            continue;
+
+        if (!anyAllowed || logits[action] > bestLogit)
+        {
+            best = int32(action);
+            bestLogit = logits[action];
+            anyAllowed = true;
+        }
+    }
+
+    return anyAllowed ? best : 0;
+}
+
+bool Animus::MlpPolicy::Logits(float const* obs, float* out, State* state)
+{
+    float const* logits = Forward(obs, state);
+    if (!logits)
+        return false;
+
+    std::copy(logits, logits + _numActions, out);
+    return true;
+}
+
+void Animus::MlpPolicy::Attend()
+{
+    // x += out_proj(MHA(LN(x))), x += W2 relu(W1 LN(x)) over the tokens, the absent ones no keys (the own token
+    // always one, so no softmax row is empty). LayerNorm as torch's: eps 1e-5, the biased variance.
+    uint32 const embed = _seatEmbed;
+    uint32 const count = uint32(_keys.size());
+    uint32 const heads = _attention.Heads;
+    uint32 const width = embed / heads;
+    auto const norm = [embed](float const* in, float* out, std::vector<float> const& w, std::vector<float> const& b)
+    {
+        float mean = 0.0f;
+        for (uint32 i = 0; i < embed; ++i)
+            mean += in[i];
+        mean /= float(embed);
+        float variance = 0.0f;
+        for (uint32 i = 0; i < embed; ++i)
+            variance += (in[i] - mean) * (in[i] - mean);
+        float const scale = 1.0f / std::sqrt(variance / float(embed) + 1e-5f);
+        for (uint32 i = 0; i < embed; ++i)
+            out[i] = (in[i] - mean) * scale * w[i] + b[i];
+    };
+    auto const affine = [](float const* in, uint32 inWidth, float* out, uint32 outWidth, std::vector<float> const& w,
+        std::vector<float> const& b)
+    {
+        for (uint32 row = 0; row < outWidth; ++row)
+        {
+            float sum = b[row];
+            float const* weights = w.data() + std::size_t(row) * inWidth;
+            for (uint32 col = 0; col < inWidth; ++col)
+                sum += weights[col] * in[col];
+            out[row] = sum;
+        }
+    };
+
+    for (uint32 t = 0; t < count; ++t)
+    {
+        norm(_tokens.data() + std::size_t(t) * embed, _normed.data() + std::size_t(t) * embed, _attention.NormAttendW,
+            _attention.NormAttendB);
+        affine(_normed.data() + std::size_t(t) * embed, embed, _qkv.data() + std::size_t(t) * 3 * embed, 3 * embed,
+            _attention.InProjW, _attention.InProjB);
+    }
+    float const scale = 1.0f / std::sqrt(float(width));
+    for (uint32 t = 0; t < count; ++t)
+        for (uint32 head = 0; head < heads; ++head)
+        {
+            float const* q = _qkv.data() + std::size_t(t) * 3 * embed + head * width;
+            float peak = -std::numeric_limits<float>::infinity();
+            for (uint32 k = 0; k < count; ++k)
+            {
+                if (!_keys[k])
+                    continue;
+                float const* key = _qkv.data() + std::size_t(k) * 3 * embed + embed + head * width;
+                float score = 0.0f;
+                for (uint32 i = 0; i < width; ++i)
+                    score += q[i] * key[i];
+                _scores[k] = score * scale;
+                peak = std::max(peak, _scores[k]);
+            }
+            float total = 0.0f;
+            for (uint32 k = 0; k < count; ++k)
+                if (_keys[k])
+                {
+                    _scores[k] = std::exp(_scores[k] - peak);
+                    total += _scores[k];
+                }
+            float* merged = _merged.data() + std::size_t(t) * embed + head * width;
+            std::fill(merged, merged + width, 0.0f);
+            for (uint32 k = 0; k < count; ++k)
+            {
+                if (!_keys[k])
+                    continue;
+                float const* value = _qkv.data() + std::size_t(k) * 3 * embed + 2 * embed + head * width;
+                float const weight = _scores[k] / total;
+                for (uint32 i = 0; i < width; ++i)
+                    merged[i] += weight * value[i];
+            }
+        }
+    for (uint32 t = 0; t < count; ++t)
+    {
+        float* x = _tokens.data() + std::size_t(t) * embed;
+        affine(_merged.data() + std::size_t(t) * embed, embed, _normed.data() + std::size_t(t) * embed, embed,
+            _attention.OutProjW, _attention.OutProjB);
+        for (uint32 i = 0; i < embed; ++i)
+            x[i] += _normed[std::size_t(t) * embed + i];
+        norm(x, _normed.data() + std::size_t(t) * embed, _attention.NormMixW, _attention.NormMixB);
+        affine(_normed.data() + std::size_t(t) * embed, embed, _mixed.data(), 2 * embed, _attention.MixInW,
+            _attention.MixInB);
+        for (float& v : _mixed)
+            v = std::max(v, 0.0f);
+        for (uint32 row = 0; row < embed; ++row)
+        {
+            float sum = _attention.MixOutB[row];
+            float const* weights = _attention.MixOutW.data() + std::size_t(row) * 2 * embed;
+            for (uint32 col = 0; col < 2 * embed; ++col)
+                sum += weights[col] * _mixed[col];
+            x[row] += sum;
+        }
+    }
+}
+
+float const* Animus::MlpPolicy::Forward(float const* obs, State* state)
+{
+    if (_layers.empty())
+        return nullptr;
 
     // Input: observation, then the one-hot id of agent 0.
     float* in = _scratchA.data();
@@ -617,6 +878,102 @@ int32 Animus::MlpPolicy::Decide(float const* obs, uint8 const* mask, State* stat
         }
     }
 
+    // A seat layout's sets: every slot gathered from its segments through its set's encoder, the present ones pooled
+    // (mean and max; nothing present pools to zero) onto the first layer, as the learner's EntitySets does.
+    if (_seatSets)
+    {
+        uint32 const embed = _seatEmbed;
+        // Every slot's code first (and, with attention, its token: the code plus its set's type embedding).
+        uint32 token = 1;
+        if (_seatAttention)
+        {
+            std::copy(_attention.OwnToken.begin(), _attention.OwnToken.end(), _tokens.begin());
+            _keys[0] = 1;
+        }
+        for (std::size_t index = 0; index < _seatSetList.size(); ++index)
+        {
+            SeatSet const& set = _seatSetList[index];
+            for (uint32 slot = 0; slot < set.Slots; ++slot)
+            {
+                uint32 at = 0;
+                for (auto const& [first, stride] : set.Segments)
+                    for (uint32 col = 0; col < stride; ++col)
+                        _seatRaw[at++] = obs[first + slot * stride + col];
+                float* code = _seatCodes[index].data() + std::size_t(slot) * embed;
+                for (uint32 row = 0; row < embed; ++row)
+                {
+                    float sum = set.B1[row];
+                    for (uint32 col = 0; col < set.Width; ++col)
+                        sum += set.W1[std::size_t(row) * set.Width + col] * _seatRaw[col];
+                    _setHidden[row] = std::tanh(sum);
+                }
+                for (uint32 row = 0; row < embed; ++row)
+                {
+                    float sum = set.B2[row];
+                    for (uint32 col = 0; col < embed; ++col)
+                        sum += set.W2[std::size_t(row) * embed + col] * _setHidden[col];
+                    code[row] = std::tanh(sum);
+                }
+                if (_seatAttention)
+                {
+                    float* at = _tokens.data() + std::size_t(token) * embed;
+                    for (uint32 row = 0; row < embed; ++row)
+                        at[row] = code[row] + _attention.TypeEmbed[index * embed + row];
+                    _keys[token++] = obs[set.Present + slot * set.PresentStride] > 0.5f ? 1 : 0;
+                }
+            }
+        }
+        if (_seatAttention)
+        {
+            Attend();
+            // The attended slots are what the sets pool and the pointers read.
+            token = 1;
+            for (std::size_t index = 0; index < _seatSetList.size(); ++index)
+                for (uint32 slot = 0; slot < _seatSetList[index].Slots; ++slot, ++token)
+                    std::copy_n(_tokens.data() + std::size_t(token) * embed, embed,
+                        _seatCodes[index].data() + std::size_t(slot) * embed);
+        }
+        for (std::size_t index = 0; index < _seatSetList.size(); ++index)
+        {
+            SeatSet const& set = _seatSetList[index];
+            float* meanOut = _seatPooled.data() + 2 * embed * index;
+            float* maxOut = meanOut + embed;
+            std::fill(meanOut, meanOut + embed, 0.0f);
+            std::fill(maxOut, maxOut + embed, -std::numeric_limits<float>::infinity());
+            uint32 present = 0;
+            for (uint32 slot = 0; slot < set.Slots; ++slot)
+            {
+                // The learner's max is over every slot, an absent one counting -1 (EntitySets.pooled): with
+                // attention a present slot can read below -1, so the floor is only there when a slot is absent.
+                float const* code = _seatCodes[index].data() + std::size_t(slot) * embed;
+                bool const here = obs[set.Present + slot * set.PresentStride] > 0.5f;
+                present += here ? 1 : 0;
+                for (uint32 row = 0; row < embed; ++row)
+                {
+                    if (here)
+                        meanOut[row] += code[row];
+                    maxOut[row] = std::max(maxOut[row], here ? code[row] : -1.0f);
+                }
+            }
+            for (uint32 row = 0; row < embed; ++row)
+            {
+                meanOut[row] /= float(std::max<uint32>(1, present));
+                if (!present)
+                    maxOut[row] = 0.0f;
+            }
+        }
+        if (_seatAttention)
+            std::copy_n(_tokens.data(), embed, _seatPooled.data() + 2 * embed * _seatSetList.size());
+        std::size_t const pooledWidth = _seatPooled.size();
+        for (uint32 row = 0; row < _seatExtra.size(); ++row)
+        {
+            float sum = _seatPoolBias[row];
+            for (std::size_t col = 0; col < pooledWidth; ++col)
+                sum += _seatPoolWeight[std::size_t(row) * pooledWidth + col] * _seatPooled[col];
+            _seatExtra[row] = sum;
+        }
+    }
+
     // Every layer but the action head, which reads the features the memory and the goal are applied to.
     std::size_t const trunkLayers = _layers.size() - 1;
     for (std::size_t index = 0; index < trunkLayers; ++index)
@@ -630,6 +987,8 @@ int32 Animus::MlpPolicy::Decide(float const* obs, uint8 const* mask, State* stat
                 sum += weights[col] * in[col];
             if (_sets && index == 0)
                 sum += _setExtra[row];
+            if (_seatSets && index == 0)
+                sum += _seatExtra[row];
 
             out[row] = std::tanh(sum);
         }
@@ -943,26 +1302,29 @@ int32 Animus::MlpPolicy::Decide(float const* obs, uint8 const* mask, State* stat
             }
         }
 
+        // A seat layout's slot-naming actions, the same way, after the director's.
+        for (SeatPointer const& pointer : _seatPointers)
+        {
+            for (uint32 row = 0; row < _seatEmbed; ++row)
+            {
+                float sum = pointer.Bias[row];
+                for (uint32 col = 0; col < head.In; ++col)
+                    sum += pointer.Weight[std::size_t(row) * head.In + col] * in[col];
+                _query[row] = sum;
+            }
+            std::vector<float> const& codes = _seatCodes[pointer.Set];
+            for (uint32 slot = 0; slot < _seatSetList[pointer.Set].Slots; ++slot)
+            {
+                float score = 0.0f;
+                for (uint32 row = 0; row < _seatEmbed; ++row)
+                    score += codes[std::size_t(slot) * _seatEmbed + row] * _query[row];
+                out[pointer.First + slot] = score;
+            }
+        }
+
         std::swap(in, out);
     }
 
     // `in` now holds the logits.
-    int32 best = 0;
-    float bestLogit = -std::numeric_limits<float>::infinity();
-    bool anyAllowed = false;
-
-    for (uint32 action = 0; action < _numActions; ++action)
-    {
-        if (!mask[action])
-            continue;
-
-        if (!anyAllowed || in[action] > bestLogit)
-        {
-            best = int32(action);
-            bestLogit = in[action];
-            anyAllowed = true;
-        }
-    }
-
-    return anyAllowed ? best : 0;
+    return in;
 }

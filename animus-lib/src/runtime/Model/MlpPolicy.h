@@ -78,6 +78,10 @@ namespace Animus
         /// and is updated; without one the policy decides as if every decision were its first.
         int32 Decide(float const* obs, uint8 const* mask, State* state = nullptr);
 
+        /// The logits Decide chooses from, every action's, into `out` [NumActions]; `state` steps as Decide steps it.
+        /// False when no model is loaded. For checking the reader against the learner (the golden vectors).
+        bool Logits(float const* obs, float* out, State* state = nullptr);
+
         /// Whether the model carries a memory or goals, so its caller must keep a State per seat.
         [[nodiscard]] bool HasMemory() const { return _recurrentSize != 0; }
         [[nodiscard]] uint32 GoalCount() const { return _goalCount; }       // kinds; 0 without goals
@@ -88,6 +92,11 @@ namespace Animus
         [[nodiscard]] int32 SecondaryOf(State const& state) const;
 
     private:
+        /// One decision's forward pass: the logits (in scratch, valid until the next call), or nullptr unloaded.
+        float const* Forward(float const* obs, State* state);
+        /// The seat sets' attention layer (format 9), in place on _tokens.
+        void Attend();
+
         struct Layer
         {
             uint32 In = 0;
@@ -179,6 +188,42 @@ namespace Animus
         std::vector<float> _poolWeight, _poolBias;
         std::vector<Pointer> _pointers;
         std::vector<float> _memberCodes, _enemyCodes, _pooled, _setExtra, _query, _setHidden;   // scratch
+
+        /// A seat layout's entities as sets (format 8; the learner's EntitySets): per set a slot gathered from its
+        /// segments of the observation, one encoder per set, the present slots pooled (mean and max) onto the first
+        /// layer, and pointer heads scoring the actions that name a slot. None in a version 7 model.
+        struct SeatSet
+        {
+            uint32 Slots = 0, Width = 0, Present = 0, PresentStride = 0;
+            std::vector<std::pair<uint32, uint32>> Segments;     // (first column of slot 0, columns a slot)
+            std::vector<float> W1, B1, W2, B2;
+        };
+        struct SeatPointer
+        {
+            uint32 First = 0;
+            uint32 Set = 0;
+            std::vector<float> Weight, Bias;
+        };
+        /// Format 9: one pre-norm attention layer over the seat's tokens -- its own token, then every set's slots
+        /// (code + the set's type embedding) -- the absent slots no keys; the sets then pool the attended slots and
+        /// the attended own token joins the pool (its columns last).
+        struct SeatAttention
+        {
+            uint32 Heads = 0;
+            std::vector<float> TypeEmbed, OwnToken, NormAttendW, NormAttendB, InProjW, InProjB, OutProjW, OutProjB,
+                NormMixW, NormMixB, MixInW, MixInB, MixOutW, MixOutB;
+        };
+        bool _seatAttention = false;
+        SeatAttention _attention;
+        std::vector<float> _tokens, _normed, _qkv, _merged, _mixed, _scores;   // scratch [tokens * ...]
+        std::vector<uint8> _keys;                                              // scratch: a present key each token
+        bool _seatSets = false;
+        uint32 _seatEmbed = 0;
+        std::vector<SeatSet> _seatSetList;
+        std::vector<float> _seatPoolWeight, _seatPoolBias;
+        std::vector<SeatPointer> _seatPointers;
+        std::vector<std::vector<float>> _seatCodes;              // scratch: per set [slots * embed]
+        std::vector<float> _seatPooled, _seatExtra, _seatRaw;    // scratch
 
         std::vector<float> _scratchA;
         std::vector<float> _scratchB;
