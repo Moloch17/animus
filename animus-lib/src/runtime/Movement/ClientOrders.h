@@ -42,6 +42,7 @@ namespace Animus::Client
     namespace Op
     {
         // Server -> client.
+        constexpr uint16_t MSG_MOVE_TELEPORT_ACK = 0x0C7;   // to the client: a near teleport waits for its answer
         constexpr uint16_t SMSG_MOVE_WATER_WALK = 0x0DE;
         constexpr uint16_t SMSG_MOVE_LAND_WALK = 0x0DF;
         constexpr uint16_t SMSG_FORCE_RUN_SPEED_CHANGE = 0x0E2;
@@ -121,6 +122,10 @@ namespace Animus::Client
         GravityDisable,
         GravityEnable,
         Knockback,      // SMSG_MOVE_KNOCK_BACK (Cos, Sin, SpeedXY, SpeedZ)
+        /// MSG_MOVE_TELEPORT_ACK to the client (Player::TeleportTo on the same map, SendTeleportAckPacket): the
+        /// player has been put somewhere and the server waits for the same opcode back (HandleMoveTeleportAck)
+        /// before it lets go of the near-teleport semaphore. The client takes its position from there.
+        Teleport,
     };
 
     /// The core's UnitMoveType order (MOVE_WALK .. MOVE_PITCH_RATE), for a speed order.
@@ -185,6 +190,7 @@ namespace Animus::Client
             case Op::SMSG_MOVE_GRAVITY_DISABLE:
             case Op::SMSG_MOVE_GRAVITY_ENABLE:
             case Op::SMSG_MOVE_KNOCK_BACK:
+            case Op::MSG_MOVE_TELEPORT_ACK:
                 return true;
             default:
                 return false;
@@ -296,6 +302,7 @@ namespace Animus::Client
             case Op::SMSG_MOVE_UNSET_HOVER: return plain(OrderKind::UnsetHover);
             case Op::SMSG_MOVE_GRAVITY_DISABLE: return plain(OrderKind::GravityDisable);
             case Op::SMSG_MOVE_GRAVITY_ENABLE: return plain(OrderKind::GravityEnable);
+            case Op::MSG_MOVE_TELEPORT_ACK: return plain(OrderKind::Teleport);    // its MovementInfo is not read
             case Op::SMSG_MOVE_KNOCK_BACK:
                 order.Kind = OrderKind::Knockback;
                 if (!in.Read(order.Cos) || !in.Read(order.Sin) || !in.Read(order.SpeedXY) || !in.Read(order.SpeedZ))
@@ -325,6 +332,7 @@ namespace Animus::Client
             case OrderKind::GravityDisable: return Op::CMSG_MOVE_GRAVITY_DISABLE_ACK;
             case OrderKind::GravityEnable: return Op::CMSG_MOVE_GRAVITY_ENABLE_ACK;
             case OrderKind::Knockback: return Op::CMSG_MOVE_KNOCK_BACK_ACK;
+            case OrderKind::Teleport: return Op::MSG_MOVE_TELEPORT_ACK;
             case OrderKind::Speed:
                 switch (order.Speed)
                 {

@@ -57,7 +57,10 @@ keeps the module's own (the model reader, the loader and `CoreHooks`, and the bo
 lists any include the bundle can no longer resolve, records the forge revision in `animus-lib/FORGE_REVISION`, and
 checks the conf template documents every tuning key. A realm must build the manifests its models were trained with,
 so refresh it from the forge revision of the models, together with them, then build against a stock core (a
-forge-only call only fails at link).
+forge-only call only fails at link). The script ends by comparing every shared file with the forge's byte for byte
+and fails on any difference (`--check` does only that); `--only Movement` refreshes one directory, and
+`animus-lib/FORGE_REVISION` then records it on a line of its own. `Movement/` is the player controller and the client
+logic the forge and this module share; the module's own server link for it is `src/Client`.
 
 ## The addon
 

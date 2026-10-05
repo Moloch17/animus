@@ -133,6 +133,20 @@ void Animus::Client::CompanionClient::Ack(Player* bot, Order const& order, Movem
         return;
 
     WorldSession* session = bot->GetSession();
+    if (order.Kind == OrderKind::Teleport)
+    {
+        // A near teleport waits for the same opcode back (HandleMoveTeleportAck: guid, counter, time). The module's
+        // own teleports acknowledge themselves at once (BotFactory), so by now there may be nothing waiting.
+        if (bot->IsBeingTeleportedNear())
+        {
+            WorldPacket ack(MSG_MOVE_TELEPORT_ACK, 16);
+            ack << bot->GetPackGUID();
+            ack << uint32(order.Counter) << uint32(_clock.Now());
+            session->HandleMoveTeleportAck(ack);
+            ++_acks;
+        }
+        return;
+    }
     info.guid = _bot;
     info.time = _clock.Now();
     // A knockback is acknowledged as the fall it launches: HandleMoveKnockBackAck relays these jump fields to every

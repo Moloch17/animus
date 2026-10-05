@@ -40,9 +40,10 @@ class WorldSession;
 ///   spline in progress, DISABLE_MOVE, roots, the anticheat hooks), lands falls (HandleFall), moves the player
 ///   (zone, grid, visibility, transports) and relays it to every player watching. Each report is checked afterwards
 ///   against what the server kept (the post-check): a refusal is a signal, counted, and returned to the caller.
-/// - **Answers the server**: the orders it sends a client about its own movement (ClientOrders.h) are taken off
-///   the session as they are sent (ServerScript::OnPacketSent, which fires for sessions without a socket), queued,
-///   and acknowledged on the companion's tick with the counter they carried, through the stock ack handlers.
+/// - **Answers the server**: the orders it sends a client about its own movement (Movement/ClientOrders.h, shared
+///   with the forge) are taken off the session as they are sent (ServerScript::OnPacketSent, which fires for
+///   sessions without a socket), queued, and acknowledged on the companion's tick with the counter they carried,
+///   through the stock ack handlers.
 /// - **Keeps a clock** and answers time sync, so the server's movement times are synchronised as a client's are.
 ///
 /// When to report, and what the body does about an order, is the controller's (shared with the forge behind the C4

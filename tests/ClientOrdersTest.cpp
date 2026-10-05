@@ -16,11 +16,12 @@
  * with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
-// The companion client's pure half (src/Client/ClientOrders.h), tested on its own: the module has no test target
-// and a stock core builds none for it, so this is a standalone program (outside src/, never built into the server):
+// The client's orders (animus-lib/src/runtime/Movement/ClientOrders.h, bundled byte for byte from the forge, where
+// its GTests run), checked here against the stock core the realm runs: the module has no test target and a stock core
+// builds none for it, so this is a standalone program (outside src/, never built into the server):
 //
-//     g++ -std=c++20 -O1 -Wall -Wextra -pthread -I src/Client tests/ClientOrdersTest.cpp -o /tmp/client_orders_test
-//     /tmp/client_orders_test
+//     g++ -std=c++20 -O1 -Wall -Wextra -pthread -I animus-lib/src/runtime/Movement tests/ClientOrdersTest.cpp \
+//         -o /tmp/client_orders_test && /tmp/client_orders_test
 //
 // Packets are built byte for byte as the stock core writes them (the functions named beside each), and the flags a
 // client acknowledges with are checked against the stock core's ReadMovementInfo rules (StockStrips, copied from
@@ -189,6 +190,14 @@ namespace
         CHECK(order && order->Kind == OrderKind::Knockback && order->Counter == 12 && order->Cos == 0.6f
             && order->Sin == 0.8f && order->SpeedXY == 10.0f && order->SpeedZ == -7.0f
             && AckOpcode(*order) == Op::CMSG_MOVE_KNOCK_BACK_ACK);
+
+        // Player::SendTeleportAckPacket (a near teleport): guid, counter, then movement the client does not read.
+        Bytes teleport;
+        teleport.PackedGuid(SELF).Put<uint32_t>(13).Put<uint32_t>(0).Put<uint16_t>(0);
+        order = Decode(Op::MSG_MOVE_TELEPORT_ACK, teleport.Data.data(), teleport.Data.size(), SELF);
+        CHECK(order && order->Kind == OrderKind::Teleport && order->Counter == 13
+            && AckOpcode(*order) == Op::MSG_MOVE_TELEPORT_ACK);
+        CHECK(!Decode(Op::MSG_MOVE_TELEPORT_ACK, teleport.Data.data(), teleport.Data.size(), OTHER));
 
         // WorldSession::SendTimeSync: the counter alone.
         Bytes sync;
