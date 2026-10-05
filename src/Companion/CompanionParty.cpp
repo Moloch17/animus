@@ -81,6 +81,9 @@ namespace
     // Following the owner is the model's own, with the keys it holds: nothing here leashes, teleports or walks a
     // companion that has fallen behind on the owner's map, and a companion with no model is not kept at all.
 
+    /// How often the owner's aptitude is read again (CompanionParty::RefreshOwnerAptitude).
+    constexpr uint64 OWNER_APT_EVERY_MS = 10000;
+
     /// A dead companion stands up again this long after the party is out of combat.
     constexpr uint32 RESURRECT_DELAY_MS = 10000;
 
@@ -402,6 +405,7 @@ Animus::CompanionParty::Status Animus::CompanionParty::Update(uint32 diff, Setti
             present.push_back(bot);
 
     UpdatePull(owner, present);
+    RefreshOwnerAptitude(owner);
     Direct(owner, settings, models, diff);
 
     for (std::unique_ptr<Member> const& member : _members)
@@ -734,6 +738,24 @@ void Animus::CompanionParty::Direct(Player* owner, Settings const& settings, Mod
     Curriculum::DirectorRules::Apply(_orders, _directorSteps, action, members.data(), own, callable.data(), count,
         true);
     ++_directorSteps;
+}
+
+void Animus::CompanionParty::RefreshOwnerAptitude(Player* owner)
+{
+    if (!owner || (_ownerAptMs && _nowMs - _ownerAptMs < OWNER_APT_EVERY_MS))
+        return;
+    _ownerAptMs = std::max<uint64>(1, _nowMs);
+
+    // A real player's build, read as a companion's is (ReadBuild, Aptitude::Of): its talents, the spells it knows and
+    // what it wears.
+    ClassProfile const* profile = ClassAssets::FindProfile(owner->getClass());
+    if (!profile)
+    {
+        _ownerApt.reset();
+        return;
+    }
+    ClassAssets const& assets = ClassAssets::For(*profile);
+    _ownerApt = Aptitude::Of(assets, ReadBuild(assets, owner), owner);
 }
 
 void Animus::CompanionParty::StartEpisode(Player* owner)
@@ -1092,8 +1114,10 @@ Animus::Curriculum::SeatView Animus::CompanionParty::View(Member const& member, 
         view.DrinkItem = member.DrinkItem;
     }
 
-    // The owner is the player the companions fight for (the forge's scripted owner).
+    // The owner is the player the companions fight for (the forge's scripted owner), with what it can do -- as the
+    // forge's owner encounter gives it (OwnerEncounter::View). Unset would read as "there is no owner".
     view.Owner = owner;
+    view.OwnerApt = owner ? _ownerApt : std::nullopt;
 
     // The other companions are the party's other seats.
     uint32 slot = 0;

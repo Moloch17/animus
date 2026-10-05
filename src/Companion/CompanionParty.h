@@ -35,6 +35,7 @@
 #include <array>
 #include <atomic>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -333,6 +334,8 @@ namespace Animus
         void LevelUp(Member& member, Player* bot, Player* owner) const;
         [[nodiscard]] uint8 LevelFor(Member const& member, Player* owner) const;
         void StartEpisode(Player* owner);
+        /// The owner's aptitude, read again when it is older than OWNER_APT_EVERY_MS (or never read).
+        void RefreshOwnerAptitude(Player* owner);
         /// The party's director (Component E), once a decision: when it gets a turn (the forge's rules,
         /// DirectorRules), what it sees of the party and its enemies, and the calls it makes. Only for two or more
         /// companions whose layouts read orders, and only with the stage's director model there.
@@ -367,6 +370,11 @@ namespace Animus
         bool _foughtBefore = false;                         // quiet time counts from the first fight's end
         bool _episodeStarted = false;
         uint32 _pullsCleared = 0;
+        /// What the owner can do (SeatView::OwnerApt), read off the owner's own talents, spells and gear as the
+        /// forge's owner encounter gives its seats the owner's aptitude. Read again every OWNER_APT_EVERY_MS (talents
+        /// and gear change between fights, not within a decision); unset only when the owner's class has no profile.
+        std::optional<Curriculum::Aptitude> _ownerApt;
+        uint64 _ownerAptMs = 0;
     };
 }
 
