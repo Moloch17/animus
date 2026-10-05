@@ -276,6 +276,16 @@ namespace
         int64_t const delta = int64_t(serverAtSent) + int64_t(roundTrip / 2) - int64_t(clientAtArrival);
         CHECK(delta != 0);
         CHECK(int64_t(clientAtArrival + 400) + delta == int64_t(serverAtSent + 400));
+
+        // A companion's client is started a second ahead of the server (CompanionClient): whatever the server's
+        // uptime, the delta is about -1000, never within the 25 ms the core needs to replace its unsynced 0.
+        for (uint32_t serverUptime : { 0u, 250u, 1000000u, 999990u, 4000000000u })
+        {
+            Clock ahead(origin, serverUptime + 1000);
+            int64_t const d = int64_t(serverUptime) - int64_t(ahead.At(origin));
+            CHECK(std::abs(d) > 25 || serverUptime + 1000 == 0);
+        }
+        CHECK(Clock(origin, 0).At(origin) == Clock::CLOCK_BASE);    // a 0 base is never used
     }
 
     void TestInboxConcurrent()

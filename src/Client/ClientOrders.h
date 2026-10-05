@@ -397,28 +397,31 @@ namespace Animus::Client
         }
     }
 
-    /// The client's clock: milliseconds since the client "started", as GetTickCount is on a real one. It starts at
-    /// CLOCK_BASE rather than 0 so a time is never 0, and it is its own steady clock, not the server's getMSTime: an
-    /// offset subtracted from getMSTime would underflow in the server's first second, and a client clock equal to the
-    /// server's would make the time-sync delta 0, which the core reads as "never synced".
+    /// The client's clock: milliseconds of its own steady clock, as GetTickCount is on a real one, starting at `base`
+    /// (CLOCK_BASE by default) rather than 0, so a time is never 0 and never wraps soon after it starts. It is not the
+    /// server's getMSTime: an offset subtracted from that would underflow in the server's first second. The core keeps
+    /// a time-sync delta of 0 as "never synced" and only replaces it by one more than 25 ms away (ComputeNewClockDelta),
+    /// so a companion's client is started a second ahead of the server's clock (CompanionClient) and its delta is
+    /// always about -1000.
     class Clock
     {
     public:
         static constexpr uint32_t CLOCK_BASE = 1000000;
 
-        explicit Clock(std::chrono::steady_clock::time_point origin = std::chrono::steady_clock::now())
-            : _origin(origin) { }
+        explicit Clock(std::chrono::steady_clock::time_point origin = std::chrono::steady_clock::now(),
+            uint32_t base = CLOCK_BASE) : _origin(origin), _base(base ? base : CLOCK_BASE) { }
 
         [[nodiscard]] uint32_t At(std::chrono::steady_clock::time_point when) const
         {
             auto const ms = std::chrono::duration_cast<std::chrono::milliseconds>(when - _origin).count();
-            return CLOCK_BASE + uint32_t(ms < 0 ? 0 : ms);
+            return _base + uint32_t(ms < 0 ? 0 : ms);
         }
 
         [[nodiscard]] uint32_t Now() const { return At(std::chrono::steady_clock::now()); }
 
     private:
         std::chrono::steady_clock::time_point _origin;
+        uint32_t _base;
     };
 
     /// The orders waiting for the companion's tick: the "network" between the server's send and the client's

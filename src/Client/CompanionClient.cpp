@@ -20,6 +20,7 @@
 #include "Log.h"
 #include "MoveSpline.h"
 #include "Player.h"
+#include "Timer.h"
 #include "WorldPacket.h"
 #include "WorldSession.h"
 #include <shared_mutex>
@@ -27,6 +28,10 @@
 
 namespace
 {
+    /// The client's clock starts this far ahead of the server's (Clock): the time-sync delta is then about -1000 ms,
+    /// never within the 25 ms the core needs to replace its "never synced" 0.
+    constexpr uint32 CLOCK_LEAD_MS = 1000;
+
     std::shared_mutex RegistryMutex;
     std::unordered_map<WorldSession*, std::shared_ptr<Animus::Client::CompanionClient>> Registry;
 
@@ -54,7 +59,8 @@ char const* Animus::Client::RefusalName(Refusal refusal)
     }
 }
 
-Animus::Client::CompanionClient::CompanionClient(ObjectGuid bot) : _bot(bot)
+Animus::Client::CompanionClient::CompanionClient(ObjectGuid bot)
+    : _bot(bot), _clock(std::chrono::steady_clock::now(), getMSTime() + CLOCK_LEAD_MS)
 {
 }
 
@@ -129,6 +135,18 @@ void Animus::Client::CompanionClient::Ack(Player* bot, Order const& order, Movem
     WorldSession* session = bot->GetSession();
     info.guid = _bot;
     info.time = _clock.Now();
+    // A knockback is acknowledged as the fall it launches: HandleMoveKnockBackAck relays these jump fields to every
+    // watching player, and they are written only with FALLING set.
+    if (order.Kind == OrderKind::Knockback)
+    {
+        info.AddMovementFlag(MOVEMENTFLAG_FALLING);
+        info.RemoveMovementFlag(MOVEMENTFLAG_ROOT);
+        info.SetFallTime(0);
+        info.jump.zspeed = order.SpeedZ;
+        info.jump.sinAngle = order.Sin;
+        info.jump.cosAngle = order.Cos;
+        info.jump.xyspeed = order.SpeedXY;
+    }
 
     // The stock ack handlers read: packed guid, the counter (the knockback ack's "unk" is the same counter), the
     // client's movement, then the speed (speed acks) or "is applied" (flag acks other than gravity).
