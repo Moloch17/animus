@@ -78,6 +78,7 @@ namespace
                 { "purge",      HandlePurgeCommand,     SEC_ADMINISTRATOR, Console::Yes },
                 { "life",       HandleLifeCommand,      SEC_GAMEMASTER, Console::Yes },
                 { "models",     HandleModelsCommand,    SEC_GAMEMASTER, Console::Yes },
+                { "rate",       HandleRateCommand,      SEC_PLAYER,     Console::No },
                 { "stage",      stageCommandTable },
             };
 
@@ -152,6 +153,15 @@ namespace
         static bool HandleModelsCommand(ChatHandler* handler)
         {
             return ReplyLines(handler, sAnimusMod->ModelStatus(), "No classes.");
+        }
+
+        /// .animus rate <+|-> [movement|combat|healing|tanking|stuck|other]: your verdict on your companion's play,
+        /// recorded for training (Animus.Capture). Any player may rate their own companion.
+        static bool HandleRateCommand(ChatHandler* handler, std::string_view sign, Optional<std::string_view> reason)
+        {
+            std::string message;
+            return Reply(handler, sAnimusMod->Rate(handler->GetPlayer(), sign, reason.value_or(""), message),
+                message);
         }
 
         /// .animus stage list: every curriculum stage and its arenas -- the names Animus.Curriculum.Stage takes.

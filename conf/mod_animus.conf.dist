@@ -1187,3 +1187,89 @@ Animus.Life.Crafting = 1
 #        Default:     20
 
 Animus.Life.IdleSeconds = 20
+
+###################################################################################################
+# PLAY CAPTURE
+#
+#    Recording what every player on the realm does (movement packets, casts, targets, outcomes,
+#    world snapshots) and what the companions decide, to files the forge trains on (README, "Play
+#    capture"; the file format is doc/capture-format.md). Everyone is recorded, with no opt-in;
+#    players are told at login (Animus.Capture.LoginNotice). No chat, names, account data or IPs
+#    are written: characters and units are hashed ids, salted with <Dir>/salt.
+#
+#    Animus.Capture.Enable
+#        Description: Record play to Animus.Capture.Dir. Can be switched on and off with
+#                     ".reload config"; the first switch on needs Dir set.
+#        Default:     0 - (Disabled)
+#                     1 - (Enabled)
+
+Animus.Capture.Enable = 0
+
+#
+#    Animus.Capture.Dir
+#        Description: Where the files go: <Dir>/<yyyy-mm-dd>/<hh>/<stream>-<map>.bin.gz (UTC), an
+#                     index.json per hour, and <Dir>/salt (made once, never replaced). Must be a
+#                     writable directory with room to grow: nothing is ever deleted (under Docker,
+#                     not the read-only data volume; mount a volume for it). Unset, capture stays
+#                     off and the startup log says so. Read at startup only.
+#        Default:     ""
+
+Animus.Capture.Dir = ""
+
+#
+#    Animus.Capture.SnapshotMs
+#    Animus.Capture.IdleSnapshotMs
+#        Description: How often a player's world snapshot (self, nearby units, auras, cooldowns) is
+#                     taken, in milliseconds: SnapshotMs while in combat or moving, IdleSnapshotMs
+#                     otherwise. Snapshots are most of the volume; the idle rate is the first lever
+#                     if storage runs short. Movement is never thinned.
+#        Default:     250, 1000
+
+Animus.Capture.SnapshotMs = 250
+Animus.Capture.IdleSnapshotMs = 1000
+
+#
+#    Animus.Capture.Streams
+#        Description: Which streams are written, a sum of: 1 session, 2 move, 4 action,
+#                     8 snapshot, 16 outcome, 32 companion.
+#        Default:     63 - (all)
+
+Animus.Capture.Streams = 63
+
+#
+#    Animus.Capture.FlushMs
+#        Description: How often buffered records are compressed and appended to their files, in
+#                     milliseconds. A crash loses at most this much.
+#        Default:     1000
+
+Animus.Capture.FlushMs = 1000
+
+#
+#    Animus.Capture.BufferRecords
+#        Description: Each producing thread's buffer (the world thread and every map thread), in
+#                     128-byte record slots: a movement record takes one, a crowded snapshot up to
+#                     about thirty. A full buffer drops records, never waits; drops are logged and
+#                     counted in the hour's index.json. Read at startup only.
+#        Default:     32768 - (4 MiB a thread)
+
+Animus.Capture.BufferRecords = 32768
+
+#
+#    Animus.Capture.DiskWarnGB
+#    Animus.Capture.DiskReserveGB
+#        Description: Free space under Dir, checked every ten seconds. Below DiskWarnGB a warning is
+#                     logged (every ten minutes); below DiskReserveGB the snapshot stream pauses
+#                     (logged loudly, recorded in the hour's index.json) and resumes 1 GB above it.
+#                     Movement and the other streams are never paused.
+#        Default:     50, 10
+
+Animus.Capture.DiskWarnGB = 50
+Animus.Capture.DiskReserveGB = 10
+
+#
+#    Animus.Capture.LoginNotice
+#        Description: Told to every player at login while capture is on. Empty: no notice.
+#        Default:     "Play on this realm is recorded (movement, actions and combat; never chat or
+#                     account details) to train its bots to play like people."
+
+Animus.Capture.LoginNotice = "Play on this realm is recorded (movement, actions and combat; never chat or account details) to train its bots to play like people."

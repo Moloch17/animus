@@ -18,6 +18,7 @@
 
 void Addmod_animus_libScripts();
 void AddSC_animus();
+void AddSC_animus_capture();
 
 // Called by the generated modules loader; the name is Add<module dir with - as _>Scripts.
 void Addmod_animusScripts()
@@ -25,4 +26,6 @@ void Addmod_animusScripts()
     // animus-lib's hooks, which feed the stage viewers' env pools (registered once, whichever module asks first).
     Addmod_animus_libScripts();
     AddSC_animus();
+    // Recording every player's play to files for training (Animus.Capture.*, off by default).
+    AddSC_animus_capture();
 }

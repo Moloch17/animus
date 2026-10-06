@@ -67,6 +67,7 @@ Requests (lower case):
 | `pettalent <name> learn\|unlearn <talent id>` | `ERR`, or the pet (below) |
 | `pet <name>` | `PET` and one `PETTALENT` per talent of its tree, or `ERR` for a companion without a hunter pet out |
 | `equip <name> <bag> <slot> <inventory slot>` | `OK` or `ERR`; bag 0 is the backpack, slots from 1, inventory slots 1 to 19 as the client numbers them |
+| `rate +\|- [movement\|combat\|healing\|tanking\|stuck\|other]` | `OK` or `ERR`: your verdict on your companion's play, recorded for training when the realm records play (the Good and Bad buttons) |
 
 Replies (upper case, so the addon can tell an answer from its own request echoed back by a realm without the
 module):

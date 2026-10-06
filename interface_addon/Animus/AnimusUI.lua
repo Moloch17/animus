@@ -224,6 +224,21 @@ dismissButton:SetPoint("LEFT", summonButton, "RIGHT", 8, 0)
 dismissButton:SetText("Dismiss")
 dismissButton:SetScript("OnClick", A.Dismiss)
 
+-- How it played: recorded for training (Animus.Capture), shown while it is out.
+local rateGoodButton = CreateFrame("Button", "AnimusRateGoodButton", companionPanel, "UIPanelButtonTemplate")
+rateGoodButton:SetWidth(60)
+rateGoodButton:SetHeight(24)
+rateGoodButton:SetPoint("LEFT", dismissButton, "RIGHT", 8, 0)
+rateGoodButton:SetText("Good")
+rateGoodButton:SetScript("OnClick", function() A.Rate("+") end)
+
+local rateBadButton = CreateFrame("Button", "AnimusRateBadButton", companionPanel, "UIPanelButtonTemplate")
+rateBadButton:SetWidth(60)
+rateBadButton:SetHeight(24)
+rateBadButton:SetPoint("LEFT", rateGoodButton, "RIGHT", 4, 0)
+rateBadButton:SetText("Bad")
+rateBadButton:SetScript("OnClick", function() A.Rate("-") end)
+
 local renameLabel = companionPanel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
 renameLabel:SetPoint("TOPLEFT", summonButton, "BOTTOMLEFT", 0, -16)
 renameLabel:SetText("Rename")
@@ -333,6 +348,8 @@ local function Refresh(s)
 
         SetEnabled(summonButton, ready and not companion.out)
         SetEnabled(dismissButton, ready and companion.out and not companion.loading)
+        SetEnabled(rateGoodButton, ready and companion.out and not companion.loading)
+        SetEnabled(rateBadButton, ready and companion.out and not companion.loading)
         SetEnabled(renameButton, ready and not companion.loading)
         SetEnabled(rerollButton, ready and not companion.loading and chosen.race ~= nil and chosen.class ~= nil)
     else

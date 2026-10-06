@@ -240,6 +240,15 @@ bool Animus::Addon::Handle(Player* player, std::string_view msg)
         else
             SendResult(player, sAnimusMod->Equip(player, words[1], *bag, *slot, *equipSlot, message), message);
     }
+    else if (request == "rate")
+    {
+        // rate +|- [movement|combat|healing|tanking|stuck|other]
+        if (words.size() != 2 && words.size() != 3)
+            SendResult(player, false, "A rating is + or -, then optionally why.");
+        else
+            SendResult(player, sAnimusMod->Rate(player, words[1], words.size() == 3 ? words[2] : "", message),
+                message);
+    }
     else
         SendResult(player, false, Acore::StringFormat("Unknown request {}.", request));
 
