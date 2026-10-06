@@ -1,8 +1,8 @@
 {
-  "format": 1,
+  "format": 2,
   "identity": {"salt_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f", "tag": "player", "guid": 1, "hashed_bytes": "salt || tag (ascii, no terminator) || guid (u64 little-endian)", "id": 15289167984064978332, "sha256_of_empty": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},
   "records": [
-    {"type": 0, "name": "FileHeader", "fields": {"magic": "ANCAP", "format": 1, "stream": 2, "opened_ms": 1791216000123, "module_revision": "0123456789abcdef0123456789abcdef01234567", "realm_build": "5c87f702f"}},
+    {"type": 0, "name": "FileHeader", "fields": {"magic": "ANCAP", "format": 2, "stream": 2, "opened_ms": 1791216000123, "module_revision": "0123456789abcdef0123456789abcdef01234567", "realm_build": "5c87f702f"}},
     {"type": 1, "name": "SessionStart", "fields": {"ms": 1791216000123, "player": 1234605616436508552, "session": 72623859790382856, "class": 8, "race": 7, "gender": 1, "level": 42, "tree_points": [31, 5, 0], "item_level": 187, "map": 1, "zone": 17, "area": 380, "latency_ms": 87, "client_build": 12340, "kind": 0}},
     {"type": 2, "name": "SessionContext", "fields": {"ms": 1791216001123, "player": 1234605616436508552, "session": 72623859790382856, "class": 8, "race": 7, "gender": 1, "level": 43, "tree_points": [31, 5, 0], "item_level": 187, "map": 1, "zone": 17, "area": 381, "latency_ms": 87, "client_build": 12340, "kind": 0}},
     {"type": 3, "name": "SessionEnd", "fields": {"ms": 1791216002123, "player": 1234605616436508552, "session": 72623859790382856, "reason": 1}},
@@ -10,6 +10,9 @@
     {"type": 5, "name": "KnownSpells", "fields": {"ms": 1791216004123, "player": 1234605616436508552, "count": 3, "spells": [133, 116, 2136]}},
     {"type": 6, "name": "Latency", "fields": {"ms": 1791216005123, "player": 1234605616436508552, "latency_ms": 95}},
     {"type": 10, "name": "Move", "fields": {"ms": 1791216006123, "player": 1234605616436508552, "client_ms": 123456789, "opcode": 181, "move_flags": 4097, "move_flags2": 32, "x": -8913.25, "y": 554.5, "z": 93.125, "o": 1.5, "pitch": -0.25, "fall_ms": 350, "jump_zspeed": -7.5, "jump_sin": 0.5, "jump_cos": -0.75, "jump_xyspeed": 7, "map": 0, "source": 0}},
+    {"type": 10, "name": "Move", "fields": {"ms": 1791216006223, "player": 81985529216486895, "client_ms": 1006100, "opcode": 238, "move_flags": 1, "move_flags2": 0, "x": -8910.5, "y": 554.5, "z": 93.125, "o": 1.5, "pitch": 0, "fall_ms": 0, "jump_zspeed": 0, "jump_sin": 0, "jump_cos": 0, "jump_xyspeed": 0, "map": 0, "source": 2}},
+    {"type": 13, "name": "MoverState", "fields": {"ms": 1791216006323, "player": 1234605616436508552, "kind": 0, "class": 1, "race": 1, "level": 60, "map": 0, "zone": 12, "mount": 23229, "form": 0, "in_combat": 1, "move_revision": 0, "model": ""}},
+    {"type": 13, "name": "MoverState", "fields": {"ms": 1791216006423, "player": 81985529216486895, "kind": 1, "class": 11, "race": 4, "level": 60, "map": 0, "zone": 12, "mount": 0, "form": 5, "in_combat": 0, "move_revision": 2, "model": "druid_travel"}},
     {"type": 11, "name": "Speeds", "fields": {"ms": 1791216007123, "player": 1234605616436508552, "walk": 2.5, "run": 7, "run_back": 4.5, "swim": 4.75, "swim_back": 2.5, "flight": 7, "flight_back": 4.5, "turn_rate": 3.140625, "pitch_rate": 3.140625}},
     {"type": 12, "name": "MotionEvent", "fields": {"ms": 1791216008123, "player": 1234605616436508552, "event": 1, "arg": 458, "x": -8913.25, "y": 554.5, "z": 93.125, "map": 0}},
     {"type": 20, "name": "CastRequest", "fields": {"ms": 1791216009123, "player": 1234605616436508552, "spell": 133, "target": 14757170078986272771, "target_kind": 5, "tx": 1.25, "ty": -2.5, "tz": 3.75, "gcd_active": 1, "casting": 0, "power": 1234, "power_type": 0}},

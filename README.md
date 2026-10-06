@@ -117,7 +117,7 @@ forge's `apps/forge/python/animus/human/FORMAT.md`):
 | Stream | Content |
 |---|---|
 | session | login, logout, class, race, level, talent points, item level, map/zone/area and group changes, known spells, latency |
-| move | every movement packet the client sends, unquantised, with the client's own time; speeds; mount, taxi, teleport, loading screen, death, resurrect, root/stun/fear, knockback, shapeshift, vehicle and transport events; a sample of each companion's position at each decision |
+| move | every movement packet the client sends, unquantised, with the client's own time; speeds; mount, taxi, teleport, loading screen, death, resurrect, root/stun/fear, knockback, shapeshift, vehicle and transport events; each mover's state (class, race, level, map, zone, mount, form, combat, a companion's model and move revision); companions' packets, which their player controller sends through their session as a client does (source 2) |
 | action | cast requests, refusals, casts going off and their ends; target selection; item use; attack start/stop; interactions (gossip, loot, quests, objects, vendors, flight masters, mail, auction house, trainers, banks, innkeepers) |
 | snapshot | every 250 ms in combat or moving, 1 s otherwise: the player, the nearest 24 hostile and 10 friendly units within 40 yards, party members on the map and the pet, auras and cooldowns |
 | outcome | damage and healing to or from a player, kills, deaths with cause, quests, boss encounters, PvP kills and duels, area changes |

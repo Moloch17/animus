@@ -113,6 +113,21 @@ namespace
         uint32 Transport = 0;
         bool Loading = false;
 
+        // The MoverState last written (WriteMoverState on change).
+        bool MoverWritten = false;
+        uint32 MoverMount = 0;
+        uint32 MoverForm = 0;
+        bool MoverCombat = false;
+        uint8 MoverLevel = 0;
+        uint32 MoverMap = 0;
+        uint32 MoverZone = 0;
+        uint8 MoverKind = 0;
+        // A companion's model and its move block revision (CompanionModel, world thread while maps are idle).
+        std::string Model;
+        uint8 MoveRevision = 0;
+        std::string MoverModel;
+        uint8 MoverRevision = 0;
+
         uint64 SubmergedSinceMs = 0;
         uint8 LastEnvType = 0xFF;           // the last environmental damage (EnviromentalDamage), for a death's cause
         uint64 LastEnvMs = 0;
@@ -382,6 +397,55 @@ namespace
         return state;
     }
 
+    uint32 MountSpellOf(Player const* player)
+    {
+        if (!player->IsMounted())
+            return 0;
+        Unit::AuraEffectList const& mounts = player->GetAuraEffectsByType(SPELL_AURA_MOUNTED);
+        return mounts.empty() ? 1 : mounts.front()->GetId();
+    }
+
+    /// The MoverState record, when anything it carries changed since the last one (or there was none): who moves
+    /// (kind, class, race, level), where (map, zone), and under what (mount, form, combat; a companion's model and
+    /// move block revision). Players and companions alike, so their motion is compared like with like.
+    void PollMover(Player* player, PlayerState& state, uint64 now)
+    {
+        uint32 const mount = MountSpellOf(player);
+        uint32 const form = player->GetShapeshiftForm();
+        bool const combat = player->IsInCombat();
+        if (state.MoverWritten && mount == state.MoverMount && form == state.MoverForm && combat == state.MoverCombat
+            && state.Level == state.MoverLevel && state.Map == state.MoverMap && state.Zone == state.MoverZone
+            && state.Model == state.MoverModel && state.MoveRevision == state.MoverRevision && state.Kind
+            == state.MoverKind)
+            return;
+        state.MoverWritten = true;
+        state.MoverMount = mount;
+        state.MoverForm = form;
+        state.MoverCombat = combat;
+        state.MoverLevel = state.Level;
+        state.MoverMap = state.Map;
+        state.MoverZone = state.Zone;
+        state.MoverModel = state.Model;
+        state.MoverRevision = state.MoveRevision;
+        state.MoverKind = state.Kind;
+
+        F::MoverState record;
+        record.Ms = now;
+        record.Player = state.Id;
+        record.Kind = state.Kind;
+        record.Class = player->getClass();
+        record.Race = player->getRace();
+        record.Level = state.Level;
+        record.Map = state.Map;
+        record.Zone = state.Zone;
+        record.Mount = mount;
+        record.Form = form;
+        record.InCombat = combat ? 1 : 0;
+        record.MoveRevision = state.Kind ? state.MoveRevision : 0;
+        record.Model = state.Kind ? std::string_view(state.Model) : std::string_view();
+        Writer().Write(F::Stream::Move, player->GetMapId(), record);
+    }
+
     /// Edges of what moves the player without its keys, and of its mode, polled each update.
     void PollMotion(Player* player, PlayerState& state)
     {
@@ -644,6 +708,7 @@ namespace
                 WriteSpeeds(player, *state, now);
             }
             PollMotion(player, *state);
+            PollMover(player, *state, now);
         }
 
         // Companions' own decisions and motion are the companion stream's; snapshots are of the players.
@@ -1143,7 +1208,11 @@ namespace
             record.JumpCos = info.jump.cosAngle;
             record.JumpXYSpeed = info.jump.xyspeed;
             record.Map = player->GetMapId();
-            record.Source = 0;
+            // The same handler, the same point and the same fields for both: a companion's packet is its player
+            // controller's, reported through its session as a client's is (CompanionClient), with its own clock.
+            PlayerState const* state = StateOf(player);
+            bool const companion = state ? state->Kind != 0 : sAnimusMod->IsBot(player->GetGUID());
+            record.Source = uint8(companion ? F::MoveSource::ControllerPacket : F::MoveSource::ClientPacket);
             sCaptureWriter->Write(F::Stream::Move, record.Map, record);
 
             if (opcode == CMSG_MOVE_KNOCK_BACK_ACK)
@@ -1370,24 +1439,15 @@ void Animus::Capture::CompanionDecision(Player* bot, ObjectGuid owner, std::stri
     sCaptureWriter->Write(F::Stream::Companion, CaptureWriter::MAP_ALL, record);
 }
 
-void Animus::Capture::CompanionSample(Player* bot)
+void Animus::Capture::CompanionModel(Player* bot, std::string_view model, uint8 moveRevision)
 {
+    // World thread, while maps are idle (CompanionParty::Decide): the map thread's PollMover reads these.
     if (!bot || !bot->IsInWorld() || !sCaptureWriter->On(F::Stream::Move))
         return;
-    F::Move record;
-    record.Ms = CaptureWriter::NowMs();
-    record.Player = PlayerIdOf(bot);
-    record.MoveFlags = bot->m_movementInfo.GetMovementFlags();
-    record.MoveFlags2 = bot->m_movementInfo.GetExtraMovementFlags();
-    record.X = bot->GetPositionX();
-    record.Y = bot->GetPositionY();
-    record.Z = bot->GetPositionZ();
-    record.O = bot->GetOrientation();
-    record.Pitch = bot->m_movementInfo.pitch;
-    record.FallMs = bot->m_movementInfo.fallTime;
-    record.Map = bot->GetMapId();
-    record.Source = 1;
-    sCaptureWriter->Write(F::Stream::Move, record.Map, record);
+    PlayerState* state = bot->CustomData.GetDefault<PlayerState>(STATE_KEY);
+    if (state->Model != model)
+        state->Model.assign(model.substr(0, 32));
+    state->MoveRevision = moveRevision;
 }
 
 void Animus::Capture::CompanionCommand(ObjectGuid owner, ObjectGuid companion, Command command, uint32 arg)

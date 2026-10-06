@@ -35,9 +35,10 @@ namespace Animus::Capture
     /// chosen (-1 none) and the goals it holds (NO_GOAL = -1).
     void CompanionDecision(Player* bot, ObjectGuid owner, std::string_view model, float const* obs,
         std::size_t obsCount, int32 action, int32 goal, int32 goal2);
-    /// Where the companion is now, as a move record of source 1 (once per decision, so its motion compares with
-    /// a player's).
-    void CompanionSample(Player* bot);
+    /// The model a companion plays and its move block's revision, for its MoverState records (world thread, while
+    /// maps are idle). Its motion itself is captured as a player's is: its player controller reports through its
+    /// session's movement handlers, which the move stream records as client packets of source 2.
+    void CompanionModel(Player* bot, std::string_view model, uint8 moveRevision);
 
     enum class Command : uint8
     {

@@ -912,8 +912,9 @@ void Animus::CompanionParty::ObserveGoalSignals(Member& member, Curriculum::Seat
 void Animus::CompanionParty::Decide(Member& member, Player* bot, Player* owner, MlpPolicy& policy,
     Settings const& settings)
 {
-    // Where it is at every decision, in the players' movement format, so its motion compares with theirs.
-    Capture::CompanionSample(bot);
+    // What it plays, for the capture's MoverState (its movement is captured as a player's: its controller's packets).
+    Capture::CompanionModel(bot, member.L->ModelName(), uint8(member.L->Has(BlockId::Move)
+        ? Curriculum::GetBlock(BlockId::Move).Revision() : 0));
 
     bool const inCombat = bot->IsInCombat();
     if (inCombat && !member.InCombat)

@@ -37,7 +37,10 @@ namespace Animus::Capture::Format
 {
     static_assert(std::endian::native == std::endian::little, "capture records are written in host byte order");
 
-    constexpr uint16_t FORMAT_VERSION = 1;
+    /// 2: companions move by the player controller and report through their session's movement handlers, so their
+    /// Move records are client packets (source 2) and the per-decision companion sample (source 1) is gone; the
+    /// MoverState record (type 13) carries what a mover's motion is compared under.
+    constexpr uint16_t FORMAT_VERSION = 2;
 
     /// FileHeader `stream`, and the file name's prefix (StreamName).
     enum class Stream : uint16_t
@@ -77,6 +80,7 @@ namespace Animus::Capture::Format
         Move = 10,
         Speeds = 11,
         MotionEvent = 12,
+        MoverState = 13,
         CastRequest = 20,
         CastResult = 21,
         CastEnd = 22,
@@ -104,7 +108,7 @@ namespace Animus::Capture::Format
         uint16_t const t = uint16_t(type);
         if (t >= 1 && t <= 6)
             return Stream::Session;
-        if (t >= 10 && t <= 12)
+        if (t >= 10 && t <= 13)
             return Stream::Move;
         if (t >= 20 && t <= 26)
             return Stream::Action;
@@ -388,6 +392,14 @@ namespace Animus::Capture::Format
 
     // ---- §2.3 move ------------------------------------------------------------------------------------------------
 
+    /// FORMAT §2.3 Move `source`.
+    enum class MoveSource : uint8_t
+    {
+        ClientPacket = 0,           // a player's client
+        CompanionSample = 1,        // format 1 only: a companion's server position once a decision (retired)
+        ControllerPacket = 2,       // a companion's player controller, through its session's movement handlers
+    };
+
     struct Move
     {
         uint64_t Ms = 0;
@@ -407,7 +419,7 @@ namespace Animus::Capture::Format
         float JumpCos = 0.0f;
         float JumpXYSpeed = 0.0f;
         uint32_t Map = 0;
-        uint8_t Source = 0;             // 0 client packet, 1 companion sample
+        uint8_t Source = 0;             // MoveSource
 
         void Write(Out& out) const
         {
@@ -488,6 +500,44 @@ namespace Animus::Capture::Format
             out.Put<float>(Y);
             out.Put<float>(Z);
             out.Put<uint32_t>(Map);
+            out.End(start);
+        }
+    };
+
+    /// Who is moving and under what (FORMAT §2.3 MoverState): written at a mover's first update and whenever any
+    /// field changes, for players and companions alike, so motion is compared like with like.
+    struct MoverState
+    {
+        uint64_t Ms = 0;
+        uint64_t Player = 0;
+        uint8_t Kind = 0;               // 0 human player, 1 Animus companion
+        uint8_t Class = 0;
+        uint8_t Race = 0;
+        uint8_t Level = 0;
+        uint32_t Map = 0;
+        uint32_t Zone = 0;
+        uint32_t Mount = 0;             // the mount aura's spell, 0 on foot
+        uint32_t Form = 0;              // ShapeshiftForm, 0 none
+        uint8_t InCombat = 0;
+        uint8_t MoveRevision = 0;       // a companion model's move block revision; 0 for a player
+        std::string_view Model;         // a companion's model (char[32]); empty for a player
+
+        void Write(Out& out) const
+        {
+            std::size_t const start = out.Begin(Type::MoverState);
+            out.Put<uint64_t>(Ms);
+            out.Put<uint64_t>(Player);
+            out.Put<uint8_t>(Kind);
+            out.Put<uint8_t>(Class);
+            out.Put<uint8_t>(Race);
+            out.Put<uint8_t>(Level);
+            out.Put<uint32_t>(Map);
+            out.Put<uint32_t>(Zone);
+            out.Put<uint32_t>(Mount);
+            out.Put<uint32_t>(Form);
+            out.Put<uint8_t>(InCombat);
+            out.Put<uint8_t>(MoveRevision);
+            out.PutChars<32>(Model);
             out.End(start);
         }
     };

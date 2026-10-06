@@ -265,6 +265,70 @@ int main(int argc, char** argv)
     json.Field("map", U(move.Map));
     json.Field("source", U(move.Source));
 
+    // A companion's packet (format 2): its player controller's, through its session's movement handlers, recorded
+    // at the same point with the same fields as the player's above -- only `source` and its own clock differ.
+    uint64_t const companion = 0x0123456789ABCDEFull;
+    Move controller = move;
+    controller.Ms = ms + 6100;
+    controller.Player = companion;
+    controller.ClientMs = 1006100;
+    controller.Opcode = 0x0EE;                  // MSG_MOVE_HEARTBEAT
+    controller.MoveFlags = 0x00000001;          // forward
+    controller.MoveFlags2 = 0;
+    controller.X = -8910.5f;
+    controller.Pitch = 0.0f;
+    controller.FallMs = 0;
+    controller.JumpZSpeed = 0.0f;
+    controller.JumpSin = 0.0f;
+    controller.JumpCos = 0.0f;
+    controller.JumpXYSpeed = 0.0f;
+    controller.Source = uint8_t(MoveSource::ControllerPacket);
+    controller.Write(out);
+    json.Record(Type::Move, "Move");
+    json.Field("ms", U(controller.Ms));
+    json.Field("player", U(controller.Player));
+    json.Field("client_ms", U(controller.ClientMs));
+    json.Field("opcode", U(controller.Opcode));
+    json.Field("move_flags", U(controller.MoveFlags));
+    json.Field("move_flags2", U(controller.MoveFlags2));
+    json.Field("x", F(controller.X));
+    json.Field("y", F(controller.Y));
+    json.Field("z", F(controller.Z));
+    json.Field("o", F(controller.O));
+    json.Field("pitch", F(controller.Pitch));
+    json.Field("fall_ms", U(controller.FallMs));
+    json.Field("jump_zspeed", F(controller.JumpZSpeed));
+    json.Field("jump_sin", F(controller.JumpSin));
+    json.Field("jump_cos", F(controller.JumpCos));
+    json.Field("jump_xyspeed", F(controller.JumpXYSpeed));
+    json.Field("map", U(controller.Map));
+    json.Field("source", U(controller.Source));
+
+    // Who moves and under what, for each of them: the player mounted and in combat, the companion on foot in a form
+    // with its model and move block revision.
+    MoverState const movers[2] = {
+        { ms + 6200, player, 0, 1, 1, 60, 0, 12, 23229, 0, 1, 0, {} },
+        { ms + 6300, companion, 1, 11, 4, 60, 0, 12, 0, 5, 0, 2, "druid_travel" },
+    };
+    for (MoverState const& mover : movers)
+    {
+        mover.Write(out);
+        json.Record(Type::MoverState, "MoverState");
+        json.Field("ms", U(mover.Ms));
+        json.Field("player", U(mover.Player));
+        json.Field("kind", U(mover.Kind));
+        json.Field("class", U(mover.Class));
+        json.Field("race", U(mover.Race));
+        json.Field("level", U(mover.Level));
+        json.Field("map", U(mover.Map));
+        json.Field("zone", U(mover.Zone));
+        json.Field("mount", U(mover.Mount));
+        json.Field("form", U(mover.Form));
+        json.Field("in_combat", U(mover.InCombat));
+        json.Field("move_revision", U(mover.MoveRevision));
+        json.Field("model", S(mover.Model));
+    }
+
     Speeds speeds{ ms + 7000, player, 2.5f, 7.0f, 4.5f, 4.75f, 2.5f, 7.0f, 4.5f, 3.140625f, 3.140625f };
     speeds.Write(out);
     json.Record(Type::Speeds, "Speeds");
