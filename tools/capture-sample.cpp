@@ -346,6 +346,18 @@ int main(int argc, char** argv)
         json.Field("kept", U(tally.Kept));
     }
 
+    // Two ticks of the map they are on: the diff its movers (and the companion's controller) were updated with.
+    MapUpdate const ticks[2] = { { ms + 6600, 0, 0, 50 }, { ms + 6653, 0, 0, 53 } };
+    for (MapUpdate const& tick : ticks)
+    {
+        tick.Write(out);
+        json.Record(Type::MapUpdate, "MapUpdate");
+        json.Field("ms", U(tick.Ms));
+        json.Field("map", U(tick.Map));
+        json.Field("instance", U(tick.Instance));
+        json.Field("diff_ms", U(tick.DiffMs));
+    }
+
     Speeds speeds{ ms + 7000, player, 2.5f, 7.0f, 4.5f, 4.75f, 2.5f, 7.0f, 4.5f, 3.140625f, 3.140625f };
     speeds.Write(out);
     json.Record(Type::Speeds, "Speeds");

@@ -15,6 +15,8 @@
     {"type": 13, "name": "MoverState", "fields": {"ms": 1791216006423, "player": 81985529216486895, "kind": 1, "class": 11, "race": 4, "level": 60, "map": 0, "zone": 12, "mount": 0, "form": 5, "in_combat": 0, "move_revision": 2, "model": "druid_travel"}},
     {"type": 14, "name": "MoveTally", "fields": {"ms": 1791216006523, "player": 1234605616436508552, "kind": 0, "sent": 812, "kept": 811}},
     {"type": 14, "name": "MoveTally", "fields": {"ms": 1791216006623, "player": 81985529216486895, "kind": 1, "sent": 640, "kept": 633}},
+    {"type": 15, "name": "MapUpdate", "fields": {"ms": 1791216006723, "map": 0, "instance": 0, "diff_ms": 50}},
+    {"type": 15, "name": "MapUpdate", "fields": {"ms": 1791216006776, "map": 0, "instance": 0, "diff_ms": 53}},
     {"type": 11, "name": "Speeds", "fields": {"ms": 1791216007123, "player": 1234605616436508552, "walk": 2.5, "run": 7, "run_back": 4.5, "swim": 4.75, "swim_back": 2.5, "flight": 7, "flight_back": 4.5, "turn_rate": 3.140625, "pitch_rate": 3.140625}},
     {"type": 12, "name": "MotionEvent", "fields": {"ms": 1791216008123, "player": 1234605616436508552, "event": 1, "arg": 458, "x": -8913.25, "y": 554.5, "z": 93.125, "map": 0}},
     {"type": 20, "name": "CastRequest", "fields": {"ms": 1791216009123, "player": 1234605616436508552, "spell": 133, "target": 14757170078986272771, "target_kind": 5, "tx": 1.25, "ty": -2.5, "tz": 3.75, "gcd_active": 1, "casting": 0, "power": 1234, "power_type": 0}},

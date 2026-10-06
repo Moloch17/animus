@@ -41,7 +41,8 @@ namespace Animus::Capture::Format
     /// Move records are client packets (source 2) and the per-decision companion sample (source 1) is gone; the
     /// MoverState record (type 13) carries what a mover's motion is compared under.
     /// 3: every Move carries the server's handling time on its monotonic clock (`server_ms`) beside the client's own
-    /// (`client_ms`), and MoveTally (type 14) counts each mover's movement packets sent and kept.
+    /// (`client_ms`), MoveTally (type 14) counts each mover's movement packets sent and kept, and MapUpdate (type 15)
+    /// records each tick of a map instance that holds a captured mover.
     constexpr uint16_t FORMAT_VERSION = 3;
 
     /// FileHeader `stream`, and the file name's prefix (StreamName).
@@ -84,6 +85,7 @@ namespace Animus::Capture::Format
         MotionEvent = 12,
         MoverState = 13,
         MoveTally = 14,
+        MapUpdate = 15,
         CastRequest = 20,
         CastResult = 21,
         CastEnd = 22,
@@ -111,7 +113,7 @@ namespace Animus::Capture::Format
         uint16_t const t = uint16_t(type);
         if (t >= 1 && t <= 6)
             return Stream::Session;
-        if (t >= 10 && t <= 14)
+        if (t >= 10 && t <= 15)
             return Stream::Move;
         if (t >= 20 && t <= 26)
             return Stream::Action;
@@ -567,6 +569,27 @@ namespace Animus::Capture::Format
             out.Put<uint8_t>(Kind);
             out.Put<uint32_t>(Sent);
             out.Put<uint32_t>(Kept);
+            out.End(start);
+        }
+    };
+
+    /// One update of a map instance holding at least one captured mover (FORMAT §2.3 MapUpdate): the server's unix
+    /// time, the map and instance, and the diff its movers were updated with that tick (Player::Update's, which a
+    /// companion's controller tick also gets).
+    struct MapUpdate
+    {
+        uint64_t Ms = 0;
+        uint32_t Map = 0;
+        uint32_t Instance = 0;
+        uint32_t DiffMs = 0;
+
+        void Write(Out& out) const
+        {
+            std::size_t const start = out.Begin(Type::MapUpdate);
+            out.Put<uint64_t>(Ms);
+            out.Put<uint32_t>(Map);
+            out.Put<uint32_t>(Instance);
+            out.Put<uint32_t>(DiffMs);
             out.End(start);
         }
     };

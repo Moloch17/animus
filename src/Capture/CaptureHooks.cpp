@@ -49,6 +49,7 @@
 #include "SpellInfo.h"
 #include "SpellMgr.h"
 #include "Timer.h"
+#include "GameTime.h"
 #include "Transport.h"
 #include "UnitScript.h"
 #include "World.h"
@@ -57,6 +58,7 @@
 #include "WorldSession.h"
 #include <algorithm>
 #include <cmath>
+#include <unordered_map>
 #include <vector>
 
 namespace
@@ -468,6 +470,37 @@ namespace
         state.TallyKept = state.MovesKept;
         Writer().Write(F::Stream::Move, player->GetMapId(),
             F::MoveTally{ now, state.Id, state.Kind, state.MovesSent, state.MovesKept });
+    }
+
+    /// A MapUpdate for the map instance `player` is on, the first time one of its movers updates in this world tick
+    /// (each map's players update on its own thread, every world tick, with the same diff). Keyed per thread by the
+    /// map and the tick's game time, so a map is written once a tick whichever thread updates it.
+    void WriteMapUpdate(Player* player, uint32 diff)
+    {
+        if (!Writer().On(F::Stream::Move) || !player->IsInWorld())
+            return;
+        Map const* map = player->FindMap();
+        if (!map)
+            return;
+        struct Last
+        {
+            uint64 Tick = 0;
+            uint32 Instance = 0;
+        };
+        thread_local std::unordered_map<Map const*, Last> written;
+        uint64 const tick = uint64(GameTime::GetGameTimeMS().count());
+        Last& last = written[map];
+        if (last.Tick == tick && last.Instance == map->GetInstanceId())
+            return;
+        last.Tick = tick;
+        last.Instance = map->GetInstanceId();
+        if (written.size() > 4096)
+        {
+            // Maps come and go (instances): keep only this tick's.
+            std::erase_if(written, [tick](auto const& entry) { return entry.second.Tick != tick; });
+        }
+        Writer().Write(F::Stream::Move, map->GetId(),
+            F::MapUpdate{ CaptureWriter::NowMs(), map->GetId(), map->GetInstanceId(), diff });
     }
 
     /// Edges of what moves the player without its keys, and of its mode, polled each update.
@@ -1059,10 +1092,12 @@ namespace
                 F::SessionEnd{ CaptureWriter::NowMs(), state->Id, state->Session, reason });
         }
 
-        void OnPlayerUpdate(Player* player, uint32 /*diff*/) override
+        void OnPlayerUpdate(Player* player, uint32 diff) override
         {
-            if (AnyOn())
-                Update(player);
+            if (!AnyOn())
+                return;
+            WriteMapUpdate(player, diff);
+            Update(player);
         }
 
         void OnPlayerLearnTalents(Player* player, uint32 /*talentId*/, uint32 /*rank*/, uint32 /*spell*/) override
