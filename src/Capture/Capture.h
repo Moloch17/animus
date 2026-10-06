@@ -39,6 +39,11 @@ namespace Animus::Capture
     /// maps are idle). Its motion itself is captured as a player's is: its player controller reports through its
     /// session's movement handlers, which the move stream records as client packets of source 2.
     void CompanionModel(Player* bot, std::string_view model, uint8 moveRevision);
+    /// A companion's client is about to hand a packet of `opcode` to its session's handler (CompanionClient's
+    /// RealmLink): counted as a player's are when they reach theirs (MoveTally `sent`).
+    void MovementSent(Player* bot, uint16 opcode);
+    /// Whether a packet of `opcode` goes to a handler that records it in the move stream when it keeps it.
+    [[nodiscard]] bool ReachesMoveHook(uint16 opcode);
 
     enum class Command : uint8
     {

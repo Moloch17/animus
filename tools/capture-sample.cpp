@@ -244,6 +244,7 @@ int main(int argc, char** argv)
     move.JumpXYSpeed = 7.0f;
     move.Map = 0;
     move.Source = 0;
+    move.ServerMs = 3600123;
     move.Write(out);
     json.Record(Type::Move, "Move");
     json.Field("ms", U(move.Ms));
@@ -264,6 +265,7 @@ int main(int argc, char** argv)
     json.Field("jump_xyspeed", F(move.JumpXYSpeed));
     json.Field("map", U(move.Map));
     json.Field("source", U(move.Source));
+    json.Field("server_ms", U(move.ServerMs));
 
     // A companion's packet (format 2): its player controller's, through its session's movement handlers, recorded
     // at the same point with the same fields as the player's above -- only `source` and its own clock differ.
@@ -283,6 +285,7 @@ int main(int argc, char** argv)
     controller.JumpCos = 0.0f;
     controller.JumpXYSpeed = 0.0f;
     controller.Source = uint8_t(MoveSource::ControllerPacket);
+    controller.ServerMs = 3600223;
     controller.Write(out);
     json.Record(Type::Move, "Move");
     json.Field("ms", U(controller.Ms));
@@ -303,6 +306,7 @@ int main(int argc, char** argv)
     json.Field("jump_xyspeed", F(controller.JumpXYSpeed));
     json.Field("map", U(controller.Map));
     json.Field("source", U(controller.Source));
+    json.Field("server_ms", U(controller.ServerMs));
 
     // Who moves and under what, for each of them: the player mounted and in combat, the companion on foot in a form
     // with its model and move block revision.
@@ -327,6 +331,19 @@ int main(int argc, char** argv)
         json.Field("in_combat", U(mover.InCombat));
         json.Field("move_revision", U(mover.MoveRevision));
         json.Field("model", S(mover.Model));
+    }
+
+    // Each one's movement packets sent to the server's handlers and kept by them, so far.
+    MoveTally const tallies[2] = { { ms + 6400, player, 0, 812, 811 }, { ms + 6500, companion, 1, 640, 633 } };
+    for (MoveTally const& tally : tallies)
+    {
+        tally.Write(out);
+        json.Record(Type::MoveTally, "MoveTally");
+        json.Field("ms", U(tally.Ms));
+        json.Field("player", U(tally.Player));
+        json.Field("kind", U(tally.Kind));
+        json.Field("sent", U(tally.Sent));
+        json.Field("kept", U(tally.Kept));
     }
 
     Speeds speeds{ ms + 7000, player, 2.5f, 7.0f, 4.5f, 4.75f, 2.5f, 7.0f, 4.5f, 3.140625f, 3.140625f };

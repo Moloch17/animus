@@ -128,6 +128,13 @@ namespace
         std::string MoverModel;
         uint8 MoverRevision = 0;
 
+        // Movement packets that reached the server's handlers, and those it kept (MoveTally).
+        uint32 MovesSent = 0;
+        uint32 MovesKept = 0;
+        uint32 TallySent = 0;
+        uint32 TallyKept = 0;
+        uint64 LastTallyMs = 0;
+
         uint64 SubmergedSinceMs = 0;
         uint8 LastEnvType = 0xFF;           // the last environmental damage (EnviromentalDamage), for a death's cause
         uint64 LastEnvMs = 0;
@@ -446,6 +453,23 @@ namespace
         Writer().Write(F::Stream::Move, player->GetMapId(), record);
     }
 
+    constexpr uint64 TALLY_EVERY_MS = 60000;
+
+    /// The MoveTally record when the counts moved since the last one (or `force`, at the session's end).
+    void WriteTally(Player* player, PlayerState& state, uint64 now, bool force)
+    {
+        if (!force && (now - state.LastTallyMs < TALLY_EVERY_MS
+            || (state.MovesSent == state.TallySent && state.MovesKept == state.TallyKept)))
+            return;
+        if (force && !state.MovesSent && !state.MovesKept)
+            return;
+        state.LastTallyMs = now;
+        state.TallySent = state.MovesSent;
+        state.TallyKept = state.MovesKept;
+        Writer().Write(F::Stream::Move, player->GetMapId(),
+            F::MoveTally{ now, state.Id, state.Kind, state.MovesSent, state.MovesKept });
+    }
+
     /// Edges of what moves the player without its keys, and of its mode, polled each update.
     void PollMotion(Player* player, PlayerState& state)
     {
@@ -709,6 +733,7 @@ namespace
             }
             PollMotion(player, *state);
             PollMover(player, *state, now);
+            WriteTally(player, *state, now, false);
         }
 
         // Companions' own decisions and motion are the companion stream's; snapshots are of the players.
@@ -1018,8 +1043,12 @@ namespace
 
         void OnPlayerLogout(Player* player) override
         {
-            PlayerState const* state = StateOf(player);
-            if (!state || !state->Started || !sCaptureWriter->On(F::Stream::Session))
+            PlayerState* state = StateOf(player);
+            if (!state || !state->Started)
+                return;
+            if (sCaptureWriter->On(F::Stream::Move))
+                WriteTally(player, *state, CaptureWriter::NowMs(), true);
+            if (!sCaptureWriter->On(F::Stream::Session))
                 return;
             uint8 reason = 0;
             if (World::IsStopped())
@@ -1208,12 +1237,15 @@ namespace
             record.JumpCos = info.jump.cosAngle;
             record.JumpXYSpeed = info.jump.xyspeed;
             record.Map = player->GetMapId();
+            record.ServerMs = getMSTime();
             // The same handler, the same point and the same fields for both: a companion's packet is its player
             // controller's, reported through its session as a client's is (CompanionClient), with its own clock.
             PlayerState const* state = StateOf(player);
             bool const companion = state ? state->Kind != 0 : sAnimusMod->IsBot(player->GetGUID());
             record.Source = uint8(companion ? F::MoveSource::ControllerPacket : F::MoveSource::ClientPacket);
             sCaptureWriter->Write(F::Stream::Move, record.Map, record);
+            if (PlayerState* kept = StateOf(player))
+                ++kept->MovesKept;
 
             if (opcode == CMSG_MOVE_KNOCK_BACK_ACK)
                 WriteMotion(player, id, F::Motion::Knockback, 0, record.X, record.Y, record.Z, record.Map);
@@ -1229,6 +1261,13 @@ namespace
         /// Never refuses a packet: it only looks.
         bool CanPacketReceive(WorldSession* session, WorldPacket const& packet) override
         {
+            // A player's movement packet about to reach its handler (MoveTally's `sent`). A companion's never come
+            // this way: its client calls the handlers itself and counts there (Capture::MovementSent).
+            if (Animus::Capture::ReachesMoveHook(packet.GetOpcode()) && sCaptureWriter->On(F::Stream::Move))
+                if (Player* player = session ? session->GetPlayer() : nullptr; player && player->IsInWorld())
+                    if (PlayerState* state = StateOf(player))
+                        ++state->MovesSent;
+
             if (!IsCapturedOpcode(packet.GetOpcode()) || !sCaptureWriter->On(F::Stream::Action))
                 return true;
             if (Player* player = session ? session->GetPlayer() : nullptr; player && player->IsInWorld())
@@ -1437,6 +1476,44 @@ void Animus::Capture::CompanionDecision(Player* bot, ObjectGuid owner, std::stri
         F::Fnv1a(obs, obsCount * sizeof(float)), actions, 1, uint16(goal < 0 ? 0xFFFF : goal),
         uint16(goal2 < 0 ? 0xFFFF : goal2) };
     sCaptureWriter->Write(F::Stream::Companion, CaptureWriter::MAP_ALL, record);
+}
+
+bool Animus::Capture::ReachesMoveHook(uint16 opcode)
+{
+    // Every opcode whose handler runs ProcessMovementInfo, which calls OnPlayerMove when it keeps the packet
+    // (Opcodes.cpp: HandleMovementOpcodes, the speed, root, knockback and flag acks, HandleDismissControlledVehicle).
+    switch (opcode)
+    {
+        case MSG_MOVE_START_FORWARD: case MSG_MOVE_START_BACKWARD: case MSG_MOVE_STOP:
+        case MSG_MOVE_START_STRAFE_LEFT: case MSG_MOVE_START_STRAFE_RIGHT: case MSG_MOVE_STOP_STRAFE:
+        case MSG_MOVE_JUMP: case MSG_MOVE_START_TURN_LEFT: case MSG_MOVE_START_TURN_RIGHT: case MSG_MOVE_STOP_TURN:
+        case MSG_MOVE_START_PITCH_UP: case MSG_MOVE_START_PITCH_DOWN: case MSG_MOVE_STOP_PITCH:
+        case MSG_MOVE_SET_RUN_MODE: case MSG_MOVE_SET_WALK_MODE: case MSG_MOVE_FALL_LAND: case MSG_MOVE_START_SWIM:
+        case MSG_MOVE_STOP_SWIM: case MSG_MOVE_SET_FACING: case MSG_MOVE_SET_PITCH: case MSG_MOVE_HEARTBEAT:
+        case CMSG_MOVE_FALL_RESET: case CMSG_MOVE_SET_FLY: case MSG_MOVE_START_ASCEND: case MSG_MOVE_STOP_ASCEND:
+        case MSG_MOVE_START_DESCEND: case CMSG_MOVE_CHNG_TRANSPORT:
+        case CMSG_FORCE_RUN_SPEED_CHANGE_ACK: case CMSG_FORCE_RUN_BACK_SPEED_CHANGE_ACK:
+        case CMSG_FORCE_SWIM_SPEED_CHANGE_ACK: case CMSG_FORCE_WALK_SPEED_CHANGE_ACK:
+        case CMSG_FORCE_SWIM_BACK_SPEED_CHANGE_ACK: case CMSG_FORCE_TURN_RATE_CHANGE_ACK:
+        case CMSG_FORCE_FLIGHT_SPEED_CHANGE_ACK: case CMSG_FORCE_FLIGHT_BACK_SPEED_CHANGE_ACK:
+        case CMSG_FORCE_PITCH_RATE_CHANGE_ACK: case CMSG_MOVE_SET_COLLISION_HGT_ACK:
+        case CMSG_FORCE_MOVE_ROOT_ACK: case CMSG_FORCE_MOVE_UNROOT_ACK: case CMSG_MOVE_KNOCK_BACK_ACK:
+        case CMSG_MOVE_HOVER_ACK: case CMSG_MOVE_FEATHER_FALL_ACK: case CMSG_MOVE_WATER_WALK_ACK:
+        case CMSG_MOVE_SET_CAN_FLY_ACK: case CMSG_MOVE_GRAVITY_DISABLE_ACK: case CMSG_MOVE_GRAVITY_ENABLE_ACK:
+        case CMSG_DISMISS_CONTROLLED_VEHICLE:
+            return true;
+        default:
+            return false;
+    }
+}
+
+void Animus::Capture::MovementSent(Player* bot, uint16 opcode)
+{
+    // The companion's map thread, as a player's packets are counted on theirs.
+    if (!bot || !ReachesMoveHook(opcode) || !sCaptureWriter->On(F::Stream::Move))
+        return;
+    if (PlayerState* state = StateOf(bot))
+        ++state->MovesSent;
 }
 
 void Animus::Capture::CompanionModel(Player* bot, std::string_view model, uint8 moveRevision)

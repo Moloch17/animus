@@ -17,6 +17,7 @@
  */
 
 #include "CompanionClient.h"
+#include "Capture.h"
 #include "Log.h"
 #include "MapWorldQuery.h"
 #include "MoveSpline.h"
@@ -247,6 +248,10 @@ bool Animus::Client::RealmLink::Apply(Movement::Report const& report)
     // ack is still sent, as a client sends it; there is nothing for the server to keep.
     bool const unrootIgnored = opcode == CMSG_FORCE_MOVE_UNROOT_ACK
         && !bot->m_movementInfo.HasMovementFlag(MOVEMENTFLAG_ROOT);
+
+    // Counted for the capture as a player's packet is when it reaches the handler (MoveTally); kept ones are recorded
+    // by the handler's own hook, as a player's are.
+    Capture::MovementSent(bot, opcode);
 
     WorldPacket packet(opcode, 80);
     if (handler == AckHandler::None)

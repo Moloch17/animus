@@ -40,7 +40,9 @@ namespace Animus::Capture::Format
     /// 2: companions move by the player controller and report through their session's movement handlers, so their
     /// Move records are client packets (source 2) and the per-decision companion sample (source 1) is gone; the
     /// MoverState record (type 13) carries what a mover's motion is compared under.
-    constexpr uint16_t FORMAT_VERSION = 2;
+    /// 3: every Move carries the server's handling time on its monotonic clock (`server_ms`) beside the client's own
+    /// (`client_ms`), and MoveTally (type 14) counts each mover's movement packets sent and kept.
+    constexpr uint16_t FORMAT_VERSION = 3;
 
     /// FileHeader `stream`, and the file name's prefix (StreamName).
     enum class Stream : uint16_t
@@ -81,6 +83,7 @@ namespace Animus::Capture::Format
         Speeds = 11,
         MotionEvent = 12,
         MoverState = 13,
+        MoveTally = 14,
         CastRequest = 20,
         CastResult = 21,
         CastEnd = 22,
@@ -108,7 +111,7 @@ namespace Animus::Capture::Format
         uint16_t const t = uint16_t(type);
         if (t >= 1 && t <= 6)
             return Stream::Session;
-        if (t >= 10 && t <= 13)
+        if (t >= 10 && t <= 14)
             return Stream::Move;
         if (t >= 20 && t <= 26)
             return Stream::Action;
@@ -420,6 +423,7 @@ namespace Animus::Capture::Format
         float JumpXYSpeed = 0.0f;
         uint32_t Map = 0;
         uint8_t Source = 0;             // MoveSource
+        uint32_t ServerMs = 0;          // getMSTime() when the server's handler took it (format 3)
 
         void Write(Out& out) const
         {
@@ -442,6 +446,7 @@ namespace Animus::Capture::Format
             out.Put<float>(JumpXYSpeed);
             out.Put<uint32_t>(Map);
             out.Put<uint8_t>(Source);
+            out.Put<uint32_t>(ServerMs);
             out.End(start);
         }
     };
@@ -538,6 +543,30 @@ namespace Animus::Capture::Format
             out.Put<uint8_t>(InCombat);
             out.Put<uint8_t>(MoveRevision);
             out.PutChars<32>(Model);
+            out.End(start);
+        }
+    };
+
+    /// A mover's movement packets since its session began (FORMAT §2.3 MoveTally): those that reached the server's
+    /// movement handlers (`sent`), and those the handlers kept and the move stream recorded (`kept`). The difference
+    /// is what the server refused or ignored (a spline under way, movement disabled, a teleport pending, an ack's
+    /// pre-check). Cumulative; written every minute while it changes, and at the session's end.
+    struct MoveTally
+    {
+        uint64_t Ms = 0;
+        uint64_t Player = 0;
+        uint8_t Kind = 0;               // 0 human player, 1 Animus companion
+        uint32_t Sent = 0;
+        uint32_t Kept = 0;
+
+        void Write(Out& out) const
+        {
+            std::size_t const start = out.Begin(Type::MoveTally);
+            out.Put<uint64_t>(Ms);
+            out.Put<uint64_t>(Player);
+            out.Put<uint8_t>(Kind);
+            out.Put<uint32_t>(Sent);
+            out.Put<uint32_t>(Kept);
             out.End(start);
         }
     };
