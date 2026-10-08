@@ -41,9 +41,37 @@ namespace Animus
 {
     /// Module root: settings, the models, the registry of every player's companion and the parties of those out.
     ///
-    /// Everything except RecordDamage runs on the world thread (config load, commands, world update, shutdown), and
-    /// none of it while maps are updating. RecordDamage runs on map threads and only reads the bot index and the
-    /// parties' pulls, which are only changed on the world thread.
+    /// Core Responsibilities:
+    /// - Manages AI-controlled companions that join player parties
+    /// - Controls party filling for dungeons using trained AI models
+    /// - Provides game commands and addon interface for companion management
+    /// - Handles companion lifecycle (creation, summoning, saving, removal)
+    /// - Tracks damage records for AI training feedback
+    ///
+    /// Thread Safety:
+    /// - Everything except RecordDamage runs on the world thread (config load, commands, world update, shutdown)
+    /// - RecordDamage runs on map threads and only reads bot index and party pulls
+    /// - All pull changes happen on the world thread, never while maps are updating
+    ///
+    /// Component Architecture:
+    /// - AnimusConfig: Module settings from config files
+    /// - ModelLibrary: Loaded AI model files (.amdl format)
+    /// - CompanionRegistry: Database tracking of companion characters
+    /// - CompanionParty: Party management with AI companions
+    ///
+    /// Companion System:
+    /// - Each player can have one AI companion character
+    /// - Companions follow, fight alongside, and level with players
+    /// - Companions use AI models trained by Animus Forge
+    /// - Companions are persisted in database (characters table)
+    /// - Companions get no mail, achievements, or quests
+    ///
+    /// Party Filling System:
+    /// - Dungeon parties can be filled to 5 members
+    /// - AI fills roles (tank, healer, damage) based on talents
+    /// - Temporary members are created and saved only while in dungeon
+    /// - Companions count as party members for filling
+    ///
     class AnimusMod
     {
     public:
@@ -58,10 +86,29 @@ namespace Animus
         /// Everything a player does with their one companion, from the addon or the commands. Each returns false
         /// with `message` set when refused; on success `message` says what happened.
 
-        /// A companion character called `name`, of `race` (human, nightelf, ...) and `playerClass` (priest,
-        /// deathknight, ...), on an account made for the owner, saved, and in the owner's party. Refused when the
-        /// owner has one already, for a name the game would not accept or has taken, a race the class does not
-        /// allow, or a race of the other faction.
+        /// Creates a new AI companion character for the player.
+        ///
+        /// Parameters:
+        /// - owner: The player who will own this companion
+        /// - name: Desired name for the companion character
+        /// - race: Character race (human, nightelf, orc, etc.) - case-insensitive
+        /// - playerClass: Character class (warrior, priest, deathknight, etc.) - case-insensitive
+        /// - message: Returns error messages if creation fails
+        ///
+        /// Companion Details:
+        /// - Created on a dedicated ANIMUS<N> account (hidden from players)
+        /// - Level matches owner's level or class starting level (death knight = 55)
+        /// - Uses AI models from configured stage (Animus.Curriculum.Stage)
+        /// - Saved to database, persists across sessions
+        /// - Cannot have mail, achievements, or receive quests
+        ///
+        /// Restrictions:
+        /// - One companion per player
+        /// - Race must be valid for the chosen class
+        /// - Cannot be of opposing faction
+        /// - Name must be unique and game-acceptable
+        ///
+        /// Returns: true on success, false on failure with message
         bool Create(Player* owner, std::string name, std::string_view race, std::string_view playerClass,
             std::string& message);
         /// The saved companion comes back beside the owner. Its rows load on the database thread; `message` says
