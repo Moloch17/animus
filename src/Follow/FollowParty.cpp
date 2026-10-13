@@ -40,6 +40,7 @@
 #include "StringFormat.h"
 #include "World.h"
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 
 // Line references are to forge-dev 7ebf4bda9: StageScenario.cpp, StageState.h (SeatState::ResetEpisode) and
@@ -317,8 +318,24 @@ Animus::Follow::FollowParty::Status Animus::Follow::FollowParty::Update(uint32 d
     if (!decide)
         return Status::Active;
 
+    // What a decision costs the world thread (render, map, encoders and the model, all followers), told every two
+    // minutes: the live realm's measure of plan step 8, which needs a player to lead them.
+    auto const started = std::chrono::steady_clock::now();
     for (std::unique_ptr<FollowSeat> const& seat : _seats)
         Decide(*seat, FindBot(seat->Bot), settings);
+    float const ms = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - started).count();
+    _costMs += ms;
+    _costMaxMs = std::max(_costMaxMs, ms);
+    ++_costDecisions;
+    if (_costDecisions >= COST_REPORT_DECISIONS)
+    {
+        LOG_INFO("module.animus", "Followers of {}: {} followers, {:.2f} ms a decision round on average, {:.2f} ms at "
+            "most, over {} rounds (the world thread's cost; {} ms between rounds)", _leader.ToString(), _seats.size(),
+            _costMs / float(_costDecisions), _costMaxMs, _costDecisions, settings.DecisionMs);
+        _costMs = 0.0f;
+        _costMaxMs = 0.0f;
+        _costDecisions = 0;
+    }
     return Status::Active;
 }
 

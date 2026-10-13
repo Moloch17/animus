@@ -251,6 +251,11 @@ namespace Animus::Follow
 
         /// The episode clock (SeatView::NowMs): real milliseconds since the episode began.
         uint64 _nowMs = 0;
+        /// Decision rounds timed since the last report (Update), and their total and longest.
+        static constexpr uint32 COST_REPORT_DECISIONS = 480;
+        uint32 _costDecisions = 0;
+        float _costMs = 0.0f;
+        float _costMaxMs = 0.0f;
         uint32 _sinceDecisionMs = 0;
         bool _episodePending = true;            // the next decision starts an episode ...
         bool _episodeKeepMap = false;           // ... keeping the mental map (a roll-over)
