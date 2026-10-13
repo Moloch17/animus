@@ -109,10 +109,9 @@ bool Animus::Follow::FollowParty::Add(Player* leader, Layout const& layout, std:
     spec.AccountId = account;
 
     Player* bot = BotFactory::Create(spec);
+    // A bot PlaceNear could not place is destroyed by it.
     if (!bot || !BotFactory::PlaceNear(bot, leader))
     {
-        if (bot)
-            BotFactory::DestroyUnplaced(bot);
         message = "A follower could not be created; see the server log.";
         return false;
     }
