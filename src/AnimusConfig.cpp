@@ -18,17 +18,16 @@
 
 #include "AnimusConfig.h"
 #include "Config.h"
-#include "DBCEnums.h"
-#include "LayeredField.h"
 #include "Log.h"
-#include "ProbeBake.h"
 #include "StageDefinition.h"
-#include <string_view>
 #include "Tokenize.h"
 #include "World.h"
 #include <algorithm>
 #include <cctype>
+#include <cmath>
+#include <cstdlib>
 #include <filesystem>
+#include <string_view>
 #include <vector>
 
 namespace
@@ -85,11 +84,30 @@ namespace
         return candidates.back().lexically_normal().string();
     }
 
+    /// The directory the server's config file is in.
+    std::filesystem::path ConfigDir()
+    {
+        std::filesystem::path configDir = std::filesystem::path(sConfigMgr->GetConfigPath()).lexically_normal();
+        if (configDir.filename().empty())
+            configDir = configDir.parent_path();
+        return configDir;
+    }
+
+    /// A float key clamped into its range, said when it was not in it (as the forge reads AnimusForge.Vision.*).
+    float Ranged(char const* key, float fallback, float low, float high)
+    {
+        float const value = sConfigMgr->GetOption<float>(key, fallback);
+        float const kept = std::clamp(std::isfinite(value) ? value : fallback, low, high);
+        if (kept != value)
+            LOG_ERROR("module.animus", "{} = {} is outside {} to {}: using {}", key, value, low, high, kept);
+        return kept;
+    }
+
     /// A comma-separated config list, whitespace removed, empty entries dropped.
-    std::vector<std::string> GetList(std::string const& key)
+    std::vector<std::string> GetList(std::string const& key, std::string const& fallback)
     {
         std::vector<std::string> entries;
-        std::string const value = sConfigMgr->GetOption<std::string>(key, "");
+        std::string const value = sConfigMgr->GetOption<std::string>(key, fallback);
         for (std::string_view name : Acore::Tokenize(value, ',', false))
         {
             std::string entry(name);
@@ -110,9 +128,9 @@ void Animus::AnimusConfig::Load()
 
     ModelDir = ResolveModelDir(sConfigMgr->GetOption<std::string>("Animus.ModelDir", "animus"));
 
-    // The stage whose models the module ships (models/<class>_companion.amdl). A name that is not a stage falls back
-    // to it, and it to the first stage, since LayoutFor builds the layout of whatever is named here.
-    constexpr std::string_view DEFAULT_STAGE = "stage9_deadmines";
+    // The stage whose models the followers play (models/<class>_follow.amdl). A name that is not a stage falls back to
+    // it, and it to the first stage, since the layouts are built from whatever is named here.
+    constexpr std::string_view DEFAULT_STAGE = "move4_follow";
     CurriculumStage = sConfigMgr->GetOption<std::string>("Animus.Curriculum.Stage", std::string(DEFAULT_STAGE));
     if (!Curriculum::FindStage(CurriculumStage))
     {
@@ -122,52 +140,81 @@ void Animus::AnimusConfig::Load()
             CurriculumStage, fallback);
         CurriculumStage = fallback;
     }
-    CurriculumDecisionMs = std::max<uint32>(1, sConfigMgr->GetOption<uint32>("Animus.Curriculum.DecisionMs", 250));
-    Curriculum::CurriculumTuning const curriculum = Curriculum::CurriculumTuning::Load("Animus.Curriculum.");
-    CurriculumActions = curriculum.Actions;
-    CurriculumOptions = curriculum.Options;
-    CurriculumDirector = curriculum.Director;
 
-    Life.Enable = sConfigMgr->GetOption<bool>("Animus.Life.Enable", true);
-    Life.Quests = sConfigMgr->GetOption<bool>("Animus.Life.Quests", true);
-    Life.Auction = sConfigMgr->GetOption<bool>("Animus.Life.Auction", true);
-    Life.AuctionBudgetCopper = sConfigMgr->GetOption<uint32>("Animus.Life.AuctionBudgetGold", 50) * 10000;
-    Life.Mail = sConfigMgr->GetOption<bool>("Animus.Life.Mail", true);
-    Life.Taxi = sConfigMgr->GetOption<bool>("Animus.Life.Taxi", true);
-    Life.TaxiBeyondYards = sConfigMgr->GetOption<float>("Animus.Life.TaxiBeyondYards", 1500.0f);
-    Life.Crafting = sConfigMgr->GetOption<bool>("Animus.Life.Crafting", true);
-    Life.IdleSeconds = sConfigMgr->GetOption<uint32>("Animus.Life.IdleSeconds", 20);
+    // Where the module writes (the camera scenes): <config dir>/modules/animus by default, beside the installed models.
+    std::filesystem::path dataDir = sConfigMgr->GetOption<std::string>("Animus.DataDir", "");
+    if (dataDir.empty())
+        dataDir = ConfigDir() / "modules" / "animus";
+    else if (dataDir.is_relative())
+        dataDir = ConfigDir() / dataDir;
+    DataDir = dataDir.lexically_normal().string();
 
-    PartyFill = sConfigMgr->GetOption<bool>("Animus.PartyFill.Enable", true);
-
-    // The ground probe, as the forge's AnimusForge.Probe.* sets it for training. The files are the forge's own
-    // (`forge fieldworld` bakes every map's fields), shipped beside the core's maps, vmaps and mmaps by default.
-    ProbeSource = sConfigMgr->GetOption<std::string>("Animus.Probe.Source", "geometry");
-    if (ProbeSource != "geometry" && ProbeSource != "baked" && ProbeSource != "live")
+    VisionMaps.clear();
+    for (std::string const& entry : GetList("Animus.Vision.Maps", "389,36,43,34"))
     {
-        LOG_ERROR("module.animus", "Animus.Probe.Source = \"{}\" is not geometry, baked or live; using geometry",
-            ProbeSource);
-        ProbeSource = "geometry";
-    }
-    std::filesystem::path probeDir = sConfigMgr->GetOption<std::string>("Animus.Probe.Dir", "");
-    if (probeDir.empty())
-        probeDir = std::filesystem::path(sWorld->GetDataPath()) / "fields";
-    else if (probeDir.is_relative())
-        probeDir = std::filesystem::path(sWorld->GetDataPath()) / probeDir;
-    ProbeDir = probeDir.lexically_normal().string();
-    ProbeCacheGrids = std::max<uint32>(1, sConfigMgr->GetOption<uint32>("Animus.Probe.CacheGrids", 64));
-
-    bool const baked = ProbeSource == "baked";
-    Curriculum::ProbeBake::Store::Configure(baked, ProbeDir, ProbeCacheGrids);
-    Curriculum::LayeredField::Store::Configure(baked || ProbeSource == "geometry", ProbeDir, ProbeCacheGrids);
-    if (ProbeSource != "live")
-    {
-        std::error_code error;
-        if (!std::filesystem::is_directory(ProbeDir, error))
-            LOG_ERROR("module.animus", "Animus.Probe.Source = {}, but there are no field files in {}: companions "
-                "sense no ground until they are there (or set Animus.Probe.Source = live, which models trained on "
-                "the fields refuse)", ProbeSource, ProbeDir);
+        char* end = nullptr;
+        unsigned long const id = std::strtoul(entry.c_str(), &end, 10);
+        if (end && *end == '\0' && id < 10000)
+            VisionMaps.push_back(uint32(id));
         else
-            LOG_INFO("module.animus", "Animus ground probe: {} from {}", ProbeSource, ProbeDir);
+            LOG_ERROR("module.animus", "Animus.Vision.Maps: \"{}\" is not a map id; left out", entry);
     }
+
+    // The camera, as the forge reads AnimusForge.Vision.* (ForgeConfig.cpp), defaulting to what move4_follow trained
+    // with (its stage.json blocks[vision]; Zoom and ZoomMin locked at 12 in the machines' confs).
+    Camera = Vision::Settings();
+    Camera.Width = uint32(Ranged("Animus.Vision.Width", 128.0f, 8.0f, 256.0f));
+    Camera.Height = uint32(Ranged("Animus.Vision.Height", 64.0f, 8.0f, 256.0f));
+    Camera.FovH = Ranged("Animus.Vision.FovH", 120.0f, 30.0f, 170.0f);
+    Camera.FovV = Ranged("Animus.Vision.FovV", 60.0f, 20.0f, 120.0f);
+    Camera.Range = Ranged("Animus.Vision.Range", 100.0f, 10.0f, 500.0f);
+    Camera.Zoom = Ranged("Animus.Vision.Zoom", 12.0f, 0.0f, 50.0f);
+    Camera.ZoomMin = std::min(Camera.Zoom, Ranged("Animus.Vision.ZoomMin", 12.0f, 0.0f, 50.0f));
+    Camera.Pitch = Ranged("Animus.Vision.Pitch", -15.0f, -80.0f, 80.0f);
+    // One render size for every follower (decision 3): the first size the key gives that fits the canonical image.
+    std::vector<std::string> sizeErrors;
+    std::vector<float> weights;
+    std::vector<Vision::Resolution> sizes = Vision::ParseRenderSizes(sConfigMgr->GetOption<std::string>(
+        "Animus.Vision.RenderSize", "64x32"), Camera, weights, sizeErrors);
+    for (std::string const& error : sizeErrors)
+        LOG_ERROR("module.animus", "Animus.Vision.RenderSize: {}", error);
+    if (sizes.size() > 1)
+        LOG_ERROR("module.animus", "Animus.Vision.RenderSize names {} sizes; every follower casts at the first, {}x{}",
+            sizes.size(), sizes.front().Width, sizes.front().Height);
+    Camera.RenderSizes = { sizes.empty() ? Vision::Resolution{ Camera.Width, Camera.Height } : sizes.front() };
+    Camera.RenderWeights = { 1.0f };
+
+    // The mental map: its caps, and no keep roll (the follow driver keeps it across a roll-over and nowhere else).
+    MapRun = Vision::MapRunSettings();
+    MapRun.Caps.MaxTiles = uint32(Ranged("Animus.Map.MaxTiles", 4096.0f, 1.0f, 65536.0f));
+    MapRun.Caps.CoarseTiles = uint32(Ranged("Animus.Map.CoarseTiles", 0.0f, 0.0f, 65536.0f));
+    MapRun.KeepShare = 0.0f;
+    MapRun.AgeOffsetSeconds = 0.0f;
+    ClusterMinCells = uint32(Ranged("Animus.Map.ClusterMinCells", 2.0f, 1.0f, 1000.0f));
+    PocketMinCells = uint32(Ranged("Animus.Map.PocketMinCells", 6.0f, 1.0f, 1000.0f));
+
+    // The follow driver: the decision clock and the tuning move4_follow trained with (stage.json "tuning"). The
+    // runtime's ActionTuning defaults are the forge's, apart from Actions.Repeat (0.02 in training; a reward weight,
+    // which nothing here reads, set for the record).
+    FollowTuning = Follow::FollowSettings();
+    Follow::FollowSettings& tuning = FollowTuning;
+    tuning.DecisionMs = std::max<uint32>(1, sConfigMgr->GetOption<uint32>("Animus.Curriculum.DecisionMs", 250));
+    tuning.Actions.Repeat = 0.02f;
+    tuning.Actions.RepeatMs = sConfigMgr->GetOption<uint32>("Animus.Curriculum.Actions.RepeatMs", 1000);
+    tuning.Actions.MoveRepeatMs = sConfigMgr->GetOption<uint32>("Animus.Curriculum.Actions.MoveRepeatMs", 300);
+    tuning.Actions.StopCastMinMs = sConfigMgr->GetOption<uint32>("Animus.Curriculum.Actions.StopCastMinMs", 500);
+    tuning.Actions.RecastAfterStopMs =
+        sConfigMgr->GetOption<uint32>("Animus.Curriculum.Actions.RecastAfterStopMs", 2000);
+    tuning.Actions.ModeLockMs = sConfigMgr->GetOption<uint32>("Animus.Curriculum.Actions.ModeLockMs", 5000);
+    tuning.Options.RestMaxMs = sConfigMgr->GetOption<uint32>("Animus.Curriculum.Options.RestMaxMs", 30000);
+    tuning.Options.HoldInterruptMs = sConfigMgr->GetOption<uint32>("Animus.Curriculum.Options.HoldInterruptMs", 10000);
+    tuning.Options.JitterDecayMs = sConfigMgr->GetOption<uint32>("Animus.Curriculum.Options.JitterDecayMs", 2500);
+    tuning.MinimapYards = Ranged("Animus.Curriculum.PartyFollow.MinimapYards", 60.0f, 1.0f, 500.0f);
+    tuning.RespawnDelayMs = sConfigMgr->GetOption<uint32>("Animus.Curriculum.Respawn.DelayMs", 10000);
+    tuning.EpisodeMs = uint32(Ranged("Animus.Follow.EpisodeSeconds", 300.0f, 10.0f, 86400.0f) * 1000.0f);
+}
+
+std::string Animus::AnimusConfig::SceneDir() const
+{
+    return (std::filesystem::path(DataDir) / "scenes").lexically_normal().string();
 }

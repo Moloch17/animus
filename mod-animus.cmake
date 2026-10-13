@@ -98,3 +98,8 @@ endif()
 # module need a core patch to compile, which for a long while it silently did. Nothing here builds an episode: the
 # stage viewer that once did was removed, and companions never needed it.
 AnimusLibRequire(mod-animus "${ANIMUS_LIB_BUNDLE}" RUNTIME_ONLY)
+
+# A stock core's dynamic collision tree has no GetSurfaceHit/AnyHit (the forge core's): the camera's game-object hits
+# take the stock fallback (Vision/MapVisionWorld.cpp, live-follow plan decision 2), for the module's sources and the
+# bundle's alike -- both are compiled into the `modules` target.
+target_compile_definitions(modules PRIVATE ANIMUS_STOCK_CORE)

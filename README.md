@@ -1,53 +1,84 @@
 # mod-animus
 
-Characters for an ordinary AzerothCore realm whose combat decisions come from models trained in
-[Animus Forge](https://github.com/Moloch17/animus-forge). The module builds against a stock AzerothCore with no core
-changes, together with animus-lib (`animus-lib/`), the forge's curriculum runtime it plays the models with.
+**This build is the live follow test** (the forge's live-follow plan): a game master summons up to four bots into
+their party, and each is played by its class's `move4_follow` model from
+[Animus Forge](https://github.com/Moloch17/animus-forge) exactly as the forge trains it -- a ray-cast third-person
+camera, a mental map, party frames that remember where each member was, goal and look heads -- moving only through the
+shared player controller, as a client would. They follow you through dungeons, loading screens and anywhere else. The
+module builds against a stock AzerothCore with no core changes, together with its bundled copy of the forge's runtime
+(`animus-lib/`).
 
-- **A class companion.** Every player character may have one: a character of the name, race and class they
-  choose, on an account made for it, saved in the characters database between summons. It joins your party at your
-  level and levels up with you, follows you through loading screens, into instances and onto transports, and plays
-  its class model in every fight. It gets no mail and no achievements.
-- **The Animus addon** (`interface_addon/Animus`): the window players create, summon, rename and
-  manage it from.
-They run the same encoding code as training, so a model sees and does exactly what it trained on.
-
-**The detail is in [chapter 6 of the Animus manual][manual-6].** This page is the map.
-
-[manual-6]: https://github.com/Moloch17/animus-forge/blob/master/docs/manual/06-animus.md
+**Not in this build.** The v1 features -- the class companion saved with your character, its director, dungeon party
+fill, life outside the fight (quests, auction, mail, taxi, crafting) and the Animus addon -- cannot run on the current
+runtime. Their code is in `attic/` (outside `src/`, so nothing builds it), kept for reference; the worldserver says so
+loudly at startup. `interface_addon/` is likewise unused.
 
 ## Installing
 
-1. Put the module in a stock AzerothCore's `modules/`. animus-lib comes with it (`animus-lib/`, the revision this
-   module was tested with), so nothing is fetched at build time. Build it static (the default); a dynamic build needs
-   the library as its own module (copy `animus-lib/` to `modules/mod-animus-lib`).
-2. Rebuild and install the worldserver (`docker compose build` works offline).
-3. Installing creates `mod_animus.conf` in the modules config directory from `conf/mod_animus.conf.dist` when there is
-   none, and never overwrites one; under Docker the container copies it to your config volume on its first start.
-   AzerothCore reads a module's settings from the `.conf` only: without it every `Animus.*` key logs "Missing
-   property" at startup.
-4. Models: installing copies the ones in `models/` (exported from the forge, each `.amdl` with its `.json` manifest;
-   the repository ships none) to `<config dir>/modules/animus`, which reaches a Docker runtime image (only `bin/` and
-   `etc/` do). Companions play the stage `Animus.Curriculum.Stage` names (default `stage9_deadmines`). Models you
-   place by hand go in `<DataDir>/animus`, which is searched first; the startup log names the directory used.
+1. Put the module in a stock AzerothCore's `modules/` and build it static (the default). Nothing is fetched.
+2. Installing creates `mod_animus.conf` from `conf/mod_animus.conf.dist` when there is none (never overwriting one).
+   AzerothCore reads a module's settings from the `.conf` only.
+3. Models: each `<class>_follow.amdl` **with its `.json` manifest**, exported from the forge's `move4_follow` run, in
+   `models/` (installed to `<config dir>/modules/animus`) or in `<DataDir>/animus`, searched first.
+4. Camera scenes: at startup the worldserver bakes (when missing or stale) and loads the static world of each map in
+   `Animus.Vision.Maps` into `<Animus.DataDir>/scenes` (default `<config dir>/modules/animus/scenes`; it must be
+   writable). The log gives each map's time; a bake is once per map and data revision.
 
-Don't build it into the forge core; a forge build disables it. Where the models come from, and how `DataDir` and the
-install step line up, is in
-[manual 6.3 and 6.4](https://github.com/Moloch17/animus-forge/blob/master/docs/manual/06-animus.md#63-installing).
+Don't build it into the forge core; a forge build refuses it. The module compiles with `ANIMUS_STOCK_CORE`
+(`mod-animus.cmake`): on a stock core the camera draws doors and other game objects from the stock collision tree,
+without their surface normal (live-follow decision 2).
 
-## Ground probe fields
+## Commands
 
-A companion senses the ground around it (how far it can walk along sixteen bearings, steps, shores, burning ground,
-the room around it, and in the air how far it can fly) from the forge's layered height fields, as the forge trains
-it to: one file a map grid, `<map>_<gridX>_<gridY>.field`, about 0.3 MB. Put them in `<DataDir>/fields`, beside
-`maps/`, `vmaps/` and `mmaps/` (`Animus.Probe.Dir` moves it). The forge makes them with `forge fieldworld all`, which
-bakes every grid of every map's navmesh into its `apps/forge/probes/world/`; ship the whole directory, or the maps
-your players go to. A companion on a grid with no field keeps its last reading until it reaches one, and the grid is
-logged once. `Animus.Probe.Source` must be the probe the models were trained with (their manifest names it; the
-forge's default is `geometry`).
+Game master commands.
 
-The field files are zstd-compressed; the module carries zstd itself (`animus-lib/deps/zstd`, compiled in with its
-symbols hidden), so a realm needs nothing installed and no change to its core or its Docker image.
+| Command | Effect |
+|---|---|
+| `.animus follow <n>` | `n` (1-4) followers of your level and faction join your party, which you lead (made when you have none; never a raid). Each is a class with a loaded `<class>_follow` model, a race of your faction and a random spec. Refused on a map with no camera scene; a level outside 13-25 (what the models trained at) is warned about. Followers are never saved |
+| `.animus follow` | Your followers, their models and the episode clock |
+| `.animus dismiss` | Your followers leave (also when you log out) |
+| `.animus models` | Console too: every class's model for `Animus.Curriculum.Stage`, whether it loads (and if not why), and the camera scenes loaded |
+
+## How a follower is played
+
+Everything runs on the world thread after the maps update (`WorldScript::OnUpdate`), the forge's order: the
+observation reads the world after the movement, and the keys act at the next map update, where each follower's client
+(`src/Client/CompanionClient`) steps its body and reports it through its session's own movement handlers. Every
+`Animus.Curriculum.DecisionMs` (250) the driver (`src/Follow/FollowParty`) reproduces the forge's per-decision pipeline
+for a `move4_follow` seat (`.agents/plans/live-follow/live-follow.PIPELINE.md` in the forge): the deferred stamps (an
+action's clock, the party frames' second sighting), the controller and step bookkeeping, the observation (camera,
+mental map, party frames from the real group with you rotated to the first slot, goals), the model, then the goal
+holds, the free look and the action. There is no target and no objective: the leader is found by sight, the minimap's
+dot and memory.
+
+**Episodes.** Training's episodes were 300 s; the realm plays a synthetic one. A summon starts it at 0 with every
+follower reset; every 300 s (`Animus.Follow.EpisodeSeconds`) it rolls over with a full reset that keeps the mental
+map (a second older); moving to another map or instance starts a new one with the mental map cleared. The model's
+episode clock is `min(1, time since the episode began / 300 s)`.
+
+**What differs from training** (tell the tester): the leader is a person, who fights, jumps and loots; a live dungeon
+has creatures, doors (drawn without a normal) and other players; fewer than four followers leave party slots empty; a
+dead follower stands up 10 s later (`Animus.Curriculum.Respawn.DelayMs`) **beside you** at full health, where training
+rises at the episode's start point; a follower not on your map (a loading screen, an instance portal) is brought to
+you, since the controller cannot take an area trigger.
+
+The model's forward pass (`.amdl` format 10: image and map inputs, look and goal heads) is behind
+`src/Follow/FollowPolicy.h`; until it is linked, `.animus follow` refuses with "follow model runtime not yet linked".
+
+## Configuration
+
+`conf/mod_animus.conf.dist` documents every key; the defaults are what `move4_follow` trained with.
+
+- `Animus.Enable`, `Animus.ModelDir`, `Animus.Curriculum.Stage` (`move4_follow`), `Animus.Curriculum.DecisionMs`.
+- `Animus.DataDir`, `Animus.Vision.Maps` (`389,36,43,34`: Ragefire, Deadmines, Wailing Caverns, the Stockade).
+- The camera: `Animus.Vision.RenderSize` (`64x32`, the one size every follower casts at, scaled up to the canonical
+  image), `Width`/`Height` (128 x 64), `FovH`/`FovV` (120/60), `Range` (100), `Zoom`/`ZoomMin` (12/12), `Pitch` (-15).
+- The mental map: `Animus.Map.MaxTiles` (4096), `CoarseTiles` (0), `ClusterMinCells`/`PocketMinCells` (2/6).
+- The follow tuning: `Animus.Curriculum.Actions.*` (pacing), `Options.*`, `PartyFollow.MinimapYards` (60),
+  `Respawn.DelayMs` (10000), and `Animus.Follow.EpisodeSeconds` (300).
+
+The camera and mental-map settings take effect at startup only. For debug logging set
+`Logger.module.animus=1,Console Server`.
 
 ## Updating animus-lib
 
@@ -62,49 +93,11 @@ and fails on any difference (`--check` does only that); `--only Movement` refres
 `animus-lib/FORGE_REVISION` then records it on a line of its own. `Movement/` is the player controller and the client
 logic the forge and this module share; the module's own server link for it is `src/Client`.
 
-## The addon
-
-Players use the module through the Animus addon in `interface_addon/Animus`: copy that folder into
-the client's `Interface/AddOns/` and type `/animus` (or click the minimap button). Until they have a companion the
-window creates one from a name, a race of their faction and a class that race can be; then it summons and
-dismisses it, renames it, or gives it a new race and class (a new character of the same name), and the unit menu
-of its party frame has "Dismiss companion". Inspecting the companion edits it: its Talents tab learns a rank on
-left click and unlearns one on right click, a Pet tab does the same for a hunter pet's tree, and an item dragged
-from your bags onto its character pane goes on it, with what it wore coming back to you. Everything is saved with
-the character.
-The addon talks to the module over addon whispers the player sends to themselves (prefix `Animus`), which need
-`AddonChannel = 1` in `worldserver.conf` (the default); no security is required. The messages are documented in
-[its README](interface_addon/Animus/README.md), for anyone writing another client.
-
-## Companions in the database
-
-A companion is a character of its own: `animus_companion` (characters database, created by the module itself when the
-first companion account is, and dropped by `.animus purge`) maps an owner to it -- its `characters` guid, the account
-it lives on and what the module remembers (spec, whether the owner edited it, the gear they gave it). The account is
-`ANIMUS<owner guid>` in the auth database, made on the owner's first create with a random password nobody is told; it
-stays when the character is replaced and goes when the owner's character is deleted. The character saves as any does
-(the core's autosave interval, and at once on dismiss, on the owner's logout and at shutdown), and is loaded again on
-summon as a login loads one, on the database thread. Its mail and achievements are deleted before every load and after
-every save, players cannot mail it, level rewards skip it and its achievement criteria are never checked.
-
-## Commands
-
-Game master commands, not available from the console; the addon does the same for every player.
-
-| Command | Effect |
-|---|---|
-| `.animus create <name> <race> <class>` | Your companion character (`.animus create Tarn orc warrior`) |
-| `.animus summon` | It comes to you |
-| `.animus dismiss` | Saved and sent away |
-| `.animus rename <name>` | A new name, nothing else changed |
-| `.animus reroll <race> <class>` | A new character of the same name |
-| `.animus list` | Your companion and whether its model is loaded |
-| `.animus stage list` | Every curriculum stage and its arenas: the names `Animus.Curriculum.Stage` accepts |
-| `.animus models` | Console too: every class's model for `Animus.Curriculum.Stage` and whether it loads, and if not the first manifest field that differs. Run it after copying models in, before anyone summons |
-| `.animus rate <+\|-> [movement\|combat\|healing\|tanking\|stuck\|other]` | Any player: your verdict on your companion's play, recorded for training (play capture) |
-| `.animus purge` | Administrator, console too: every account the module made (`ANIMUS<guid>`) deleted with its characters, every companion sent away unsaved, the module's table dropped |
 
 ## Play capture
+
+In this build the followers are the "companions" below: their movement is captured as a player's, and each decision
+goes to the companion stream. There are no owner commands or ratings (`.animus rate` and the addon are not in it).
 
 With `Animus.Capture.Enable = 1` and `Animus.Capture.Dir` set, the module records what every player on the realm
 does, and what the companions decide, to files the forge trains on: realistic movement first (a learned style
@@ -147,43 +140,3 @@ school, absorb, crit or overheal; an encounter's `boss_entry` is the instance sc
 estimated from time under water; snapshot unit velocities are estimated from movement flags and speeds; group
 members on other maps are written without a level; companions get no snapshots.
 
-## Dungeon party fill
-
-Entering a five-player dungeon alone, or as its group's leader, fills the group to five
-(`Animus.PartyFill.Enable`): a tank if nobody present can hold a pull, a healer if nobody can heal,
-then damage dealers. Each member's role is read off its talents, not its class, and your companion
-counts as a member. The new members are of your level and faction, are never saved, and stay behind
-when you leave the dungeon alive. They play with the configured stage's models, so they only tank and
-heal well with a stage trained for party combat.
-
-## Testing a model from the forge
-
-1. Export it on the forge: `forge export <scenario>` on its console, or by hand
-   `python -m animus.export --checkpoint runs/<scenario>/best.pt --out <dir> --layouts-dir <OutputDir>/layouts` (the
-   `layouts` directory itself, not the scenario's inside it: that gives the wrong names and no manifests).
-2. Copy every `<class>_<stage>.amdl` **with its `.json`** into `Animus.ModelDir`, and set `Animus.Curriculum.Stage` to
-   the stage they came from.
-3. The layered fields (`forge fieldworld all` → `apps/forge/probes/world/`) go in `Animus.Probe.Dir` (default
-   `<DataDir>/fields`; under Docker the data volume is read-only, so point the key at a mounted directory). Startup
-   logs `Animus ground probe: geometry from <dir>`.
-4. `.animus models` (console) must say every class loads.
-
-A movement stage's model (stages 1-7) travels to an objective. A companion's is its owner, so it walks, jumps, swims
-and flies to you with what it learned; the forge also tells a seat how much longer the walking route is than the
-straight line, which the module does not measure and gives as the straight line. Following, fighting beside you and
-the rest are the companion stage's (`stage9_deadmines`).
-
-A build outside Docker reads module configs from its compile-time config directory (`<install>/etc/modules`), not
-from beside `worldserver.conf`: a key that logs "Missing property" is a `mod_animus.conf` in the wrong place.
-
-## Models
-
-A companion plays `<class><stage suffix>.amdl` for `Animus.Curriculum.Stage` (`hunter_companion.amdl` for the default
-`stage9_deadmines`): one model per class, not per class and role -- the curriculum has no roles, and a model plays
-every build its class can have. A model loads only if its manifest is exactly the one this server builds for that
-layout, so the realm needs the curriculum revision the forge trained with, and the same world database and DBC data. A
-refused model is logged once and shown by `.animus list`, and its companion only follows you. Models load on first use
-and again after `.reload config`.
-
-`conf/mod_animus.conf.dist` documents every `Animus.*` key. For debug logging set
-`Logger.module.animus=1,Console Server`.
