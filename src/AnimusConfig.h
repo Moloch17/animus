@@ -50,6 +50,8 @@ namespace Animus
         /// only RenderSizes entry; and the mental map's caps (Animus.Map.*, KeepShare 0: the realm's keep rule is the
         /// follow driver's).
         Vision::Settings Camera;
+        /// Animus.Vision.RenderSize: the one of Camera.RenderSizes every follower casts its frames at.
+        Vision::Resolution Render;
         Vision::MapRunSettings MapRun;
         uint32 ClusterMinCells = 2;
         uint32 PocketMinCells = 6;

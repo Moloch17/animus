@@ -74,10 +74,18 @@ Animus.DataDir = ""
 Animus.Vision.Maps = "389,36,43,34"
 
 #
+#    Animus.Vision.RenderSizes
+#        Description: The render sizes the models were trained with, "WxH, WxH:weight, ..." (the forge's
+#                     AnimusForge.Vision.RenderSizes). A model's layout manifest records them, so this must be
+#                     the training run's list or every model is refused.
+#        Default:     "32x16, 48x24, 64x32, 128x64:0.4"
+
+Animus.Vision.RenderSizes = "32x16, 48x24, 64x32, 128x64:0.4"
+
+#
 #    Animus.Vision.RenderSize
-#        Description: The size, WxH, every follower's frames are cast at, scaled up to Width x Height
-#                     (training mixed 32x16, 48x24, 64x32 and 128x64). Smaller is cheaper on the world
-#                     thread. At most Width x Height.
+#        Description: The one of those sizes, WxH, every follower's frames are cast at, scaled up to
+#                     Width x Height. Smaller is cheaper on the world thread.
 #        Default:     "64x32"
 
 Animus.Vision.RenderSize = "64x32"

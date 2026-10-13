@@ -77,7 +77,7 @@ void Animus::AnimusMod::LoadConfig()
         Vision::ConfigureMap(_config.MapRun);
         Curriculum::MapBlock::ConfigureCoverage(_config.ClusterMinCells, _config.PocketMinCells);
         _visionConfigured = true;
-        Vision::Resolution const render = _config.Camera.RenderSizes.front();
+        Vision::Resolution const render = _config.Render;
         LOG_INFO("module.animus", "Animus camera: {}x{} (cast at {}x{}), fov {}x{}, range {}, zoom {} (min {}), pitch "
             "{}; mental map {} tiles, {} coarse", _config.Camera.Width, _config.Camera.Height, render.Width,
             render.Height, _config.Camera.FovH, _config.Camera.FovV, _config.Camera.Range, _config.Camera.Zoom,

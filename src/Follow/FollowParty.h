@@ -62,6 +62,8 @@ namespace Animus::Follow
         uint32 RespawnDelayMs = 10000;
         /// The synthetic episode (decision 4): EpisodeTime ramps over it, and every EpisodeMs the episode rolls over.
         uint32 EpisodeMs = 300000;
+        /// The one render size every follower casts its frames at (Animus.Vision.RenderSize).
+        Vision::Resolution Render{ 64, 32 };
     };
 
     /// A goal held (the forge's GoalHold, StageState.h, reduced to what a follower without cell goals uses).
@@ -221,8 +223,8 @@ namespace Animus::Follow
     private:
         /// A new episode for every follower: the clock back to 0 and each seat reset as SeatState::ResetEpisode
         /// does; the mental map kept (a roll-over, aged a second) or cleared (a new map or instance, a summon).
-        void StartEpisode(bool keepMap);
-        void ResetSeat(FollowSeat& seat, Player* bot, bool keepMap);
+        void StartEpisode(bool keepMap, FollowSettings const& settings);
+        void ResetSeat(FollowSeat& seat, Player* bot, bool keepMap, FollowSettings const& settings);
 
         /// One decision of one follower: the deferred stamps, the step bookkeeping, the observation, the model, the
         /// goal holds, the free look and the action.

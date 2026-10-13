@@ -171,18 +171,33 @@ void Animus::AnimusConfig::Load()
     Camera.Zoom = Ranged("Animus.Vision.Zoom", 12.0f, 0.0f, 50.0f);
     Camera.ZoomMin = std::min(Camera.Zoom, Ranged("Animus.Vision.ZoomMin", 12.0f, 0.0f, 50.0f));
     Camera.Pitch = Ranged("Animus.Vision.Pitch", -15.0f, -80.0f, 80.0f);
-    // One render size for every follower (decision 3): the first size the key gives that fits the canonical image.
+    // The render sizes the models were trained with (Animus.Vision.RenderSizes, the forge's AnimusForge.Vision.
+    // RenderSizes): a layout's manifest records them, so a model is refused unless they match. Every follower casts
+    // at one of them, Animus.Vision.RenderSize (decision 3), whichever the realm can afford.
     std::vector<std::string> sizeErrors;
+    Camera.RenderSizes = Vision::ParseRenderSizes(sConfigMgr->GetOption<std::string>("Animus.Vision.RenderSizes",
+        Vision::DEFAULT_RENDER_SIZES), Camera, Camera.RenderWeights, sizeErrors);
+    for (std::string const& error : sizeErrors)
+        LOG_ERROR("module.animus", "Animus.Vision.RenderSizes: {}", error);
+    if (Camera.RenderSizes.empty())
+    {
+        Camera.RenderSizes = { Vision::Resolution{ Camera.Width, Camera.Height } };
+        Camera.RenderWeights = { 1.0f };
+    }
+    sizeErrors.clear();
     std::vector<float> weights;
-    std::vector<Vision::Resolution> sizes = Vision::ParseRenderSizes(sConfigMgr->GetOption<std::string>(
+    std::vector<Vision::Resolution> const chosen = Vision::ParseRenderSizes(sConfigMgr->GetOption<std::string>(
         "Animus.Vision.RenderSize", "64x32"), Camera, weights, sizeErrors);
     for (std::string const& error : sizeErrors)
         LOG_ERROR("module.animus", "Animus.Vision.RenderSize: {}", error);
-    if (sizes.size() > 1)
+    if (chosen.size() > 1)
         LOG_ERROR("module.animus", "Animus.Vision.RenderSize names {} sizes; every follower casts at the first, {}x{}",
-            sizes.size(), sizes.front().Width, sizes.front().Height);
-    Camera.RenderSizes = { sizes.empty() ? Vision::Resolution{ Camera.Width, Camera.Height } : sizes.front() };
-    Camera.RenderWeights = { 1.0f };
+            chosen.size(), chosen.front().Width, chosen.front().Height);
+    Render = chosen.empty() ? Camera.RenderSizes.front() : chosen.front();
+    if (std::find_if(Camera.RenderSizes.begin(), Camera.RenderSizes.end(), [this](Vision::Resolution const& size)
+        { return size.Width == Render.Width && size.Height == Render.Height; }) == Camera.RenderSizes.end())
+        LOG_ERROR("module.animus", "Animus.Vision.RenderSize {}x{} is not one of Animus.Vision.RenderSizes: the models "
+            "never saw frames cast at it", Render.Width, Render.Height);
 
     // The mental map: its caps, and no keep roll (the follow driver keeps it across a roll-over and nowhere else).
     MapRun = Vision::MapRunSettings();
@@ -212,6 +227,7 @@ void Animus::AnimusConfig::Load()
     tuning.MinimapYards = Ranged("Animus.Curriculum.PartyFollow.MinimapYards", 60.0f, 1.0f, 500.0f);
     tuning.RespawnDelayMs = sConfigMgr->GetOption<uint32>("Animus.Curriculum.Respawn.DelayMs", 10000);
     tuning.EpisodeMs = uint32(Ranged("Animus.Follow.EpisodeSeconds", 300.0f, 10.0f, 86400.0f) * 1000.0f);
+    tuning.Render = Render;
 }
 
 std::string Animus::AnimusConfig::SceneDir() const

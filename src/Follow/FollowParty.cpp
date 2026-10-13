@@ -296,7 +296,7 @@ Animus::Follow::FollowParty::Status Animus::Follow::FollowParty::Update(uint32 d
     bool decide = false;
     if (_episodePending)
     {
-        StartEpisode(_episodeKeepMap);
+        StartEpisode(_episodeKeepMap, settings);
         decide = true;
     }
     else
@@ -305,7 +305,7 @@ Animus::Follow::FollowParty::Status Animus::Follow::FollowParty::Update(uint32 d
         _sinceDecisionMs += diff;
         if (_nowMs >= settings.EpisodeMs)
         {
-            StartEpisode(true);
+            StartEpisode(true, settings);
             decide = true;
         }
         else if (_sinceDecisionMs >= settings.DecisionMs)
@@ -339,24 +339,24 @@ Animus::Follow::FollowParty::Status Animus::Follow::FollowParty::Update(uint32 d
     return Status::Active;
 }
 
-void Animus::Follow::FollowParty::StartEpisode(bool keepMap)
+void Animus::Follow::FollowParty::StartEpisode(bool keepMap, FollowSettings const& settings)
 {
     _episodePending = false;
     _episodeKeepMap = false;
     _nowMs = 0;
     _sinceDecisionMs = 0;
     for (std::unique_ptr<FollowSeat> const& seat : _seats)
-        ResetSeat(*seat, FindBot(seat->Bot), keepMap);
+        ResetSeat(*seat, FindBot(seat->Bot), keepMap, settings);
 }
 
-void Animus::Follow::FollowParty::ResetSeat(FollowSeat& seat, Player* bot, bool keepMap)
+void Animus::Follow::FollowParty::ResetSeat(FollowSeat& seat, Player* bot, bool keepMap,
+    FollowSettings const& settings)
 {
     // SeatState::ResetEpisode (StageState.h:563-785), the parts a follower has. The held keys must not outlive their
     // episode; the camera starts at the conf's pitch and zoom, at the one render size the realm casts at
-    // (Animus.Vision.RenderSize: Vision::Current() carries that one size, which DrawRenderSize returns without a roll).
+    // (Animus.Vision.RenderSize), never a draw: the manifest's list is training's, the choice is the realm's.
     seat.Client->Controls.Clear();
-    Vision::FreeLook::Reset(seat.Look, Vision::Current(), Vision::DrawRenderSize(Vision::Current(),
-        [](float) { return 0.0f; }));
+    Vision::FreeLook::Reset(seat.Look, Vision::Current(), settings.Render);
     seat.Facing = 0.0f;
     seat.StuckRunMs = 0;
     seat.Trail.Clear();
