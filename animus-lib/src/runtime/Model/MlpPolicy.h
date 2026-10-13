@@ -34,6 +34,11 @@ namespace Animus
     /// and cleared when a fight is over) and goals (one chosen every few decisions from its own head and kept in
     /// between, added to the features the action head reads). Both live in the caller's State, so one policy serves
     /// every seat that plays it.
+    ///
+    /// Format 10 adds the camera (the image's and the map crop's bytes come with each decision, Camera), the free look
+    /// (Decision::Look), the goal head's place and cell pointers (Decision::Cells, State::Plan) and the learner's current
+    /// goal rules. Every choice is the argmax, as the learner evaluates (deterministic): the realm plays its best guess.
+    /// tools/golden/ checks this reader against the learner's own network.
     class MlpPolicy
     {
     public:
@@ -48,6 +53,10 @@ namespace Animus
             uint32 Age = 0;                 // decisions the goal has been held, 0 = choose one now
             /// The goals queued behind the pair held (-1: none), promoted when the primary ends.
             std::array<int32, 2> Queue{ -1, -1 };
+            /// The cell goals' words at the four plan positions (format 10, a cell pointer): 0 none, else
+            /// ticket << 12 | (block + 1), as the learner's decide_goals writes them for the sim's goal latch.
+            std::array<uint32, 4> Plan{};
+            uint32 Serial = 0;              // goal choices made this episode (the tickets are drawn from it)
 
             /// Nothing remembered and no goal: a new fight starts here.
             void Clear()
@@ -57,7 +66,30 @@ namespace Animus
                 Goal = 0;
                 Age = 0;
                 Queue = { -1, -1 };
+                Plan = {};
+                Serial = 0;
             }
+        };
+
+        /// The camera's bytes of one decision (format 10), as the sim's Vision writes them: the image, ImageBytes()
+        /// bytes ([row][col][distance, height, normal, class byte]), and the mental map's crop, CropBytes() bytes
+        /// ([row][col][7 channels]). Either may be null for a model that reads none.
+        struct Camera
+        {
+            uint8 const* Image = nullptr;
+            uint8 const* Crop = nullptr;
+        };
+
+        static constexpr uint32 MAX_LOOK_HEADS = 8;
+        static constexpr uint32 MAX_GOAL_SLOTS = 4;
+
+        /// What a decision chose beside its action (format 10). Everything is the argmax, as the learner evaluates.
+        struct Decision
+        {
+            int32 Action = 0;
+            std::array<int32, MAX_LOOK_HEADS> Look{};   // per look head (LookHeads()) its choice; 0 is never "hold"
+            bool GoalChosen = false;                    // the goals were chosen this decision
+            std::array<int32, MAX_GOAL_SLOTS> Cells{ -1, -1, -1, -1 };  // the block each slot named; -1 none
         };
 
         /// Load `path` and check it was trained for `scenario` with these shapes. On any failure the
@@ -76,11 +108,20 @@ namespace Animus
         /// allowed. obs: [ObsDim], mask: [NumActions]. Does not allocate after the first decision. Not
         /// thread-safe (shared scratch buffers); call from one thread. `state` carries this seat's memory and goal,
         /// and is updated; without one the policy decides as if every decision were its first.
+        /// A model with a camera (HasCamera) needs its bytes: this overload decides nothing for it (returns 0).
         int32 Decide(float const* obs, uint8 const* mask, State* state = nullptr);
+
+        /// The same with the camera's bytes (format 10), and what was chosen beside the action into `decision` (the
+        /// free look, whether the goals were chosen and the cells named), when given.
+        int32 Decide(float const* obs, uint8 const* mask, State* state, Camera const& camera,
+            Decision* decision = nullptr);
 
         /// The logits Decide chooses from, every action's, into `out` [NumActions]; `state` steps as Decide steps it.
         /// False when no model is loaded. For checking the reader against the learner (the golden vectors).
         bool Logits(float const* obs, float* out, State* state = nullptr);
+
+        /// The same with the camera's bytes, and the free look's logits into `look` [LookOutputs()] when given.
+        bool Logits(float const* obs, float* out, State* state, Camera const& camera, float* look = nullptr);
 
         /// Whether the model carries a memory or goals, so its caller must keep a State per seat.
         [[nodiscard]] bool HasMemory() const { return _recurrentSize != 0; }
@@ -91,9 +132,34 @@ namespace Animus
         [[nodiscard]] int32 PrimaryOf(State const& state) const;
         [[nodiscard]] int32 SecondaryOf(State const& state) const;
 
+        [[nodiscard]] uint32 Version() const { return _version; }
+        /// The camera (format 10): the bytes a decision needs, and the free look's heads.
+        [[nodiscard]] bool HasCamera() const { return _camera.On; }
+        [[nodiscard]] uint32 ImageBytes() const { return _camera.On ? _camera.Height * _camera.Width * 4 : 0; }
+        [[nodiscard]] uint32 CropBytes() const { return _camera.On ? _camera.CropBytes : 0; }
+        [[nodiscard]] uint32 LookHeads() const { return uint32(_camera.LookHeads.size()); }
+        [[nodiscard]] uint32 LookHeadSize(uint32 head) const { return _camera.LookHeads[head]; }
+        [[nodiscard]] uint32 LookOutputs() const { return uint32(_camera.LookB.size()); }
+        [[nodiscard]] bool HasCellGoals() const { return _cells.On; }
+        /// The last decision's action head input (the features after the goal's conditioning) and what the camera
+        /// added to the first layer: for checking the reader against the learner.
+        [[nodiscard]] std::vector<float> const& LastFeatures() const { return _lastFeatures; }
+        [[nodiscard]] std::vector<float> const& LastCameraTerm() const { return _camera.Term; }
+
     private:
-        /// One decision's forward pass: the logits (in scratch, valid until the next call), or nullptr unloaded.
-        float const* Forward(float const* obs, State* state);
+        /// One decision's forward pass: the logits (in scratch, valid until the next call), or nullptr unloaded (or a
+        /// camera model without its bytes).
+        float const* Forward(float const* obs, State* state, Camera const* camera = nullptr);
+        /// What the camera adds to the first layer, into _camera.Term (format 10).
+        void SeeCamera(float const* obs, Camera const& camera);
+        /// The goal decision of format 10 (the learner's LayoutActor.decide_goals, greedy) and its conditioning of the
+        /// action head's features `in`; `raw` the features before the predictions were fed back.
+        void DecideGoals(float const* obs, Camera const* camera, float* in, float const* raw, uint32 features,
+            State* state);
+        /// The cell pointer's per-block hidden features and which blocks are choosable, from the crop.
+        void CellInputs(uint8 const* crop);
+        /// The best block for a slot reading `shifted` from the previous cell (prevRow, prevCol) among `allowed`.
+        int32 BestCell(float const* shifted, float prevRow, float prevCol, std::vector<uint8> const& allowed);
         /// The seat sets' attention layer (format 9), in place on _tokens.
         void Attend();
 
@@ -224,6 +290,75 @@ namespace Animus
         std::vector<SeatPointer> _seatPointers;
         std::vector<std::vector<float>> _seatCodes;              // scratch: per set [slots * embed]
         std::vector<float> _seatPooled, _seatExtra, _seatRaw;    // scratch
+
+        /// Format 10's tail.
+        uint32 _version = 0;
+        bool _goalSpace = false;                 // the stage had a goal block: a layout without one chooses nothing
+
+        /// The goal head's pointer over place slots: a per-slot MLP score added to its target's logit.
+        struct PlacePointer
+        {
+            bool On = false;
+            uint32 At = 0, First = 0, Count = 0, Features = 0, Hidden = 0;
+            std::vector<float> W1, B1, W2;
+            float B2 = 0.0f;
+        };
+        PlacePointer _place;
+        std::vector<float> _placeScores;         // scratch [goal targets]
+
+        /// The goal head's cell pointer (CellPointer): a cell goal names a block of the map's crop.
+        struct CellHead
+        {
+            bool On = false;
+            uint32 CropOffset = 0, Grid = 0, Pool = 0, Joint = 0, Rise = 0, MinFloor = 0, Features = 0, Hidden = 0,
+                ChainHidden = 0;
+            std::vector<float> LocalW, LocalB, QueryW, QueryB, ScoreW, ChainW1, ChainB1, ChainW2;
+            float ScoreB = 0.0f, ChainB2 = 0.0f;
+        };
+        CellHead _cells;
+        std::vector<float> _cellFeatures, _cellHidden, _cellExtra, _cellQuery, _cellChain;     // scratch
+        std::vector<uint8> _cellValid, _cellAllowed;                               // scratch [blocks]
+
+        /// The camera (VisionEncoder with its map and entity list), its join onto the first layer, and the free look.
+        struct Camera10
+        {
+            bool On = false;
+            uint32 Height = 0, Width = 0, Patch = 0, Scalars = 0, First = 0, CropBytes = 0;
+            std::array<int8, 32> ClassPlane{};   // a pixel's class (b & 31) -> its one-hot plane, -1 none
+            uint32 Planes = 0;                   // 4 + the pixel classes
+            uint32 ClassLimit = 0, ClassWidth = 0;
+            std::vector<float> ClassEmbed;
+            uint32 PatchOut = 0, MixOut = 0, Embed = 0;
+            std::vector<float> PatchWT;          // [patch inputs][PatchOut], transposed for the sparse pixel planes
+            std::vector<float> PatchB, MixW, MixB, EmbedW, EmbedB;
+            std::vector<float> GridX, GridY;     // the patch grid's keypoint coordinates
+
+            bool Entities = false;
+            uint32 EFirst = 0, ESlots = 0, EWidth = 0, EPresent = 0, EClass = 0, EType = 0;
+            int32 EObject = -1, EMemory = -1;
+            uint32 Buckets = 0, TypeWidth = 0, Token = 0;
+            std::vector<float> TypeEmbed, EW1, EB1, EW2, EB2, EPoolW, EPoolB;
+
+            bool Map = false;
+            uint32 MFirst = 0, MScalars = 0, MHeight = 0, MWidth = 0, MPatch = 0, Codes = 0, CodeWidth = 0,
+                MPatchOut = 0, MMixOut = 0, MEmbed = 0;
+            std::vector<float> CodeTable;        // [cell in patch][code][MPatchOut]: the code's embedding through patch
+            std::vector<float> ClassTable;       // [cell in patch][class][MPatchOut]
+            std::vector<float> ValueWT;          // [cell in patch][6 values][MPatchOut]
+            std::vector<float> MPatchB, MMixW, MMixB, MEmbedW, MEmbedB, MJoinW, MJoinB, MGridX, MGridY;
+
+            std::vector<float> JoinW, JoinB;     // VisionJoin: Embed -> the first layer's width
+            std::vector<uint32> LookHeads;
+            std::vector<float> LookW, LookB;
+
+            // scratch
+            std::vector<float> Acc, Hidden, Features, Pooled, Embedded, Term, Raw, Input, Code, Mean, Max, MapOut;
+        };
+        Camera10 _camera;
+        std::vector<float> _lookLogits;          // scratch [LookOutputs()]
+        std::vector<float> _lastFeatures;        // the action head's input of the last decision
+        std::array<int32, MAX_GOAL_SLOTS> _lastCells{ -1, -1, -1, -1 };
+        bool _lastChosen = false;
 
         std::vector<float> _scratchA;
         std::vector<float> _scratchB;

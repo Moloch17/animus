@@ -29,9 +29,11 @@
 namespace
 {
     constexpr char AMDL_MAGIC[4] = { 'A', 'M', 'D', 'L' };
-    constexpr uint32 AMDL_VERSION = 9;
+    /// 10: the camera (the vision encoder, its map and entity list), the free look, and the goal head's place and cell
+    /// pointers, as a tail after the seat sets, with the learner's current goal decision (see DecideGoals).
+    constexpr uint32 AMDL_VERSION = 10;
     /// The oldest format still read: a version 7 model is a version 8 one without the seat sets, an 8 a 9 without the
-    /// attention flag.
+    /// attention flag, a 9 a 10 without the tail (and the older goal rules).
     constexpr uint32 AMDL_OLDEST_VERSION = 7;
 
     /// Guards against a corrupt header asking for gigabytes.
@@ -327,7 +329,9 @@ bool Animus::MlpPolicy::Load(std::string const& path, std::string const& scenari
         }
         // The goal block's columns: kinds, targets, ended, reached, and with two goals the secondary ending, the
         // event, the director's primary and what was achieved.
-        uint32 const blockWidth = goalCount + goalTargets + 2 + (goalSlots > 1 ? 3 + 2 * (goalCount + goalTargets) : 0);
+        // Format 10's block (revision 2 on) has no order columns: the secondary ending, the event, what was achieved.
+        uint32 const blockWidth = goalCount + goalTargets + 2 + (goalSlots <= 1 ? 0
+            : version >= 10 ? 2 + goalCount + goalTargets : 3 + 2 * (goalCount + goalTargets));
         if (goalBlockAt >= 0 && uint32(goalBlockAt) + blockWidth > obsDim)
         {
             error = Acore::StringFormat("{} puts its goal block at {}, past its {} observations", path, goalBlockAt,
@@ -451,6 +455,184 @@ bool Animus::MlpPolicy::Load(std::string const& path, std::string const& scenari
         }
     }
 
+    // Format 10's tail: the goal head's pointers, the camera and its free look.
+    bool goalSpace = false;
+    PlacePointer place;
+    CellHead cells;
+    Camera10 camera;
+    if (version >= 10)
+    {
+        uint32 const goalWidth = slowSize ? slowSize : featureWidth;
+        uint32 const adapterOut = layers.front().Out;
+        auto const flag = [&reader](bool& out)
+        {
+            uint8 value = 0;
+            bool const ok = reader.Read(value);
+            out = value != 0;
+            return ok;
+        };
+        bool ok = flag(goalSpace) && flag(place.On);
+        if (ok && place.On)
+            ok = reader.Read(place.At) && reader.Read(place.First) && reader.Read(place.Count)
+                && reader.Read(place.Features) && reader.Read(place.Hidden) && place.Hidden <= MAX_LAYER_WIDTH
+                && place.Features <= 64 && goalCount && goalBlockAt >= 0
+                && place.First + place.Count <= goalTargets
+                && uint32(goalBlockAt) + place.At + place.Count * place.Features <= obsDim
+                && reader.ReadFloats(place.W1, std::size_t(place.Hidden) * place.Features)
+                && reader.ReadFloats(place.B1, place.Hidden) && reader.ReadFloats(place.W2, place.Hidden)
+                && reader.Read(place.B2);
+        ok = ok && flag(cells.On);
+        if (ok && cells.On)
+        {
+            ok = reader.Read(cells.CropOffset) && reader.Read(cells.Grid) && reader.Read(cells.Pool)
+                && reader.Read(cells.Joint) && reader.Read(cells.Rise) && reader.Read(cells.MinFloor)
+                && reader.Read(cells.Features) && reader.Read(cells.Hidden) && reader.Read(cells.ChainHidden)
+                && cells.Features == 22 && cells.Grid > 0 && cells.Grid <= 64 && cells.Pool > 0 && cells.Pool <= 8
+                && cells.Hidden <= MAX_LAYER_WIDTH && cells.ChainHidden <= MAX_LAYER_WIDTH && goalSlots > 1
+                && cells.Joint < goalCount * goalTargets;
+            ok = ok && reader.ReadFloats(cells.LocalW, std::size_t(cells.Hidden) * cells.Features)
+                && reader.ReadFloats(cells.LocalB, cells.Hidden)
+                && reader.ReadFloats(cells.QueryW, std::size_t(cells.Hidden) * goalWidth)
+                && reader.ReadFloats(cells.QueryB, cells.Hidden) && reader.ReadFloats(cells.ScoreW, cells.Hidden)
+                && reader.Read(cells.ScoreB) && reader.ReadFloats(cells.ChainW1, std::size_t(cells.ChainHidden) * 3)
+                && reader.ReadFloats(cells.ChainB1, cells.ChainHidden)
+                && reader.ReadFloats(cells.ChainW2, cells.ChainHidden) && reader.Read(cells.ChainB2);
+        }
+        ok = ok && flag(camera.On);
+        if (ok && camera.On)
+        {
+            Camera10& c = camera;
+            uint32 classCount = 0;
+            ok = reader.Read(c.Height) && reader.Read(c.Width) && reader.Read(c.Patch) && reader.Read(c.Scalars)
+                && reader.Read(c.First) && reader.Read(c.CropBytes) && reader.Read(classCount) && c.Patch > 0
+                && c.Height > 0 && c.Width > 0 && c.Height % c.Patch == 0 && c.Width % c.Patch == 0
+                && c.Height * c.Width <= (1u << 20) && c.First + c.Scalars <= obsDim && classCount <= 32;
+            c.ClassPlane.fill(-1);
+            for (uint32 i = 0; ok && i < classCount; ++i)
+            {
+                uint32 klass = 0;
+                ok = reader.Read(klass) && klass < 32;
+                if (ok)
+                    c.ClassPlane[klass] = int8(i);
+            }
+            c.Planes = 4 + classCount;
+            ok = ok && reader.Read(c.ClassLimit) && reader.Read(c.ClassWidth) && c.ClassLimit >= 32
+                && c.ClassWidth <= 64 && reader.ReadFloats(c.ClassEmbed, std::size_t(c.ClassLimit) * c.ClassWidth)
+                && reader.Read(c.PatchOut) && reader.Read(c.MixOut) && reader.Read(c.Embed)
+                && c.PatchOut <= MAX_LAYER_WIDTH && c.MixOut <= MAX_LAYER_WIDTH && c.Embed <= MAX_LAYER_WIDTH;
+            std::vector<float> patchW;
+            std::size_t const patchIn = std::size_t(c.Patch) * c.Patch * c.Planes;
+            ok = ok && reader.ReadFloats(patchW, c.PatchOut * patchIn) && reader.ReadFloats(c.PatchB, c.PatchOut)
+                && reader.ReadFloats(c.MixW, std::size_t(c.MixOut) * c.PatchOut) && reader.ReadFloats(c.MixB, c.MixOut)
+                && reader.ReadFloats(c.EmbedW, std::size_t(c.Embed) * (2 * c.MixOut + c.Scalars))
+                && reader.ReadFloats(c.EmbedB, c.Embed);
+            if (ok)
+            {
+                c.PatchWT.assign(patchW.size(), 0.0f);
+                for (std::size_t row = 0; row < c.PatchOut; ++row)
+                    for (std::size_t col = 0; col < patchIn; ++col)
+                        c.PatchWT[col * c.PatchOut + row] = patchW[row * patchIn + col];
+            }
+            ok = ok && flag(c.Entities);
+            if (ok && c.Entities)
+            {
+                ok = reader.Read(c.EFirst) && reader.Read(c.ESlots) && reader.Read(c.EWidth) && reader.Read(c.EPresent)
+                    && reader.Read(c.EClass) && reader.Read(c.EType) && reader.Read(c.EObject)
+                    && reader.Read(c.EMemory) && reader.Read(c.Buckets) && reader.Read(c.TypeWidth)
+                    && reader.Read(c.Token) && c.EWidth > 2 && c.EWidth <= 256 && c.ESlots <= 256
+                    && c.EFirst + c.ESlots * c.EWidth <= obsDim && c.EPresent < c.EWidth && c.EClass < c.EWidth
+                    && c.EType < c.EWidth && c.EClass != c.EType && c.EObject < int32(c.EWidth)
+                    && c.EMemory < int32(c.EWidth) && c.Buckets > 0 && c.TypeWidth <= 64
+                    && c.Token <= MAX_LAYER_WIDTH;
+                std::size_t const inputs = c.EWidth - 2 + c.ClassWidth + c.TypeWidth;
+                ok = ok && reader.ReadFloats(c.TypeEmbed, std::size_t(c.Buckets) * c.TypeWidth)
+                    && reader.ReadFloats(c.EW1, c.Token * inputs) && reader.ReadFloats(c.EB1, c.Token)
+                    && reader.ReadFloats(c.EW2, std::size_t(c.Token) * c.Token) && reader.ReadFloats(c.EB2, c.Token)
+                    && reader.ReadFloats(c.EPoolW, std::size_t(c.Embed) * 2 * c.Token)
+                    && reader.ReadFloats(c.EPoolB, c.Embed);
+            }
+            ok = ok && flag(c.Map);
+            if (ok && c.Map)
+            {
+                ok = reader.Read(c.MFirst) && reader.Read(c.MScalars) && reader.Read(c.MHeight) && reader.Read(c.MWidth)
+                    && reader.Read(c.MPatch) && reader.Read(c.Codes) && reader.Read(c.CodeWidth)
+                    && reader.Read(c.MPatchOut) && reader.Read(c.MMixOut) && reader.Read(c.MEmbed) && c.MPatch > 0
+                    && c.MHeight % c.MPatch == 0 && c.MWidth % c.MPatch == 0 && c.Codes > 0 && c.Codes <= 16
+                    && c.CodeWidth <= 64 && c.MFirst + c.MScalars <= obsDim
+                    && c.MHeight * c.MWidth * 7 <= c.CropBytes && c.MPatchOut <= MAX_LAYER_WIDTH
+                    && c.MMixOut <= MAX_LAYER_WIDTH && c.MEmbed <= MAX_LAYER_WIDTH;
+                std::vector<float> codeEmbed, mapPatchW;
+                uint32 const cellsInPatch = c.MPatch * c.MPatch;
+                uint32 const planes = c.CodeWidth + c.ClassWidth + 6;
+                std::size_t const patchInputs = std::size_t(cellsInPatch) * planes;
+                ok = ok && reader.ReadFloats(codeEmbed, std::size_t(c.Codes) * c.CodeWidth)
+                    && reader.ReadFloats(mapPatchW, c.MPatchOut * patchInputs)
+                    && reader.ReadFloats(c.MPatchB, c.MPatchOut)
+                    && reader.ReadFloats(c.MMixW, std::size_t(c.MMixOut) * c.MPatchOut)
+                    && reader.ReadFloats(c.MMixB, c.MMixOut)
+                    && reader.ReadFloats(c.MEmbedW, std::size_t(c.MEmbed) * (3 * c.MMixOut + c.MScalars))
+                    && reader.ReadFloats(c.MEmbedB, c.MEmbed)
+                    && reader.ReadFloats(c.MJoinW, std::size_t(c.Embed) * c.MEmbed)
+                    && reader.ReadFloats(c.MJoinB, c.Embed);
+                if (ok)
+                {
+                    // The code and the class are embeddings, so each (cell, code) and (cell, class) is one column
+                    // of the patch layer's product: tabled here, the per-cell work is two lookups and six values.
+                    uint32 const out = c.MPatchOut;
+                    c.CodeTable.assign(std::size_t(cellsInPatch) * c.Codes * out, 0.0f);
+                    c.ClassTable.assign(std::size_t(cellsInPatch) * c.ClassLimit * out, 0.0f);
+                    c.ValueWT.assign(std::size_t(cellsInPatch) * 6 * out, 0.0f);
+                    for (uint32 q = 0; q < cellsInPatch; ++q)
+                        for (uint32 row = 0; row < out; ++row)
+                        {
+                            float const* w = mapPatchW.data() + std::size_t(row) * patchInputs
+                                + std::size_t(q) * planes;
+                            for (uint32 code = 0; code < c.Codes; ++code)
+                            {
+                                float sum = 0.0f;
+                                for (uint32 j = 0; j < c.CodeWidth; ++j)
+                                    sum += w[j] * codeEmbed[std::size_t(code) * c.CodeWidth + j];
+                                c.CodeTable[(std::size_t(q) * c.Codes + code) * out + row] = sum;
+                            }
+                            for (uint32 klass = 0; klass < c.ClassLimit; ++klass)
+                            {
+                                float sum = 0.0f;
+                                for (uint32 j = 0; j < c.ClassWidth; ++j)
+                                    sum += w[c.CodeWidth + j] * c.ClassEmbed[std::size_t(klass) * c.ClassWidth + j];
+                                c.ClassTable[(std::size_t(q) * c.ClassLimit + klass) * out + row] = sum;
+                            }
+                            for (uint32 v = 0; v < 6; ++v)
+                                c.ValueWT[(std::size_t(q) * 6 + v) * out + row] = w[c.CodeWidth + c.ClassWidth + v];
+                        }
+                }
+            }
+            ok = ok && reader.ReadFloats(c.JoinW, std::size_t(adapterOut) * c.Embed)
+                && reader.ReadFloats(c.JoinB, adapterOut);
+            uint32 heads = 0;
+            ok = ok && reader.Read(heads) && heads <= MAX_LOOK_HEADS;
+            uint32 total = 0;
+            for (uint32 i = 0; ok && i < heads; ++i)
+            {
+                uint32 size = 0;
+                ok = reader.Read(size) && size > 0 && size <= 64;
+                c.LookHeads.push_back(size);
+                total += size;
+            }
+            ok = ok && reader.ReadFloats(c.LookW, std::size_t(total) * featureWidth)
+                && reader.ReadFloats(c.LookB, total);
+        }
+        if (ok && cells.On && (!camera.On || !camera.Map
+            || cells.CropOffset + cells.Grid * cells.Pool * cells.Grid * cells.Pool * 7 > camera.CropBytes))
+            ok = false;
+        if (ok && goalCount && goalSlots > MAX_GOAL_SLOTS)
+            ok = false;
+        if (!ok)
+        {
+            error = Acore::StringFormat("{} is truncated or inconsistent in its camera or goal pointers", path);
+            return false;
+        }
+    }
+
     if (!reader.AtEnd())
     {
         error = Acore::StringFormat("{} has trailing data", path);
@@ -553,6 +735,63 @@ bool Animus::MlpPolicy::Load(std::string const& path, std::string const& scenari
     _scratchB.assign(widest, 0.0f);
     _gates.assign(std::size_t(3) * recurrentSize, 0.0f);
     _hiddenGates.assign(std::size_t(3) * recurrentSize, 0.0f);
+
+    _version = version;
+    _goalSpace = goalSpace;
+    _place = std::move(place);
+    _placeScores.assign(goalTargets, 0.0f);
+    _cells = std::move(cells);
+    uint32 const blocks = _cells.On ? _cells.Grid * _cells.Grid : 0;
+    _cellFeatures.assign(std::size_t(blocks) * _cells.Features, 0.0f);
+    _cellHidden.assign(std::size_t(blocks) * _cells.Hidden, 0.0f);
+    _cellExtra.assign(std::size_t(blocks) * 7, 0.0f);
+    _cellQuery.assign(_cells.Hidden, 0.0f);
+    _cellChain.assign(_cells.ChainHidden, 0.0f);
+    _cellValid.assign(blocks, 0);
+    _cellAllowed.assign(blocks, 0);
+    _camera = std::move(camera);
+    if (_camera.On)
+    {
+        Camera10& c = _camera;
+        // The keypoints' grids, as torch.linspace(-1, 1, n) makes them (from both ends towards the middle).
+        auto const linspace = [](uint32 steps, uint32 i)
+        {
+            if (steps == 1)
+                return -1.0f;
+            float const step = 2.0f / float(steps - 1);
+            return i < steps / 2 ? -1.0f + step * float(i) : 1.0f - step * float(steps - 1 - i);
+        };
+        auto const grids = [&](uint32 rows, uint32 cols, std::vector<float>& x, std::vector<float>& y)
+        {
+            x.assign(std::size_t(rows) * cols, 0.0f);
+            y.assign(std::size_t(rows) * cols, 0.0f);
+            for (uint32 r = 0; r < rows; ++r)
+                for (uint32 col = 0; col < cols; ++col)
+                {
+                    x[std::size_t(r) * cols + col] = linspace(cols, col);
+                    y[std::size_t(r) * cols + col] = linspace(rows, r);
+                }
+        };
+        grids(c.Height / c.Patch, c.Width / c.Patch, c.GridX, c.GridY);
+        if (c.Map)
+            grids(c.MHeight / c.MPatch, c.MWidth / c.MPatch, c.MGridX, c.MGridY);
+        uint32 const patches = (c.Height / c.Patch) * (c.Width / c.Patch);
+        uint32 const mapPatches = c.Map ? (c.MHeight / c.MPatch) * (c.MWidth / c.MPatch) : 0;
+        c.Acc.assign(std::max(c.PatchOut, c.MPatchOut), 0.0f);
+        c.Hidden.assign(std::max({ c.PatchOut, c.MPatchOut, c.Token }), 0.0f);
+        c.Features.assign(std::size_t(std::max(patches * c.MixOut, mapPatches * c.MMixOut)), 0.0f);
+        c.Pooled.assign(std::max(2 * c.MixOut + c.Scalars, 3 * c.MMixOut + c.MScalars), 0.0f);
+        c.Embedded.assign(c.Embed, 0.0f);
+        c.MapOut.assign(std::max(c.MEmbed, 2 * c.Token), 0.0f);
+        c.Term.assign(_layers.front().Out, 0.0f);
+        c.Raw.assign(c.EWidth, 0.0f);
+        c.Input.assign(c.Entities ? c.EWidth - 2 + c.ClassWidth + c.TypeWidth : 0, 0.0f);
+        c.Code.assign(c.Token, 0.0f);
+        c.Mean.assign(c.Token, 0.0f);
+        c.Max.assign(c.Token, 0.0f);
+    }
+    _lookLogits.assign(_camera.LookB.size(), 0.0f);
+    _lastFeatures.assign(featureWidth, 0.0f);
     return true;
 }
 
@@ -635,6 +874,21 @@ void Animus::MlpPolicy::Unload()
     _recurrentSize = 0;
     _goalCount = 0;
     _goalEvery = 0;
+    _version = 0;
+    _goalSpace = false;
+    _place = PlacePointer();
+    _placeScores.clear();
+    _cells = CellHead();
+    _cellFeatures.clear();
+    _cellHidden.clear();
+    _cellExtra.clear();
+    _cellQuery.clear();
+    _cellChain.clear();
+    _cellValid.clear();
+    _cellAllowed.clear();
+    _camera = Camera10();
+    _lookLogits.clear();
+    _lastFeatures.clear();
 }
 
 std::string Animus::MlpPolicy::Describe() const
@@ -679,9 +933,35 @@ int32 Animus::MlpPolicy::SecondaryOf(State const& state) const
 
 int32 Animus::MlpPolicy::Decide(float const* obs, uint8 const* mask, State* state)
 {
-    float const* logits = Forward(obs, state);
+    return Decide(obs, mask, state, Camera(), nullptr);
+}
+
+int32 Animus::MlpPolicy::Decide(float const* obs, uint8 const* mask, State* state, Camera const& camera,
+    Decision* decision)
+{
+    float const* logits = Forward(obs, state, &camera);
+    if (decision)
+        *decision = Decision();
     if (!logits)
         return 0;
+
+    if (decision)
+    {
+        // The free look: each head's argmax (the first of equals, as torch's), and the goal choice's cells.
+        uint32 offset = 0;
+        for (uint32 head = 0; head < _camera.LookHeads.size(); ++head)
+        {
+            uint32 const size = _camera.LookHeads[head];
+            int32 best = 0;
+            for (uint32 i = 1; i < size; ++i)
+                if (_lookLogits[offset + i] > _lookLogits[offset + best])
+                    best = int32(i);
+            decision->Look[head] = best;
+            offset += size;
+        }
+        decision->GoalChosen = _lastChosen;
+        decision->Cells = _lastCells;
+    }
 
     int32 best = 0;
     float bestLogit = -std::numeric_limits<float>::infinity();
@@ -705,11 +985,23 @@ int32 Animus::MlpPolicy::Decide(float const* obs, uint8 const* mask, State* stat
 
 bool Animus::MlpPolicy::Logits(float const* obs, float* out, State* state)
 {
-    float const* logits = Forward(obs, state);
+    float const* logits = Forward(obs, state, nullptr);
     if (!logits)
         return false;
 
     std::copy(logits, logits + _numActions, out);
+    return true;
+}
+
+bool Animus::MlpPolicy::Logits(float const* obs, float* out, State* state, Camera const& camera, float* look)
+{
+    float const* logits = Forward(obs, state, &camera);
+    if (!logits)
+        return false;
+
+    std::copy(logits, logits + _numActions, out);
+    if (look)
+        std::copy(_lookLogits.begin(), _lookLogits.end(), look);
     return true;
 }
 
@@ -813,10 +1105,20 @@ void Animus::MlpPolicy::Attend()
     }
 }
 
-float const* Animus::MlpPolicy::Forward(float const* obs, State* state)
+float const* Animus::MlpPolicy::Forward(float const* obs, State* state, Camera const* camera)
 {
     if (_layers.empty())
         return nullptr;
+
+    // A camera model reads its image (and the map's crop, when it encodes it or points at its cells).
+    _lastChosen = false;
+    _lastCells = { -1, -1, -1, -1 };
+    if (_camera.On)
+    {
+        if (!camera || !camera->Image || ((_camera.Map || _cells.On) && !camera->Crop))
+            return nullptr;
+        SeeCamera(obs, *camera);
+    }
 
     // Input: observation, then the one-hot id of agent 0.
     float* in = _scratchA.data();
@@ -989,6 +1291,8 @@ float const* Animus::MlpPolicy::Forward(float const* obs, State* state)
                 sum += _setExtra[row];
             if (_seatSets && index == 0)
                 sum += _seatExtra[row];
+            if (_camera.On && index == 0)
+                sum += _camera.Term[row];
 
             out[row] = std::tanh(sum);
         }
@@ -1061,7 +1365,9 @@ float const* Animus::MlpPolicy::Forward(float const* obs, State* state)
         }
     }
 
-    if (_goalCount)
+    if (_goalCount && _version >= 10)
+        DecideGoals(obs, camera, in, _raw.data(), features, state);
+    else if (_goalCount)
     {
         // The goal decision (the learner's LayoutActor.decide_goals, greedy). With two goals and a queue: an ended
         // secondary is dropped, an ended primary is replaced by the queue's head without a choice, a choice comes on
@@ -1269,6 +1575,17 @@ float const* Animus::MlpPolicy::Forward(float const* obs, State* state)
         }
     }
 
+    // The action head's input, and the free look on the same features (LookHead).
+    std::copy(in, in + features, _lastFeatures.begin());
+    for (uint32 row = 0; row < _lookLogits.size(); ++row)
+    {
+        float const* weights = _camera.LookW.data() + std::size_t(row) * features;
+        float sum = _camera.LookB[row];
+        for (uint32 col = 0; col < features; ++col)
+            sum += weights[col] * in[col];
+        _lookLogits[row] = sum;
+    }
+
     {
         Layer const& head = _layers.back();
         for (uint32 row = 0; row < head.Out; ++row)
@@ -1327,4 +1644,727 @@ float const* Animus::MlpPolicy::Forward(float const* obs, State* state)
 
     // `in` now holds the logits.
     return in;
+}
+
+namespace
+{
+    float Silu(float value)
+    {
+        return value / (1.0f + std::exp(-value));
+    }
+
+    /// out[row] = bias[row] + weight[row] . in, weight row-major [outWidth][inWidth].
+    void Affine(float const* weight, float const* bias, float const* in, uint32 inWidth, uint32 outWidth, float* out)
+    {
+        for (uint32 row = 0; row < outWidth; ++row)
+        {
+            float const* w = weight + std::size_t(row) * inWidth;
+            float sum = bias[row];
+            for (uint32 col = 0; col < inWidth; ++col)
+                sum += w[col] * in[col];
+            out[row] = sum;
+        }
+    }
+
+    /// The spatial softmax of the patch features [patches][channels]: per channel the expected (x, y) of its softmax
+    /// over the patches, x for every channel then y for every channel; and, with `mean`, each channel's mean.
+    void Keypoints(float const* features, uint32 patches, uint32 channels, float const* gridX, float const* gridY,
+        float* out, float* mean)
+    {
+        for (uint32 c = 0; c < channels; ++c)
+        {
+            float peak = -std::numeric_limits<float>::infinity();
+            for (uint32 p = 0; p < patches; ++p)
+                peak = std::max(peak, features[std::size_t(p) * channels + c]);
+            float total = 0.0f, x = 0.0f, y = 0.0f, sum = 0.0f;
+            for (uint32 p = 0; p < patches; ++p)
+            {
+                float const value = features[std::size_t(p) * channels + c];
+                float const weight = std::exp(value - peak);
+                total += weight;
+                x += weight * gridX[p];
+                y += weight * gridY[p];
+                sum += value;
+            }
+            out[c] = x / total;
+            out[channels + c] = y / total;
+            if (mean)
+                mean[c] = sum / float(patches);
+        }
+    }
+
+    /// The map crop's channels and codes (the sim's Vision::CropChannel, Vision::MapCode; the learner's MAP_*).
+    constexpr uint32 MAP_CHANNELS = 7;
+    constexpr uint32 MAP_CODE = 0, MAP_HEIGHT = 1, MAP_VISITED = 2, MAP_AGE = 3, MAP_CLASS = 4, MAP_FRONTIER = 5,
+        MAP_SEARCHED = 6;
+    constexpr uint8 MAP_FLOOR = 1, MAP_WALL = 2, MAP_DOOR = 3, MAP_HAZARD = 4;
+    constexpr int32 MAP_HEIGHT_ZERO = 128;
+    constexpr float MAP_SEARCHED_MAX = 4.0f;
+    /// A cell word: ticket << CELL_BITS | (block + 1); tickets 1..TICKET_COUNT (the learner's _plan_words).
+    constexpr uint32 CELL_BITS = 12;
+    constexpr uint32 TICKET_COUNT = (1u << 11) - 1;
+    constexpr float CELL_OFFSET_SCALE = 24.0f;
+}
+
+void Animus::MlpPolicy::SeeCamera(float const* obs, Camera const& camera)
+{
+    // The learner's VisionEncoder.forward, then its VisionJoin.
+    Camera10& c = _camera;
+    uint32 const rows = c.Height / c.Patch, cols = c.Width / c.Patch, patches = rows * cols;
+    float* acc = c.Acc.data();
+    float* hidden = c.Hidden.data();
+    for (uint32 pr = 0; pr < rows; ++pr)
+        for (uint32 pc = 0; pc < cols; ++pc)
+        {
+            // Every pixel's planes -- distance, height, normal, objective, then its class one-hot -- through the patch
+            // layer, column by column: the one-hot is one column a pixel.
+            std::copy(c.PatchB.begin(), c.PatchB.end(), acc);
+            for (uint32 i = 0; i < c.Patch; ++i)
+                for (uint32 j = 0; j < c.Patch; ++j)
+                {
+                    uint8 const* pixel = camera.Image
+                        + (std::size_t(pr * c.Patch + i) * c.Width + pc * c.Patch + j) * 4;
+                    float const values[4] = {
+                        pixel[0] == 255 ? 1.0f : float(pixel[0]) / 254.0f,
+                        (float(pixel[1]) - 128.0f) / 125.0f,
+                        float(pixel[2]) / 255.0f,
+                        float((pixel[3] >> 5) & 1),
+                    };
+                    std::size_t const base = std::size_t(i * c.Patch + j) * c.Planes;
+                    for (uint32 v = 0; v < 4; ++v)
+                    {
+                        float const* w = c.PatchWT.data() + (base + v) * c.PatchOut;
+                        float const value = values[v];
+                        for (uint32 k = 0; k < c.PatchOut; ++k)
+                            acc[k] += w[k] * value;
+                    }
+                    int32 const plane = c.ClassPlane[pixel[3] & 0x1F];
+                    if (plane >= 0)
+                    {
+                        float const* w = c.PatchWT.data() + (base + 4 + plane) * c.PatchOut;
+                        for (uint32 k = 0; k < c.PatchOut; ++k)
+                            acc[k] += w[k];
+                    }
+                }
+            for (uint32 k = 0; k < c.PatchOut; ++k)
+                hidden[k] = Silu(acc[k]);
+            float* features = c.Features.data() + std::size_t(pr * cols + pc) * c.MixOut;
+            Affine(c.MixW.data(), c.MixB.data(), hidden, c.PatchOut, c.MixOut, features);
+            for (uint32 k = 0; k < c.MixOut; ++k)
+                features[k] = Silu(features[k]);
+        }
+    Keypoints(c.Features.data(), patches, c.MixOut, c.GridX.data(), c.GridY.data(), c.Pooled.data(), nullptr);
+    std::copy(obs + c.First, obs + c.First + c.Scalars, c.Pooled.data() + 2 * c.MixOut);
+    Affine(c.EmbedW.data(), c.EmbedB.data(), c.Pooled.data(), 2 * c.MixOut + c.Scalars, c.Embed, c.Embedded.data());
+
+    // The mental map (MapEncoder): its crop's cells -- the code's and the class's embeddings and six values -- in
+    // patches, keypoints and the patches' mean, its scalars, then its own join onto the camera's embedding.
+    if (c.Map)
+    {
+        uint32 const mrows = c.MHeight / c.MPatch, mcols = c.MWidth / c.MPatch, mpatches = mrows * mcols;
+        uint32 const out = c.MPatchOut;
+        for (uint32 pr = 0; pr < mrows; ++pr)
+            for (uint32 pc = 0; pc < mcols; ++pc)
+            {
+                std::copy(c.MPatchB.begin(), c.MPatchB.end(), acc);
+                for (uint32 i = 0; i < c.MPatch; ++i)
+                    for (uint32 j = 0; j < c.MPatch; ++j)
+                    {
+                        uint8 const* cell = camera.Crop
+                            + (std::size_t(pr * c.MPatch + i) * c.MWidth + pc * c.MPatch + j) * MAP_CHANNELS;
+                        uint32 const q = i * c.MPatch + j;
+                        uint32 const code = std::min<uint32>(cell[MAP_CODE], c.Codes - 1);
+                        uint32 const klass = std::min<uint32>(cell[MAP_CLASS] & 0x1F, c.ClassLimit - 1);
+                        float const* codeRow = c.CodeTable.data() + (std::size_t(q) * c.Codes + code) * out;
+                        float const* classRow = c.ClassTable.data() + (std::size_t(q) * c.ClassLimit + klass) * out;
+                        bool const known = cell[MAP_HEIGHT] != 0;
+                        float const values[6] = {
+                            known ? (float(cell[MAP_HEIGHT]) - float(MAP_HEIGHT_ZERO)) / 127.0f : 0.0f,
+                            known ? 1.0f : 0.0f,
+                            cell[MAP_VISITED] != 0 ? 1.0f : 0.0f,
+                            float(cell[MAP_AGE]) / 255.0f,
+                            cell[MAP_FRONTIER] != 0 ? 1.0f : 0.0f,
+                            float(cell[MAP_SEARCHED]) / MAP_SEARCHED_MAX,
+                        };
+                        for (uint32 k = 0; k < out; ++k)
+                            acc[k] += codeRow[k] + classRow[k];
+                        for (uint32 v = 0; v < 6; ++v)
+                        {
+                            float const* w = c.ValueWT.data() + (std::size_t(q) * 6 + v) * out;
+                            float const value = values[v];
+                            for (uint32 k = 0; k < out; ++k)
+                                acc[k] += w[k] * value;
+                        }
+                    }
+                for (uint32 k = 0; k < out; ++k)
+                    hidden[k] = Silu(acc[k]);
+                float* features = c.Features.data() + std::size_t(pr * mcols + pc) * c.MMixOut;
+                Affine(c.MMixW.data(), c.MMixB.data(), hidden, out, c.MMixOut, features);
+                for (uint32 k = 0; k < c.MMixOut; ++k)
+                    features[k] = Silu(features[k]);
+            }
+        Keypoints(c.Features.data(), mpatches, c.MMixOut, c.MGridX.data(), c.MGridY.data(), c.Pooled.data(),
+            c.Pooled.data() + 2 * c.MMixOut);
+        std::copy(obs + c.MFirst, obs + c.MFirst + c.MScalars, c.Pooled.data() + 3 * c.MMixOut);
+        Affine(c.MEmbedW.data(), c.MEmbedB.data(), c.Pooled.data(), 3 * c.MMixOut + c.MScalars, c.MEmbed,
+            c.MapOut.data());
+        for (uint32 k = 0; k < c.MEmbed; ++k)
+            c.MapOut[k] = Silu(c.MapOut[k]);
+        for (uint32 row = 0; row < c.Embed; ++row)
+        {
+            float const* w = c.MJoinW.data() + std::size_t(row) * c.MEmbed;
+            float sum = c.MJoinB[row];
+            for (uint32 col = 0; col < c.MEmbed; ++col)
+                sum += w[col] * c.MapOut[col];
+            c.Embedded[row] += sum;
+        }
+    }
+
+    // The entity list (VisibleEntities): every slot's token -- its columns but the class and the type (the memory id
+    // read as 0), the class's and the type bucket's embeddings -- the present ones pooled (mean, max).
+    if (c.Entities)
+    {
+        uint32 const token = c.Token;
+        std::fill(c.Mean.begin(), c.Mean.end(), 0.0f);
+        std::fill(c.Max.begin(), c.Max.end(), -1.0f);
+        uint32 present = 0;
+        uint32 const inputs = uint32(c.Input.size());
+        for (uint32 slot = 0; slot < c.ESlots; ++slot)
+        {
+            float const* raw = obs + c.EFirst + std::size_t(slot) * c.EWidth;
+            auto const read = [&](int32 col) { return int32(col) == c.EMemory ? 0.0f : raw[col]; };
+            // Only the present slots are pooled, and nothing else reads a token.
+            if (read(int32(c.EPresent)) <= 0.5f)
+                continue;
+            uint32 at = 0;
+            for (uint32 col = 0; col < c.EWidth; ++col)
+                if (col != c.EClass && col != c.EType)
+                    c.Input[at++] = int32(col) == c.EMemory ? 0.0f : raw[col];
+            float const klassValue = std::nearbyint(read(int32(c.EClass)));
+            uint32 const klass = uint32(std::clamp(klassValue, 0.0f, float(c.ClassLimit - 1)));
+            int64 const entry = int64(std::max(std::nearbyint(read(int32(c.EType))), 0.0f));
+            int64 const object = c.EObject >= 0 ? int64(std::nearbyint(read(c.EObject))) : 0;
+            int64 const buckets = int64(c.Buckets);
+            int64 const bucket = ((entry * 2 + object) % buckets + buckets) % buckets;
+            std::copy_n(c.ClassEmbed.data() + std::size_t(klass) * c.ClassWidth, c.ClassWidth, c.Input.data() + at);
+            std::copy_n(c.TypeEmbed.data() + std::size_t(bucket) * c.TypeWidth, c.TypeWidth,
+                c.Input.data() + at + c.ClassWidth);
+            Affine(c.EW1.data(), c.EB1.data(), c.Input.data(), inputs, token, hidden);
+            for (uint32 k = 0; k < token; ++k)
+                hidden[k] = std::tanh(hidden[k]);
+            Affine(c.EW2.data(), c.EB2.data(), hidden, token, token, c.Code.data());
+            ++present;
+            for (uint32 k = 0; k < token; ++k)
+            {
+                float const code = std::tanh(c.Code[k]);
+                c.Mean[k] += code;
+                c.Max[k] = std::max(c.Max[k], code);
+            }
+        }
+        for (uint32 k = 0; k < token; ++k)
+        {
+            c.MapOut[k] = c.Mean[k] / float(std::max<uint32>(1, present));
+            c.MapOut[token + k] = present ? c.Max[k] : 0.0f;
+        }
+        for (uint32 row = 0; row < c.Embed; ++row)
+        {
+            float const* w = c.EPoolW.data() + std::size_t(row) * 2 * token;
+            float sum = c.EPoolB[row];
+            for (uint32 col = 0; col < 2 * token; ++col)
+                sum += w[col] * c.MapOut[col];
+            c.Embedded[row] += sum;
+        }
+    }
+
+    for (float& value : c.Embedded)
+        value = Silu(value);
+    Affine(c.JoinW.data(), c.JoinB.data(), c.Embedded.data(), c.Embed, uint32(c.Term.size()), c.Term.data());
+}
+
+void Animus::MlpPolicy::CellInputs(uint8 const* crop)
+{
+    // The learner's cell_features and cell_valid: per pool x pool block of the crop, its 22 features, and whether a
+    // cell goal may name it; then the blocks' hidden features, SiLU(local x + b).
+    CellHead const& h = _cells;
+    uint32 const grid = h.Grid, pool = h.Pool, side = grid * pool, blocks = grid * grid;
+    float const area = float(pool * pool);
+    enum Base : uint32 { FLOOR, DOOR, WALL, HAZARD, UNKNOWN, VISITED, FRONTIER, ENTITY, NEWEST, NEVER, HEIGHT, SEARCHED,
+        BASES };
+    std::vector<float>& base = _cellFeatures;      // [blocks][22]: the bases first, the rest after
+    uint32 const F = h.Features;
+    crop += h.CropOffset;
+    for (uint32 br = 0; br < grid; ++br)
+        for (uint32 bc = 0; bc < grid; ++bc)
+        {
+            uint32 counts[BASES] = {};
+            uint32 barred = 0, off = 0, like = 0, seen = 0, entity = 0, searched = 0;
+            float rise = 0.0f;
+            int32 newest = 255;
+            for (uint32 i = 0; i < pool; ++i)
+                for (uint32 j = 0; j < pool; ++j)
+                {
+                    uint8 const* cell = crop + (std::size_t(br * pool + i) * side + bc * pool + j) * MAP_CHANNELS;
+                    uint8 const code = cell[MAP_CODE];
+                    int32 const height = cell[MAP_HEIGHT];
+                    counts[FLOOR] += code == MAP_FLOOR;
+                    counts[DOOR] += code == MAP_DOOR;
+                    counts[WALL] += code == MAP_WALL;
+                    counts[HAZARD] += code == MAP_HAZARD;
+                    counts[UNKNOWN] += code == 0;
+                    counts[VISITED] += cell[MAP_VISITED] != 0;
+                    counts[FRONTIER] += cell[MAP_FRONTIER] != 0;
+                    entity += (cell[MAP_CLASS] & 0x1F) != 0;
+                    bool const isSeen = code != 0;
+                    seen += isSeen;
+                    newest = std::min<int32>(newest, isSeen ? cell[MAP_AGE] : 255);
+                    bool const isLike = code == MAP_FLOOR || code == MAP_DOOR;
+                    like += isLike;
+                    barred += code == MAP_WALL || code == MAP_HAZARD;
+                    off += isLike && (height == 0 || std::abs(height - MAP_HEIGHT_ZERO) > int32(h.Rise));
+                    if (isLike)
+                        rise += float(height - MAP_HEIGHT_ZERO) / float(h.Rise);
+                    searched += cell[MAP_SEARCHED];
+                }
+            uint32 const block = br * grid + bc;
+            float* f = base.data() + std::size_t(block) * F;
+            for (uint32 k = FLOOR; k <= FRONTIER; ++k)
+                f[k] = float(counts[k]) / area;
+            f[ENTITY] = entity ? 1.0f : 0.0f;
+            f[NEWEST] = float(newest) / 255.0f;
+            f[NEVER] = seen ? 0.0f : 1.0f;
+            f[HEIGHT] = std::clamp(rise / std::max(float(like), 1.0f), -1.0f, 1.0f);
+            f[SEARCHED] = float(searched) / (MAP_SEARCHED_MAX * area);     // kept here until the layout below
+            _cellValid[block] = barred == 0 && off == 0 && like >= h.MinFloor;
+        }
+
+    // The neighbourhoods: avg_pool2d with count_include_pad=False, 3 x 3 over floor, wall, unknown and frontier, 3 x 3
+    // and 7 x 7 over the searched share, 7 x 7 over the frontier.
+    auto const around = [&](uint32 br, uint32 bc, int32 radius, uint32 feature)
+    {
+        float sum = 0.0f;
+        uint32 count = 0;
+        for (int32 dr = -radius; dr <= radius; ++dr)
+            for (int32 dc = -radius; dc <= radius; ++dc)
+            {
+                int32 const r = int32(br) + dr, col = int32(bc) + dc;
+                if (r < 0 || col < 0 || r >= int32(grid) || col >= int32(grid))
+                    continue;
+                sum += base[(std::size_t(r) * grid + col) * F + feature];
+                ++count;
+            }
+        return sum / float(count);
+    };
+    std::vector<float>& extra = _cellExtra;
+    for (uint32 br = 0; br < grid; ++br)
+        for (uint32 bc = 0; bc < grid; ++bc)
+        {
+            float* e = extra.data() + std::size_t(br * grid + bc) * 7;
+            e[0] = around(br, bc, 1, FLOOR);
+            e[1] = around(br, bc, 1, WALL);
+            e[2] = around(br, bc, 1, UNKNOWN);
+            e[3] = around(br, bc, 1, FRONTIER);
+            e[4] = around(br, bc, 1, SEARCHED);
+            e[5] = around(br, bc, 3, SEARCHED);
+            e[6] = around(br, bc, 3, FRONTIER);
+        }
+    // The features in the learner's order: the eleven bases, the four 3 x 3 averages, forward, right and distance, the
+    // searched share, its 3 x 3 and 7 x 7 averages, the frontier's 7 x 7 average.
+    for (uint32 br = 0; br < grid; ++br)
+        for (uint32 bc = 0; bc < grid; ++bc)
+        {
+            uint32 const block = br * grid + bc;
+            float* f = base.data() + std::size_t(block) * F;
+            float const* e = extra.data() + std::size_t(block) * 7;
+            float const searchedShare = f[SEARCHED];
+            float const forward = (float(side) - float(pool) * (2.0f * float(br) + 1.0f)) / 48.0f;
+            float const right = (float(pool) * (2.0f * float(bc) + 1.0f) - float(side)) / 48.0f;
+            f[11] = e[0];
+            f[12] = e[1];
+            f[13] = e[2];
+            f[14] = e[3];
+            f[15] = forward;
+            f[16] = right;
+            f[17] = std::sqrt(forward * forward + right * right);
+            f[18] = searchedShare;
+            f[19] = e[4];
+            f[20] = e[5];
+            f[21] = e[6];
+        }
+    for (uint32 block = 0; block < blocks; ++block)
+    {
+        float* hidden = _cellHidden.data() + std::size_t(block) * h.Hidden;
+        Affine(h.LocalW.data(), h.LocalB.data(), base.data() + std::size_t(block) * F, F, h.Hidden, hidden);
+        for (uint32 k = 0; k < h.Hidden; ++k)
+            hidden[k] = Silu(hidden[k]);
+    }
+}
+
+int32 Animus::MlpPolicy::BestCell(float const* shifted, float prevRow, float prevCol, std::vector<uint8> const& allowed)
+{
+    // The learner's cell_scores, its argmax over the allowed blocks (block 0 when none is, as masked_logits falls
+    // back).
+    CellHead const& h = _cells;
+    uint32 const grid = h.Grid, blocks = grid * grid, width = _slowSize ? _slowSize : uint32(_raw.size());
+    Affine(h.QueryW.data(), h.QueryB.data(), shifted, width, h.Hidden, _cellQuery.data());
+    int32 best = -1;
+    float top = 0.0f;
+    for (uint32 block = 0; block < blocks; ++block)
+    {
+        if (!allowed[block])
+            continue;
+        float const* hidden = _cellHidden.data() + std::size_t(block) * h.Hidden;
+        float score = h.ScoreB;
+        for (uint32 k = 0; k < h.Hidden; ++k)
+            score += h.ScoreW[k] * std::tanh(hidden[k] + _cellQuery[k]);
+        float const dRow = (float(block / grid) - prevRow) / CELL_OFFSET_SCALE;
+        float const dCol = (float(block % grid) - prevCol) / CELL_OFFSET_SCALE;
+        float const offset[3] = { dRow, dCol, std::sqrt(dRow * dRow + dCol * dCol) };
+        Affine(h.ChainW1.data(), h.ChainB1.data(), offset, 3, h.ChainHidden, _cellChain.data());
+        float chain = h.ChainB2;
+        for (uint32 k = 0; k < h.ChainHidden; ++k)
+            chain += h.ChainW2[k] * std::tanh(_cellChain[k]);
+        score += chain;
+        if (best < 0 || score > top)
+        {
+            best = int32(block);
+            top = score;
+        }
+    }
+    return best < 0 ? 0 : best;
+}
+
+void Animus::MlpPolicy::DecideGoals(float const* obs, Camera const* camera, float* in, float const* raw,
+    uint32 features, State* state)
+{
+    // The learner's LayoutActor.decide_goals with GoalHead.draw, deterministic (every choice its argmax, the first of
+    // equals as torch's): an ended secondary is dropped; an ended primary is replaced by the queue's head, with no
+    // choice; a choice is made on the clock, on an ended primary with nothing queued, or on the block's event. A choice
+    // draws the primary, then each later slot from the features plus its bias plus what was drawn before it, each able
+    // to say none; with a cell pointer every slot whose goal is the cell goal also names a block of the crop.
+    uint32 const kinds = _goalCount, targets = _goalTargets;
+    uint32 const count = kinds * targets;
+    bool const paired = _goalSlots > 1;
+    float const* block = _goalBlockAt >= 0 ? obs + _goalBlockAt : nullptr;
+    uint32 const base = kinds + targets;
+    bool const ended = block && block[base] > 0.5f;
+    bool const secondaryEnded = paired && block && block[base + 2] > 0.5f;
+    bool const event = paired && block && block[base + 3] > 0.5f;
+    auto const present = [&](uint32 joint)
+    {
+        return block[joint / targets] > 0.5f && block[kinds + joint % targets] > 0.5f;
+    };
+
+    uint32 const held = state ? state->Goal : 0;
+    int32 primary = paired ? int32(held / (count + 1)) : int32(held);
+    int32 secondary = paired ? int32(held % (count + 1)) - 1 : -1;
+    std::array<int32, 2> queue = state ? state->Queue : std::array<int32, 2>{ -1, -1 };
+    if (secondaryEnded)
+        secondary = -1;
+    bool promote = false;
+    if (paired && ended && queue[0] >= 0)
+    {
+        primary = queue[0];
+        queue = { _goalSlots > 3 ? queue[1] : -1, -1 };
+        promote = true;
+    }
+    bool const clock = !state || state->Age % _goalEvery == 0;
+    bool const choose = clock || (ended && !promote) || event;
+    std::array<int32, MAX_GOAL_SLOTS> slots{ -1, -1, -1, -1 };
+    std::array<int32, MAX_GOAL_SLOTS> cells{ -1, -1, -1, -1 };
+    bool const cellOn = _cells.On && paired && camera && camera->Crop;
+
+    if (choose)
+    {
+        // What the goal head reads: the slow loop stepped on the fed-back features, or the plain features.
+        float const* source = raw;
+        uint32 width = features;
+        if (_slowSize)
+        {
+            uint32 const size = _slowSize;
+            std::vector<float>* slow = state ? &state->SlowMemory : nullptr;
+            if (slow && slow->size() != size)
+                slow->assign(size, 0.0f);
+            float const* carried = slow ? slow->data() : nullptr;
+            for (uint32 row = 0; row < 3 * size; ++row)
+            {
+                float const* input = _slowWeightIn.data() + std::size_t(row) * features;
+                float sum = _slowBiasIn[row];
+                for (uint32 col = 0; col < features; ++col)
+                    sum += input[col] * in[col];
+                _slowGates[row] = sum;
+                float const* hidden = _slowWeightHidden.data() + std::size_t(row) * size;
+                float recurrent = _slowBiasHidden[row];
+                if (carried)
+                    for (uint32 col = 0; col < size; ++col)
+                        recurrent += hidden[col] * carried[col];
+                _slowHiddenGates[row] = recurrent;
+            }
+            for (uint32 row = 0; row < size; ++row)
+            {
+                float const reset = Sigmoid(_slowGates[row] + _slowHiddenGates[row]);
+                float const update = Sigmoid(_slowGates[size + row] + _slowHiddenGates[size + row]);
+                float const candidate = std::tanh(_slowGates[2 * size + row]
+                    + reset * _slowHiddenGates[2 * size + row]);
+                _slowOut[row] = (1.0f - update) * candidate + update * (carried ? carried[row] : 0.0f);
+            }
+            if (slow)
+                std::copy(_slowOut.begin(), _slowOut.end(), slow->begin());
+            source = _slowOut.data();
+            width = size;
+        }
+
+        auto const dot = [width](float const* reads, float const* weights, float bias)
+        {
+            float sum = bias;
+            for (uint32 col = 0; col < width; ++col)
+                sum += weights[col] * reads[col];
+            return sum;
+        };
+        auto const factored = [&](Factored const& part, float const* reads, uint32 kind, uint32 target)
+        {
+            float score = dot(reads, part.KindWeight.data() + std::size_t(kind) * width, part.KindBias[kind])
+                + part.Pair[std::size_t(kind) * targets + target];
+            if (targets > 1)
+                score += dot(reads, part.TargetWeight.data() + std::size_t(target) * width, part.TargetBias[target]);
+            return score;
+        };
+
+        // The place pointer's score per target (GoalHead.place_scores): zero inputs for a layout without the block.
+        std::fill(_placeScores.begin(), _placeScores.end(), 0.0f);
+        if (_place.On)
+            for (uint32 slot = 0; slot < _place.Count; ++slot)
+            {
+                float score = _place.B2;
+                for (uint32 k = 0; k < _place.Hidden; ++k)
+                {
+                    float sum = _place.B1[k];
+                    for (uint32 f = 0; f < _place.Features; ++f)
+                        sum += _place.W1[std::size_t(k) * _place.Features + f]
+                            * (block ? block[_place.At + slot * _place.Features + f] : 0.0f);
+                    score += _place.W2[k] * std::tanh(sum);
+                }
+                _placeScores[_place.First + slot] = score;
+            }
+
+        // A goal's score: its kind's (given), its target's (targetScores, last filled), the pair's and the place's.
+        auto const score = [&](uint32 kind, float kindScore, uint32 target)
+        {
+            return kindScore + _targetScores[target] + _pair[std::size_t(kind) * targets + target]
+                + _placeScores[target];
+        };
+        auto const targetScores = [&](float const* reads)
+        {
+            for (uint32 target = 0; target < targets; ++target)
+                _targetScores[target] = targets > 1
+                    ? dot(reads, _targetWeight.data() + std::size_t(target) * width, _targetBias[target]) : 0.0f;
+        };
+
+        // The primary (GoalHead.logits): accepts, the block's kinds and targets (a layout without the block has
+        // nothing where the stage has goal blocks), the lookahead; the first goal only when nothing else is allowed.
+        targetScores(source);
+        auto const primaryAllowed = [&](uint32 joint)
+        {
+            if (!_accepts[joint])
+                return false;
+            if (targets > 1)
+                return block ? present(joint) : !_goalSpace;
+            return true;
+        };
+        bool anyAllowed = false;
+        for (uint32 joint = 0; joint < count && !anyAllowed; ++joint)
+            anyAllowed = primaryAllowed(joint);
+        int32 drawnPrimary = -1;
+        float top = 0.0f;
+        for (uint32 kind = 0; kind < kinds; ++kind)
+        {
+            float const kindScore = dot(source, _kindWeight.data() + std::size_t(kind) * width, _kindBias[kind]);
+            for (uint32 target = 0; target < targets; ++target)
+            {
+                uint32 const joint = kind * targets + target;
+                if (!(primaryAllowed(joint) || (joint == 0 && !anyAllowed)))
+                    continue;
+                float value = score(kind, kindScore, target);
+                if (_lookahead)
+                    value += _lookaheadWeight[0] * factored(_success, source, kind, target)
+                        + _lookaheadWeight[1] * Sigmoid(factored(_duration, source, kind, target));
+                if (drawnPrimary < 0 || value > top)
+                {
+                    drawnPrimary = int32(joint);
+                    top = value;
+                }
+            }
+        }
+        slots[0] = drawnPrimary;
+
+        // The cells: the choosable blocks less every block within one of a cell drawn before, scored from the
+        // previous cell of the plan (the seat's own block, the grid's middle, at the start).
+        uint32 const grid = _cells.Grid;
+        float previous[2] = { float(grid - 1) / 2.0f, float(grid - 1) / 2.0f };
+        std::array<int32, MAX_GOAL_SLOTS> earlierRow{}, earlierCol{};
+        std::array<bool, MAX_GOAL_SLOTS> earlierCell{};
+        uint32 earlier = 0;
+        auto const allowedBlocks = [&]()
+        {
+            bool any = false;
+            for (uint32 b = 0; b < grid * grid; ++b)
+            {
+                bool ok = _cellValid[b] != 0;
+                for (uint32 e = 0; ok && e < earlier; ++e)
+                    if (earlierCell[e] && std::abs(int32(b / grid) - earlierRow[e]) <= 1
+                        && std::abs(int32(b % grid) - earlierCol[e]) <= 1)
+                        ok = false;
+                _cellAllowed[b] = ok;
+                any = any || ok;
+            }
+            return any;
+        };
+        auto const drawCell = [&](float const* reads, int32 goal) -> int32
+        {
+            int32 const chosenBlock = BestCell(reads, previous[0], previous[1], _cellAllowed);
+            bool const isCell = goal == int32(_cells.Joint);
+            earlierRow[earlier] = chosenBlock / int32(grid);
+            earlierCol[earlier] = chosenBlock % int32(grid);
+            earlierCell[earlier] = isCell;
+            ++earlier;
+            if (!isCell)
+                return -1;
+            previous[0] = float(chosenBlock / int32(grid));
+            previous[1] = float(chosenBlock % int32(grid));
+            return chosenBlock;
+        };
+        if (cellOn)
+        {
+            CellInputs(camera->Crop);
+            allowedBlocks();
+            cells[0] = drawCell(source, slots[0]);
+        }
+
+        if (paired)
+        {
+            std::array<int32, MAX_GOAL_SLOTS> drawn{};
+            uint32 drawnCount = 0;
+            drawn[drawnCount++] = slots[0];
+            for (uint32 slot = 1; slot < _goalSlots; ++slot)
+            {
+                bool const cellOk = cellOn ? allowedBlocks() : true;
+                float const* bias = _slotBias.data() + std::size_t(slot - 1) * width;
+                for (uint32 col = 0; col < width; ++col)
+                    _shifted[col] = source[col] + bias[col];
+                for (uint32 index = 0; index < drawnCount; ++index)
+                {
+                    float const* row = _drawn.data() + std::size_t(drawn[index] + 1) * width;
+                    for (uint32 col = 0; col < width; ++col)
+                        _shifted[col] += row[col];
+                }
+                targetScores(_shifted.data());
+                // GoalHead.slot_logits: accepts and the block's kinds and targets, no goal already drawn at this
+                // choice after the secondary (the cell goal excepted), the cell goal only with a block left; the
+                // first goal when nothing is allowed (masked_logits), then none; only none without the block.
+                auto const allowed = [&](uint32 joint)
+                {
+                    bool ok = _accepts[joint] && (!block || present(joint));
+                    if (slot >= 2)
+                        for (uint32 index = 0; ok && index < drawnCount; ++index)
+                            if (drawn[index] >= 0 && drawn[index] == int32(joint)
+                                && !(_cells.On && joint == _cells.Joint))
+                                ok = false;
+                    if (ok && cellOn && joint == _cells.Joint && !cellOk)
+                        ok = false;
+                    return ok;
+                };
+                bool any = false;
+                for (uint32 joint = 0; joint < count && !any; ++joint)
+                    any = allowed(joint);
+                int32 pick = -1;
+                float best = _noneBias[slot - 1];
+                if (!_goalSpace || block)
+                {
+                    int32 top = -1;
+                    float topScore = 0.0f;
+                    for (uint32 kind = 0; kind < kinds; ++kind)
+                    {
+                        float const kindScore = dot(_shifted.data(), _kindWeight.data() + std::size_t(kind) * width,
+                            _kindBias[kind]);
+                        for (uint32 target = 0; target < targets; ++target)
+                        {
+                            uint32 const joint = kind * targets + target;
+                            if (!(allowed(joint) || (joint == 0 && !any)))
+                                continue;
+                            float const value = score(kind, kindScore, target);
+                            if (top < 0 || value > topScore)
+                            {
+                                top = int32(joint);
+                                topScore = value;
+                            }
+                        }
+                    }
+                    // The masked goals' logit stands in when nothing else is allowed; none wins only above the best.
+                    if (top >= 0 && topScore >= best)
+                        pick = top;
+                }
+                slots[slot] = pick;
+                if (cellOn)
+                    cells[slot] = drawCell(_shifted.data(), pick);
+                drawn[drawnCount++] = pick;
+            }
+        }
+        primary = slots[0];
+        if (paired)
+        {
+            secondary = slots[1];
+            queue = { _goalSlots > 2 ? slots[2] : -1, _goalSlots > 3 ? slots[3] : -1 };
+        }
+    }
+    if (paired && secondary == primary && !(_cells.On && primary == int32(_cells.Joint)))
+        secondary = -1;
+
+    // The cell words at the plan's four positions (the learner's _plan_words).
+    if (state && _cells.On)
+    {
+        std::array<uint32, 4>& plan = state->Plan;
+        if (secondaryEnded)
+            plan[1] = 0;
+        if (promote)
+            plan = { plan[2], plan[1], plan[3], 0 };
+        if (choose)
+            for (uint32 position = 0; position < 4; ++position)
+            {
+                int32 const cell = position < _goalSlots ? cells[position] : -1;
+                uint32 const ticket = ((state->Serial + 1) * 4 + position) % TICKET_COUNT + 1;
+                plan[position] = cell >= 0 ? (ticket << CELL_BITS) | uint32(cell + 1) : 0;
+            }
+    }
+    if (state)
+    {
+        state->Age = choose ? 1 : state->Age + 1;
+        state->Serial += choose ? 1 : 0;
+        state->Goal = paired ? uint32(std::size_t(primary) * (count + 1) + std::size_t(secondary + 1))
+            : uint32(primary);
+        state->Queue = queue;
+    }
+    _lastChosen = choose;
+    if (choose)
+        _lastCells = cells;
+
+    // The goals on the features the action head reads: features x (1 + scale) + embedding, the primary's and the
+    // secondary's through the gate (GoalEmbedding.condition).
+    auto const value = [&](std::vector<float> const& kind, std::vector<float> const& target, int32 goal, uint32 col)
+    {
+        float v = kind[std::size_t(goal / int32(targets)) * features + col];
+        if (targets > 1)
+            v += target[std::size_t(goal % int32(targets)) * features + col];
+        return v;
+    };
+    bool const second = paired && secondary >= 0;
+    for (uint32 col = 0; col < features; ++col)
+    {
+        float scale = value(_kindScale, _targetScale, primary, col);
+        float shift = value(_kindEmbedding, _targetEmbedding, primary, col);
+        if (second)
+        {
+            scale += _gate * value(_kindScale, _targetScale, secondary, col);
+            shift += _gate * value(_kindEmbedding, _targetEmbedding, secondary, col);
+        }
+        in[col] = in[col] * (1.0f + scale) + shift;
+    }
 }
