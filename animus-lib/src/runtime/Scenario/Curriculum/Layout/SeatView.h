@@ -19,17 +19,18 @@
 #ifndef ANIMUS_LIB_CURRICULUM_SEAT_VIEW_H
 #define ANIMUS_LIB_CURRICULUM_SEAT_VIEW_H
 
-#include "RouteShortcut.h"
 #include "MoveControls.h"
 #include "Aptitude.h"
 #include "Block.h"
+#include "CellGrid.h"
 #include "ClassProfile.h"
-#include "CurriculumTuning.h"
+#include "Coverage.h"
+#include "ActionTuning.h"
+#include "FreeLook.h"
 #include "ObjectGuid.h"
 #include "Position.h"
 #include "Supplies.h"
 #include "TalentBuilder.h"
-#include "WorldActions.h"
 #include <array>
 #include <optional>
 #include <vector>
@@ -40,106 +41,102 @@ class Player;
 class SpellInfo;
 class Unit;
 
+namespace Animus::Vision
+{
+    struct SeenList;
+    struct FrameHits;
+    class MentalMap;
+    class EntityMemory;
+}
+
+namespace Animus::Curriculum::EntityActions
+{
+    class ClientPort;
+}
+
 namespace Animus::Curriculum
 {
     struct Layout;
     class SeatMemory;
 
-    /// What is on the party past the pack's slots, as a whole dungeon reports it (CrowdBlock).
-    struct CrowdView
+    /// **Where a seat last saw each member of its party** (the party frames block, revision 3; the owner, 2026-10-12:
+    /// "bots need to remember and predict teammate locations when they look away or are out of view"). A member is
+    /// seen while its minimap dot shows or the seat's camera has it in frame; each sighting keeps its place and its
+    /// pace (the velocity between sightings, smoothed). Out of sight, the frame reads the last place carried on by the
+    /// last pace for at most PREDICT_SECONDS -- a player expects a teammate who walked round a corner to keep walking
+    /// -- then held there, with the time since it was seen. Kept per seat for the episode (SeatState::Party), keyed
+    /// by the member's GUID; a clock that ran backwards (a new episode) forgets everything.
+    struct PartyRecall
     {
-        bool Present = false;
-        uint32 OnParty = 0;                         // creatures whose victim is one of the party
-        uint32 OnTank = 0;                          // ... the party's tank
-        uint32 Elites = 0;
-        Unit const* Tank = nullptr;                 // the seat the crowd is counted against
-        GameObject* Object = nullptr;               // the nearest thing the party can use: a lever, the cannon
-        std::vector<ObjectGuid>* Used = nullptr;    // where a use is recorded, so each thing is used once a run
-        bool Behind = false;                        // the seat's place on the route is behind the party's (risen)
-        std::array<Unit*, CROWD_SLOTS> Units{};     // the next enemies past the pack's slots, fight first
-        uint32 Count = 0;
-        bool HasAhead = false;                      // the nearest pack not in the fight, and how many stand with it
-        Position Ahead;
-        uint32 AheadSize = 0;
-        bool HasSecond = false;                     // the nearest creature out of the fight past the pack ahead
-        Position Second;
-        float Still = 0.0f;                         // time without progress or a fight / 120 s
-        /// A few yards on along the dungeon's field route towards the seat's objective: where the advance action
-        /// walks, straight, where the server's navmesh does not join the way (a drop into a cavern).
-        bool HasStep = false;
-        Position Step;
-        /// The run an advance walks (movement-smooth A8): the route's corners about 18 yards on (Step the first), or
-        /// the detour's points back to it.
-        std::array<Position, 6> Path{};
-        uint32 PathPoints = 0;
-        bool AtDoor = false;                        // the run was cut at a closed door: nothing walks through it
+        /// How far a member's last pace is carried on out of sight, seconds.
+        static constexpr float PREDICT_SECONDS = 3.0f;
+        /// The pace a sighting may imply at most, yd/s (a run, a little over): a jump between two far-apart
+        /// sightings (a rise at the door) is not a speed.
+        static constexpr float MAX_SPEED = 8.0f;
+
+        struct Entry
+        {
+            uint64 Guid = 0;
+            float X = 0.0f;
+            float Y = 0.0f;
+            float Vx = 0.0f;
+            float Vy = 0.0f;
+            uint64 SeenMs = 0;
+            bool Known = false;
+        };
+        std::array<Entry, 8> Entries{};
+        uint64 LastMs = 0;
+
+        void Clear() { *this = PartyRecall(); }
+        /// The member's entry; `make` takes a free one (or the oldest) for a member not yet kept, else null.
+        Entry* Find(uint64 guid, bool make);
+        /// A sighting of the member at (x, y) at `nowMs`.
+        void See(uint64 guid, float x, float y, uint64 nowMs);
+        /// Where the member is believed to be at `nowMs`; false when it was never seen.
+        bool Believe(uint64 guid, uint64 nowMs, float& x, float& y, float& ageSeconds, float& speed);
     };
 
-    /// The world outside a fight, as the life encounters read it for the WorldBlock (or the live module's life
-    /// service for a companion): the nearest thing of each kind within the seat's senses, and the episode's quest.
+    /// A dungeon's way on, as the goal head names it (peak-play W3, InstanceEncounter::View and SeenWorld): the goal
+    /// block's TravelTo places and its assignment. (The journal of the first curriculum's quests, with the corpses,
+    /// nodes and vendors beside it, was deleted with it; the goal space keeps its targets, which are the layout's.)
     struct WorldView
     {
-        enum QuestStates : uint8 { QUEST_NONE = 0, QUEST_ACTIVE = 1, QUEST_COMPLETE = 2 };
-
-        bool Active = false;                        // something fills this: the block's features are live
-        Unit* Corpse = nullptr;                     // the nearest corpse the seat may loot, else one it may skin
-        bool CorpseQuestItem = false;
-        bool CorpseSkinnable = false;
-        Creature* Giver = nullptr;                  // the nearest quest giver the seat has business with
-        bool GiverOffers = false;
-        bool GiverTurnIn = false;
-        GameObject* Node = nullptr;                 // the nearest gathering node
-        WorldActions::NodeKind NodeKind = WorldActions::NodeKind::None;
-        bool NodeOpenable = false;
-        Creature* Vendor = nullptr;                 // the nearest vendor (a repairer when VendorRepairs)
-        bool VendorRepairs = false;
-        uint8 QuestState = QUEST_NONE;              // the episode's quest
-        float QuestProgress = 0.0f;
-        /// What the seat's own quests want nearby (QuestPlanner, WorldActions::Sense): an object to use or open,
-        /// a creature to use a quest item on (and the item), a vendor selling a quest item (and the item).
-        GameObject* QuestObject = nullptr;
-        Unit* ItemTarget = nullptr;
-        uint32 UseItem = 0;
-        Creature* QuestVendor = nullptr;
-        uint32 BuyItem = 0;
-
-        /// **The journal** (long-horizon plan, Component B): what a player keeps in the quest log and on the map
-        /// -- the current quest's objectives with what is left of each and where it is done, the giver and the
-        /// turn-in, the places found where something wanted was seen (and how long ago, and whether another group
-        /// has claimed them), where it is in a chain of quests, and the area the world coordinator assigned. The
-        /// sim's life encounters and the module's life service both fill it; nothing here is remembered by the
-        /// network, which is the point: minutes of plan held as facts, not as a 128-unit memory.
-        static constexpr uint32 JOURNAL_OBJECTIVES = 4;
         static constexpr uint32 JOURNAL_PLACES = 8;
-        struct JournalObjective
-        {
-            bool Present = false;
-            uint8 Kind = 0;                         // ObjectiveKind
-            float Left = 0.0f;                      // share still to do, 0 = done
-            bool HasPlace = false;
-            Position Place;
-        };
+        /// The seek stage's room goals (RoomGoals): places 0..ROOM_SLOTS-1 are rooms the seat's own frames showed,
+        /// place WAY_ON_SLOT the nearest frontier of its mental map (the goal block's place slots).
+        static constexpr uint32 ROOM_SLOTS = GOAL_ROOM_SLOTS;
+        static constexpr uint32 WAY_ON_SLOT = ROOM_SLOTS;
         struct JournalPlace
         {
             bool Present = false;
             Position Where;
-            float AgeSeconds = 0.0f;                // since it was last seen
-            bool Claimed = false;                   // another group holds it (the coordinator's claims)
-            uint8 Objective = 0;                    // which objective's sources were seen there
+            /// A room slot whose room has been checked: held one observation as reached, no longer offered.
+            bool Done = false;
+            /// Share of the room's floor cells this episode's rays hit (0..1; 1 for the way on), and the seconds since
+            /// its first glimpse over 120 (0..1).
+            float Coverage = 0.0f;
+            float Age = 0.0f;
         };
-        std::array<JournalObjective, JOURNAL_OBJECTIVES> Objectives{};
-        bool HasGiver = false;
-        Position GiverAt;
-        bool HasEnder = false;
-        Position EnderAt;
         std::array<JournalPlace, JOURNAL_PLACES> Places{};
-        /// A dungeon's way on in Places and the assignment (InstanceEncounter::View: the next packs, the next route
-        /// point, the tank) with no journal behind them: the goal block reads the places and the assignment, and
-        /// nothing else of the world view is live (Active stays false, so no world action changes).
-        bool RoutePlaces = false;
-        uint8 ChainIndex = 0;                       // quests of the chain turned in
-        uint8 ChainLength = 0;
-        bool HasAssignment = false;                 // the area the coordinator gave the seat's group
+        /// The episode offers room goals: places are the rooms and the way on, one place kind (SearchGoals) is the only
+        /// kind offered once one exists, and a room goal is reached when its room is checked rather than within a
+        /// distance.
+        bool RoomGoals = false;
+        /// The place kind of the room and cell goals is Search (looking for an object), not TravelTo (Seek.SearchGoals);
+        /// meaningful with RoomGoals. Every other episode offers neither, and its goal block carries the kind unused.
+        bool SearchGoals = false;
+        /// The episode offers cell goals (free choice goals, Seek.GoalSource 1): search / place_7 is the one kind
+        /// offered, about a block of the seat's own mental-map crop (CellGrid), not a room. RoomGoals is true beside
+        /// it (the gates that exempt place goals from a straight-line gap hold), but Places stays empty.
+        bool CellGoals = false;
+        /// How near (2D) and how far above or below a cell goal's point counts as reached (Seek.CellReach, CellRise).
+        float CellReach = 4.0f;
+        float CellRise = 3.0f;
+        /// The stage has seen places (SeenPlaces: what the seat saw and remembers, its map's frontier -- not a route)
+        /// and an assignment: the goal block reads them. False in a stage without them, where a trip's objective
+        /// takes the assignment's slot.
+        bool HasSeenPlaces = false;
+        bool HasAssignment = false;                 // the seat's own objective, in the assignment slot
         Position Assignment;
     };
 
@@ -172,45 +169,6 @@ namespace Animus::Curriculum
 
     /// A hostile ground effect: where its centre is and how wide it is, so a seat can see both which way out is
     /// shortest and, for one it is not in yet, which way not to walk.
-    /// The ray march along each of the SENSE_RAYS rays, kept between decisions.
-    ///
-    /// A march is eighty height samples and forty-eight navmesh rays where the old single probe was eight, which
-    /// is too much to redo every 250 ms for 128 environments. It does not have to be: the ground forty yards out
-    /// does not change, only the seat's place in it, so the march is redone when the seat has walked far enough
-    /// or turned far enough for the old one to be describing somewhere else -- the same trick the hazard search
-    /// already uses, with the triggers that matter here. A plain clock will not do, because at seven yards a
-    /// second a one-second-old march is seven yards stale and the nearest cell it reports is six.
-    ///
-    /// Sixteen rays: a gully's mouth or a doorway sits between two 45-degree rays as often as on one, and a seat
-    /// that cannot see it cannot choose the turn that lines it up.
-    struct GroundProbe
-    {
-        float Reach[SENSE_RAYS] = {};           // distance to the first obstruction along each ray / MARCH_MAX
-        float Step[SENSE_RAYS] = {};            // the height change that stopped it, signed, / MAX_STEP
-        float Shore[SENSE_RAYS] = {};           // how far dry ground runs that way / MARCH_MAX
-        float Burns[SENSE_RAYS] = {};           // how near the magma or slime is, 1 at the feet, 0 for none
-        float Clearance = 1.0f;                 // yards to the nearest edge of walkable space / CLEARANCE_RANGE
-        float ClearanceSin = 0.0f;              // and which way is out, in the seat's frame when it was measured
-        float ClearanceCos = 0.0f;
-        Position From;                          // where it was marched from
-        float Facing = 0.0f;                    // and which way the seat was looking at the time
-        uint32 Ms = 0;
-        bool Valid = false;
-        /// With the layered fields the probe is worked out along fixed compass headings, SENSE_RAYS * 2 of them
-        /// (LayeredField::SenseCompass), and turned to the seat's facing every decision (RaysFor): turning costs
-        /// nothing, and only walking MARCH_REFRESH_YARDS from CompassFrom works it out again. The room's way out
-        /// is kept in the world's frame for the same reason.
-        float CompassReach[2 * SENSE_RAYS] = {};
-        float CompassStep[2 * SENSE_RAYS] = {};
-        float CompassShore[2 * SENSE_RAYS] = {};
-        float CompassBurns[2 * SENSE_RAYS] = {};
-        float CompassClearance = 1.0f;
-        bool CompassDirected = false;
-        float CompassAway = 0.0f;
-        Position CompassFrom;
-        bool CompassValid = false;
-    };
-
     /// Where the seat has been: its last TRAIL_SAMPLES positions, one every INTERVAL_MS, kept between decisions
     /// and read back in the seat's own frame (MoveBlock::OBS_TRAIL_FIRST). A policy has memory, but a recurrent
     /// state is a poor place to keep a map, and the episodes a trained policy loses are lost rather than wedged:
@@ -306,18 +264,21 @@ namespace Animus::Curriculum
         bool Goal2Ended = false;
         /// Something changed that a plan should answer (GoalBlock::OBS_EVENT): the goal head chooses again now.
         bool GoalEvent = false;
-        /// The primary the director's order set (NO_GOAL when none): the seat holds it whatever it chose, and the
-        /// learner reads it from GoalBlock's order columns.
-        int32 OrderGoal = -1;
         /// What the seat achieved this decision whatever it pursued (GoalBlock's hindsight columns), or NO_GOAL.
         int32 Achieved = -1;
         /// The seat's durative action, to read, start and stop. Null for a view without one.
         /// The nearest hostile ground effect the seat is not standing in (StageScenario::TrackHazards): what makes
         /// avoiding one possible rather than only leaving one.
         Hazard NearestHazard;
+        /// A sight stage's ground fire is what its camera shows (dungeon-curriculum I3, CombatBlock::ReadHazards):
+        /// the visible hazards it stands in and the deepest of them; NearestHazard is then the nearest visible one too.
+        /// The duel block reads these in place of the seat's auras.
+        bool HazardsSeen = false;
+        uint32 StandingSeen = 0;
+        Hazard DeepestSeen;
         SeatOptionSet* Option = nullptr;
-        /// How long each durative action may run (CurriculumTuning::OptionTuning).
-        CurriculumTuning::OptionTuning Options;
+        /// How long each durative action may run (OptionTuning).
+        OptionTuning Options;
         /// What the actions aim at: the opponent, the selected enemy. May be null (between pulls).
         Unit* Target = nullptr;
         /// The target when the bot can neither see nor detect it (stealth, invisibility). Target is null then, so no
@@ -326,6 +287,10 @@ namespace Animus::Curriculum
         bool TargetSeen = false;                    // LastSeen holds where the target was when the bot last saw it
         Position LastSeen;
         float TargetUnseenTime = 0.0f;              // time since the bot last saw the target / 20 s, clamped
+        /// A sight stage's selection is in the camera's last frame (dungeon-curriculum I3). Out of it, the duel block
+        /// reads its place as where the seat last saw it (LastSeen, from the entity memory), never where it is; its
+        /// target-frame facts stay. Always true outside a sight stage.
+        bool TargetInView = true;
 
         /// Per catalog action, the highest rank the bot knows (SeatState::KnownRanks); null for a view built
         /// without one, where Encoding::KnownRank resolves the chain itself.
@@ -339,17 +304,50 @@ namespace Animus::Curriculum
         /// **Where the seat is looking**: the frame every bearing it observes is measured off. The controlled body's
         /// yaw (Movement::BodyState::Yaw) once the controller steps it; seeded from the bot at an episode's start.
         float Facing = 0.0f;
-        /// The seat's own ray march, borrowed rather than copied: Observe is const, but the march it reads is
-        /// refreshed in place, exactly as the hazard search is.
-        GroundProbe* Probe = nullptr;
-        /// Where it has been, the same way: sampled in place by the move block once a second.
+        /// Where it has been, borrowed rather than copied: Observe is const, but the move block samples it in
+        /// place once a second.
         MovementTrail* Trail = nullptr;
         /// **The keys and mouse it holds** (MoveControls::SeatControls, MoveBlock), and the body the player
         /// controller moves with them (Movement::BodyState). Borrowed like the probe; null for a view without them,
         /// which holds nothing and moves nowhere.
         MoveControls::SeatControls* Controls = nullptr;
         Movement::BodyState* Body = nullptr;
-        float SubmergedTime = 0.0f;                 // seconds its head has been under, 0 while it is up
+        /// How long the held keys have got nowhere, ms (SeatState::StuckRunMs: a key held and the body moving under a
+        /// tenth of what it asked): the move block's pinned_age (movement pacing M1). 0 for a view without one.
+        uint32 PinnedMs = 0;
+        /// **The seat's camera image**, written by the vision block: Vision::ImageBytes bytes (camera-vision.BYTES.md),
+        /// the seat's row of the pool's image (EnvPool::Image, or FinalImage for an ended episode's last look). Null
+        /// for a view without one (a stage with no vision block): the block then writes its scalars alone.
+        uint8* Image = nullptr;
+        /// **The seat's camera** (Vision::FreeLook::State, SeatState::Look): turned by its look head, advanced and
+        /// rendered by the vision block. Borrowed like the controls; null for a view without one, which the block
+        /// renders from a fixed camera (yaw offset 0, the conf's pitch and zoom, at the canonical size).
+        Vision::FreeLook::State* Look = nullptr;
+        /// **What its camera's last frame showed** (perception-goals 1b, SeatState::Seen): written by the vision
+        /// block as it renders, read by the entities block after it. Null for a view without a camera.
+        Vision::SeenList* Seen = nullptr;
+        /// **The rays of its camera's last frame, as cast** (SeatState::Hits): written by the vision block in a stage
+        /// with a map, read by the map block after it. Null without a map.
+        Vision::FrameHits* Hits = nullptr;
+        /// **Its mental map** (perception-goals REDESIGN §3, SeatState::Map) and the row its crop goes to (the pool's,
+        /// EnvPool::MapCrop or FinalMapCrop: Vision::CROP_BYTES), written by the map block. MapKept: this episode's
+        /// map was kept from the last (amendment 1). Null for a view without one.
+        Vision::MentalMap* Map = nullptr;
+        uint8* MapRow = nullptr;
+        bool MapKept = false;
+        /// **Its entity memory** (dungeon-curriculum I2, SeatState::Recall): written by the entities block from the
+        /// frame's list, read by the sight block. RecallKept: this episode's was kept from the last. Null for a view
+        /// without a sight block.
+        Vision::EntityMemory* Recall = nullptr;
+        bool RecallKept = false;
+        /// **What each of the sight block's slots named at its last observation** (SeatState::SightGuids): the raw
+        /// GUID a press on the slot acts on, 0 an empty slot; and the seat's client focus (SeatState::Focus), the
+        /// friend its beneficial spells go to. Null for a view without a sight block.
+        std::array<uint64, SIGHT_SLOTS>* SightGuids = nullptr;
+        ObjectGuid* Focus = nullptr;
+        /// Where the sight block's presses and a sight stage's casts go: null for the seat's session's handlers
+        /// (EntityActions::SessionPort); a test's recorder otherwise.
+        EntityActions::ClientPort* Port = nullptr;
         /// How much of its breath the seat has spent, 0 to 1 and past it while drowning: the core's own timer
         /// (WaterBreath.Timer, 180 s by default), run up under water and back down ten times as fast above it. 0
         /// under a water-breathing aura, when the core runs no timer at all.
@@ -362,34 +360,21 @@ namespace Animus::Curriculum
         SeatMemory const* Memory = nullptr;         // what the seat has been doing; null: none (features at rest)
         uint64 NowMs = 0;                           // the clock Memory was kept with
         uint32 DecisionMs = 250;                    // how long a decision lasts (the scenario's decision clock)
-        /// The closed doors near a dungeon wing's party (InstanceEncounter's EnvInstance::ClosedDoors); null
-        /// elsewhere. Steer's runs stop at one, as the advance's do: a spline walks through anything.
-        std::vector<RouteShortcut::Door> const* ClosedDoors = nullptr;
 
         // Duel: time in combat, what the bot brought (potions, bandages, stones), whether it may resurrect itself, and
         // a hunter's beasts on offer.
         float CombatTime = 0.0f;                    // time in combat / 60 s, clamped; 0 out of combat
         BattleSupplies Supplies;
-        bool SelfResurrectAllowed = true;           // not in the PvP stages
-        /// Death runs on here (ArenaDefinition::DeathRuns; a companion in the world): a dead seat releases, runs
-        /// back and rises (DeathBlock) rather than being stood up. And how long it has been dead, in seconds.
-        bool DeathRuns = false;
-        float DeadSeconds = 0.0f;
+        bool SelfResurrectAllowed = true;           // always true: no stage forbids it
         std::array<uint32, STABLE_SLOTS> Stable{};
         uint32 StableCount = 0;
-
-        // The crowd past the pack's slots (CrowdBlock), where the encounter reports one.
-        CrowdView Crowd;
 
         // Pack: the current pull's enemies, in slot order (null for a slot whose enemy is gone).
         std::array<Unit*, PACK_SLOTS> Enemies{};
         uint32 EnemyCount = 0;                      // slots in use; 0 between pulls
         uint32 TargetSlot = 0;                      // the selected enemy; target selection updates it
 
-        // Support: the selected friend (FRIEND_SELF, FRIEND_OWNER, FRIEND_TEAMMATE_FIRST + teammate) that positive
-        // single-target spells are cast on, and the rank tier heals with ranks are cast at (0 = highest known). Only
-        // read with the support block; the actions update them.
-        uint32 FriendSlot = FRIEND_SELF;
+        /// The rank tier rankable spells are cast at (0 = the highest known; CoreBlock's rank actions set it).
         uint32 RankTier = 0;
 
         // Gauntlet.
@@ -403,12 +388,6 @@ namespace Animus::Curriculum
         float PullArrival = 0.0f;                   // an unengaged pull comes to the seat in this / 30 s; else 0
         float NextPull = 0.0f;                      // between pulls: the next one spawns in this / 20 s
 
-        // Companion: the player the bot fights for.
-        Player* Owner = nullptr;
-        /// What the owner can do, the same six numbers a teammate is described by. Unset when the scenario has no
-        /// owner: "there is nobody" and "there is somebody who heals nothing" are different things.
-        std::optional<Aptitude> OwnerApt;
-
         // Party: the other learned players, and the party's living tank (may be the bot).
         struct Teammate
         {
@@ -421,96 +400,96 @@ namespace Animus::Curriculum
         std::array<Teammate, PARTY_MEMBERS> Teammates{};
         Player* Tank = nullptr;
 
-        /// The raid the seat's group belongs to, in aggregate: a seat acts on its own group and the spotlight slots,
-        /// but it has to know how the rest of the raid is doing. All zero below a party.
-        struct RaidView
+        /// **What a player's UI shows of the rest of its party** (the party frames block, revision 2; dungeon-
+        /// curriculum I5 and G1): the party frames -- always: health, power, alive, in combat, which one leads, the
+        /// debuffs on it, whether something attacks it, whom it has targeted -- and the minimap's party dots, only for
+        /// members within its radius, as a position relative to the seat. The leader first, then the other members in
+        /// group (or seat) order. Filled from the seat's group (PartyFramesBlock::FillFromGroup, StageScenario::
+        /// ViewSeat) or by the encounter whose party has no core group (PartyFollowEncounter::View); each frame by
+        /// PartyFramesBlock::FillFrame, the one place a member's frame is read.
+        struct PartyFrame
         {
-            uint32 Group = 0;                       // the seat's group index (0 in a party)
-            float Alive = 0.0f;                     // living seats, as a share of the seats in play
-            float GroupAlive = 0.0f;                // ... of the seat's own group
-            float InCombat = 0.0f;                  // seats in combat, as a share of the living
-            float LowestHealth = 1.0f;              // the most hurt living seat
-            float TanksAlive = 0.0f;                // living tanks / RAID_GROUPS, clamped
-            float HealersAlive = 0.0f;              // living healers / RAID_GROUPS, clamped
+            bool Present = false;
+            bool Alive = false;
+            bool Leader = false;
+            bool InCombat = false;
+            float Health = 0.0f;                    // fractions of the maximum
+            float Power = 0.0f;
+            bool DotShown = false;                  // on the minimap: within its radius
+            float DotRight = 0.0f;                  // yards, in the seat's facing frame (heading-up minimap)
+            float DotForward = 0.0f;
+            bool ManaUser = false;                  // its power is mana
+            bool InRange = false;                   // within PartyFramesBlock::FRAME_RANGE (the client fades it past)
+            uint32 Debuffs = 0;                     // harmful auras on it, as its frame shows them
+            uint32 Dispellable = 0;                 // ... of a kind a dispel removes
+            bool Aggro = false;                     // something is attacking it (the frame's red border)
+            bool Selected = false;                  // the seat's selection
+            bool Focused = false;                   // the seat's focus
+            bool HasTarget = false;                 // it has a selection the seat's client also has
+            bool TargetHostile = false;             // ... hostile to the seat
+            bool TargetMine = false;                // ... the seat's own selection
+            bool TargetInView = false;              // ... in the seat's camera's frame now
+            // Where the seat believes it is (PartyRecall, revision 3): known once seen on the minimap or in the
+            // camera this episode; live while it is seen; else the last sighting carried on by its last pace.
+            bool RecallKnown = false;
+            bool RecallLive = false;
+            float RecallRight = 0.0f;               // yards, in the seat's facing frame, as the dot
+            float RecallForward = 0.0f;
+            float RecallAgeSeconds = 0.0f;          // since it was last seen
+            float RecallSpeed = 0.0f;               // yd/s, its pace when last seen
+            ObjectGuid Guid;                        // the member, for a press on its frame
         };
+        std::array<PartyFrame, GROUP_MEMBERS> Frames{};
+        float MinimapYards = 60.0f;
+        /// **The seat's memory of its party** (SeatState::Party; the party frames block, revision 3): each member's
+        /// last seen place and pace. Null for a view without one (then the frames' recall columns stay 0).
+        PartyRecall* Party = nullptr;
 
-        RaidView Raid;
+        /// **What the goal names** (M3 interact; the sight block's named row): the kind of thing the seat is to find
+        /// or act on -- its semantic class (Vision::Class), its template entry and whether it is a game object, as a
+        /// quest's log names its objective -- and how (NamedTask: 1 reach it, 2 use it, 3 use the key item on it; 0
+        /// nothing named). Never where it is.
+        uint8 NamedTask = 0;
+        uint8 NamedClass = 0;
+        uint32 NamedEntry = 0;
+        bool NamedObject = false;
 
         // Travel: where the seat is going, and whether it may ride there.
         bool HasObjective = false;
+        /// How near a camera ray has to pass the Objective to flag it (Vision::ObjectiveFlag): Vision::OBJECTIVE_RADIUS,
+        /// or a seek object's own (Vision::ObjectiveRadiusFor its SeekObject::Radius), so the flag sits on the object.
+        float ObjectiveRadius = 1.0f;
         Position Objective;
-        /// How much longer the walking way round to the objective is than the straight line to it, as a ratio;
-        /// 0 without an objective and 1 when the straight line is the route. Measured on foot at the episode's
-        /// build, water and magma excluded, so it is what the ground costs rather than what the pathfinder would
-        /// permit -- a player's filter admits both and would call a lake a straight shot.
-        float Detour = 0.0f;
+        /// The compass is withheld this episode (M1's withholding ladder, SightEncounter): the CompassBlock reads as
+        /// absent -- its presence column and every value 0 -- as a player with no quest arrow. Only that input goes:
+        /// the objective is still the camera's to flag, and the critic's state still has it.
+        bool CompassWithheld = false;
+        /// Whether the seat is told where the Objective is (a compass shown, or the travel block's bearing): without
+        /// it the goal block gives a trip's objective no place, so no observed goal bit says how near it is
+        /// (GoalBlock::PlaceOf). Arrival is the encounter's to decide and pay.
+        bool ObjectivePlaceKnown = true;
         /// Whether the legs are getting anywhere, over about the last second: how far the seat moved against how
         /// far running would have carried it, and the share of the distance to the objective that closed.
         float MoveRate = 0.0f;
         float CloseRate = 0.0f;
-        /// False in an on-foot arena (ArenaDefinition::OnFoot): the mount actions are masked out.
-        bool MountsAllowed = true;
-        /// How near counts as arrived, which is not the same number indoors as it is in open country. Carried
-        /// on the view so OBS_AT_OBJECTIVE, the masks that ask whether the seat is there yet, and the reward
-        /// that pays for arriving all read one answer.
-        float ArriveWithin = 6.0f;
-        /// False in an air-only arena (ArenaDefinition::AirOnly): the ground mount is masked, the wings are not.
-        bool GroundMountAllowed = true;
 
-        // Flag match: the seat's flag and the other side's, from the seat's side.
-        enum class FlagState : uint8 { AtBase, Carried, Dropped };
-        struct FlagMatch
-        {
-            bool Active = false;
-            FlagState Own = FlagState::AtBase;      // carried: by the enemy
-            FlagState Enemy = FlagState::AtBase;    // carried: by the seat
-            Position OwnBase;
-            Position EnemyBase;
-            Position OwnDropped;                    // where each lies when dropped
-            Position EnemyDropped;
-            uint32 OwnScore = 0;
-            uint32 EnemyScore = 0;
-            /// The flag the seat could take or return right now, if one is in reach. A real battleground scores a
-            /// pickup only when the player uses the object (BattlegroundWS::EventPlayerClickedOnFlag), so
-            /// standing on it does nothing: this is what ACTION_TAKE_FLAG acts on. Empty when none is in reach,
-            /// and always empty for an arena that plays the flag rules by proximity itself.
-            ObjectGuid Usable;
-        } Flags;
-
-        /// Life outside the fight (WorldBlock). Inactive in every arena that has no life encounter.
+        /// A dungeon's way on (WorldView), as the goal head names it.
         WorldView World;
 
-        /// What the side's director asked of this seat. Advice, not a lever: the seat reads it and still chooses
-        /// its own actions. Inactive in an arena with no director, where every field below is ignored.
-        struct TeamOrder
-        {
-            bool Active = false;
-            TeamPosture Posture = TeamPosture::Attack;
-            TeamRally Rally = TeamRally::None;
-            Position RallyPlace;                    // where Rally resolved to, when it names a place
-            bool HasRallyPlace = false;
-            Unit* Focus = nullptr;                  // the enemy the side concentrates on, when one is called
-            /// A focus was called and this seat cannot see it. Without this, "no call" and "a call I cannot
-            /// see" are the same all-zero observation, and a seat told to kill someone it has lost would read
-            /// it as having been told nothing.
-            bool FocusUnseen = false;
-            bool IsDuty = false;                    // this seat owes an interrupt or a control (its own order)
-            /// The order to this seat alone (Component E): its kind, what it is about -- an enemy or a friend
-            /// (Target), a journal objective (Objective) or the called place (GoTo, RallyPlace) -- who it came
-            /// from, and how old it is. None when the seat holds only the side's order.
-            OrderKind Kind = OrderKind::None;
-            Unit* Target = nullptr;
-            uint32 Objective = 0;
-            OrderSource Source = OrderSource::Side;
-            float Age = 0.0f;                       // decisions since it was given / 40, clamped
-        } Order;
+        /// **Cell goals** (WorldView::CellGoals): where the map block took this decision's crop from and how many of
+        /// its blocks are choosable (written by MapBlock::Observe through this pointer, like MapRow; null for a view
+        /// without one); the point the primary and the secondary hold, valid while the goal is a cell goal not yet
+        /// ended; the plan's next step (the queue's first) and how much of the plan is left (GoalBlock::OBS_PLAN_LEFT);
+        /// and the pose of the latest choice, which the seat's own position is read against (OBS_FROM_*).
+        CropPose* Crop = nullptr;
+        /// **The coverage analysis of this decision's crop** (general search; SeatState::Coverage), written by
+        /// MapBlock::Observe through this pointer like Crop; null for a view without one.
+        Coverage::Summary* CoverageOut = nullptr;
+        std::array<CellPoint, 2> HeldCell{};
+        CellPoint NextCell;
+        float PlanLeft = 0.0f;
+        CropPose ChoicePose;
 
-        // PvP: the enemy player.
-        Player* Opponent = nullptr;
-        bool OpponentHidden = false;                // the bot can neither see nor detect it
-        uint8 OpponentClass = 0;
-        Aptitude OpponentApt;
-        bool Mirror = false;                        // the opponent is a learned agent too
     };
 
     /// What an applied action did, for the scenario's bookkeeping and rewards.
@@ -532,22 +511,17 @@ namespace Animus::Curriculum
         uint32 SpellCasts = 0;
         // What a world press did (WorldBlock): the life encounters read these for their rewards and columns.
         uint32 Interactions = 0;
-        uint32 Wasted = 0;                          // a press that did nothing in the world
-        uint32 CorpsesLooted = 0;
-        uint32 NodesLooted = 0;
-        uint32 ItemsLooted = 0;
-        uint32 CopperLooted = 0;
-        uint32 GatherCasts = 0;                     // gathering and skinning casts started
-        uint32 Equipped = 0;
-        uint32 CopperSold = 0;
-        uint32 Repairs = 0;
-        uint32 CopperRepaired = 0;
-        uint32 SuppliesBought = 0;
-        bool QuestAccepted = false;
-        bool QuestTurnedIn = false;
+        /// The sight block's presses (EntityActions): a selection, an assist or a focus taken, and a press refused
+        /// before it was sent or by the server's cast checks (EntityActions::Refusal, 0 none), priced as
+        /// Actions.Aimless.ActRefused.
+        uint32 Selections = 0;
+        uint8 ActRefused = 0;
+        /// The entity a sight press named once it was found (sent or refused), and the press (EntityActions::Press):
+        /// what an encounter judges the press by (M3 interact: the right object, the lever, the key's lock).
+        ObjectGuid ActedOn;
+        uint8 ActPress = 0;
         uint32 TrinketUses = 0;
         uint32 ItemUses = 0;                        // use effects of an equipped weapon or off-hand item
-        uint32 SustainCasts = 0;
         uint32 FoodUsed = 0;
         uint32 DrinkUsed = 0;
         uint32 HealsOnFull = 0;                     // direct heals started on a friend at full health (masked: 0)
@@ -575,12 +549,6 @@ namespace Animus::Curriculum
 
         uint32 PreparationMs = 0;                   // a helpful spell started out of combat: its cast time or a GCD
         bool SelfResurrected = false;
-        /// After dying, where death runs on (DeathBlock): the spirit released, a friend's resurrection accepted
-        /// (the runner takes it), risen at the corpse, or raised by the spirit healer.
-        bool Released = false;
-        bool AcceptResurrection = false;
-        bool RoseAtCorpse = false;
-        bool SpiritHealer = false;
         uint32 Revives = 0;                         // resurrection spells started on a dead ally
         uint32 PetAbilities = 0;                    // pet bar abilities the pet started
         uint32 PetOrders = 0;                       // pet stances, follow and stay, and sending the pet in
@@ -610,7 +578,6 @@ namespace Animus::Curriculum
         bool KeyStillHeld = false;                  // the control already held, pressed again: not a press
         bool ControlChanged = false;                // a move press that changed a held control (MoveBlock)
         bool CastTrap = false;                      // a trap laid (a trap object summoned, or a missile that drops one)
-        bool CastDispel = false;
         bool CastReachesFocus = false;              // an area spell with no unit: the focus was inside its radius
     };
 }

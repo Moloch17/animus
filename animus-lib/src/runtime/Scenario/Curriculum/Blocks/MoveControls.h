@@ -32,8 +32,15 @@ namespace Animus::Curriculum::MoveControls
 {
     /// The move block's layout revision (Block::Revision). 0 and 1 were the bearing / turn-lattice design, which is
     /// gone (§0); a checkpoint or a manifest of either describes a model that no longer fits, and is refused on resume
-    /// and seeded fresh (bootstrap: a block whose revision differs starts from nothing).
-    constexpr uint32_t REVISION = 2;
+    /// and seeded fresh (bootstrap: a block whose revision differs starts from nothing). 3 (never shipped): the
+    /// ground probe measured live, the clearance columns gone. 4: no ground rays, flight rays or clearance at all --
+    /// the camera (the vision block, free look) is how a seat sees; the probe they came from is gone. 5: the objective's
+    /// presence, bearing and distances left for the compass block (perception-goals P1): a stage without the
+    /// compass is not told where its objective is. Seeding from 4 maps the kept columns by name (bootstrap).
+    /// compass is not told where its objective is. Seeding from 4 maps the kept columns by name (bootstrap). 6: the
+    /// contact-side columns contact_side, blocked_ahead, hold_age and pinned_age appended (movement pacing M1,
+    /// decision 0027); the earlier columns carry by name, the four start at zero.
+    constexpr uint32_t REVISION = 6;
 
     /// Turn rates, degrees a second, + left (counter-clockwise, the client's yaw direction): the mouse's, not slowed
     /// while moving. 0 lets go of the turn.
@@ -136,6 +143,8 @@ namespace Animus::Curriculum::MoveControls
         uint64_t TurnMs = 0;
         float LastPitch = 0.0f;
         uint64_t PitchMs = 0;
+        /// When any control last changed (a press that took: Press's Changed), for the move block's hold_age.
+        uint64_t ChangedMs = 0;
 
         void Clear() { *this = SeatControls(); }
     };
@@ -256,6 +265,8 @@ namespace Animus::Curriculum::MoveControls
                         controls.PitchMs, out.PitchReversals, PITCH_RATE_MAX);
                 break;
         }
+        if (out.Changed)
+            controls.ChangedMs = nowMs;
         return out;
     }
 }

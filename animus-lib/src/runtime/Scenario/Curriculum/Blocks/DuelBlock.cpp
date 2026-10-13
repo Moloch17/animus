@@ -17,6 +17,7 @@
  */
 
 #include "DuelBlock.h"
+#include "EntityActions.h"
 #include "DBCStores.h"
 #include "EncoderSupport.h"
 #include "Layout.h"
@@ -186,8 +187,9 @@ void Animus::Curriculum::DuelBlock::Observe(SeatView const& view, float* obs, ui
 
     // The ground it is standing on, whether or not it has a target: free, since a ground effect applies an aura to
     // whoever stands in it and the aura knows the object.
-    Hazard hazard;
-    if (uint32 const hazards = Encoding::StandingInHazards(bot, &hazard))
+    // In a sight stage only what the camera shows (the visible hazards, CombatBlock::ReadHazards), never the auras.
+    Hazard hazard = view.HazardsSeen ? view.DeepestSeen : Hazard();
+    if (uint32 const hazards = view.HazardsSeen ? view.StandingSeen : Encoding::StandingInHazards(bot, &hazard))
     {
         obs[OBS_HAZARDS_STANDING_IN] = std::min(1.0f, float(hazards) / 3.0f);
         if (hazard.Present)
@@ -285,20 +287,40 @@ void Animus::Curriculum::DuelBlock::Observe(SeatView const& view, float* obs, ui
         }
     }
 
+    // A sight stage's selection out of the camera's frame (dungeon-curriculum I3): the target frame still shows it --
+    // its health, level, cast bar, whom it fights, the threat -- but where it stands is only where the seat last saw
+    // it (its entity memory), as for a hidden target.
+    bool const placed = !view.L || !view.L->Has(BlockId::Sight) || view.TargetInView;
+    if (target && !placed)
+    {
+        obs[OBS_TARGET_HIDDEN] = 1.0f;
+        if (view.TargetSeen)
+        {
+            float const bearing = bot->GetRelativeAngle(&view.LastSeen);
+            obs[OBS_TARGET_UNSEEN_TIME] = view.TargetUnseenTime;
+            obs[OBS_LAST_SEEN_DISTANCE] = std::min(1.0f, bot->GetExactDist(&view.LastSeen) / 60.0f);
+            obs[OBS_LAST_SEEN_BEARING_SIN] = std::sin(bearing);
+            obs[OBS_LAST_SEEN_BEARING_COS] = std::cos(bearing);
+        }
+    }
+
     if (target)
     {
-        float const bearing = bot->GetRelativeAngle(target);
-        obs[OBS_DISTANCE] = std::min(1.0f, bot->GetDistance(target) / 60.0f);
-        obs[OBS_BEARING_SIN] = std::sin(bearing);
-        obs[OBS_BEARING_COS] = std::cos(bearing);
-        obs[OBS_BEHIND_TARGET] = target->isInBack(bot) ? 1.0f : 0.0f;
-        obs[OBS_TARGET_FACING_BOT] = target->HasInArc(float(M_PI), bot) ? 1.0f : 0.0f;
+        if (placed)
+        {
+            float const bearing = bot->GetRelativeAngle(target);
+            obs[OBS_DISTANCE] = std::min(1.0f, bot->GetDistance(target) / 60.0f);
+            obs[OBS_BEARING_SIN] = std::sin(bearing);
+            obs[OBS_BEARING_COS] = std::cos(bearing);
+            obs[OBS_BEHIND_TARGET] = target->isInBack(bot) ? 1.0f : 0.0f;
+            obs[OBS_TARGET_FACING_BOT] = target->HasInArc(float(M_PI), bot) ? 1.0f : 0.0f;
+            obs[OBS_TARGET_IN_LINE_OF_SIGHT] = bot->IsWithinLOSInMap(target) ? 1.0f : 0.0f;
+        }
         obs[OBS_TARGET_IN_COMBAT] = target->IsInCombat() ? 1.0f : 0.0f;
         obs[OBS_TARGET_ATTACKS_BOT] = target->GetVictim() == bot ? 1.0f : 0.0f;
         obs[OBS_TARGET_CASTING] = target->IsNonMeleeSpellCast(false) ? 1.0f : 0.0f;
         obs[OBS_TARGET_THREAT_SHARE] = Encoding::ThreatShare(target, bot);
         IncomingSpell::Observe(target, bot, obs + OBS_TARGET_CAST_FIRST);
-        obs[OBS_TARGET_IN_LINE_OF_SIGHT] = bot->IsWithinLOSInMap(target) ? 1.0f : 0.0f;
         obs[OBS_BOT_MOVING] = bot->movespline->Finalized() ? 0.0f : 1.0f;
         obs[OBS_BOT_IN_COMBAT] = bot->IsInCombat() ? 1.0f : 0.0f;
         obs[OBS_BOT_STEALTHED] = bot->HasAuraType(SPELL_AURA_MOD_STEALTH) ? 1.0f : 0.0f;
@@ -399,9 +421,27 @@ void Animus::Curriculum::DuelBlock::Apply(SeatView& view, uint32 local, SeatActi
     switch (local)
     {
         case ACTION_START_ATTACK:
-            bot->Attack(target, true);
+            // A sight stage starts its swing as the client does (dungeon-curriculum I1): CMSG_ATTACKSWING through the
+            // session's handler, at the seat's selection.
+            if (view.L && view.L->Has(BlockId::Sight))
+                EntityActions::StartAttackThroughClient(bot, target->GetGUID(),
+                    view.Port ? *view.Port : EntityActions::SessionPort());
+            else
+                bot->Attack(target, true);
             return;
         case ACTION_PET_ATTACK:
+            // A sight stage orders its pet as the client does: the pet bar's Attack, CMSG_PET_ACTION through the
+            // session's handler.
+            if (view.L && view.L->Has(BlockId::Sight))
+            {
+                if (EntityActions::PetAttackThroughClient(bot, target->GetGUID(),
+                    view.Port ? *view.Port : EntityActions::SessionPort()))
+                {
+                    ++result.PetOrders;
+                    result.PetOrderGiven = PetOrder::Attack;
+                }
+                return;
+            }
             if (Encoding::PetAttack(bot, target))
             {
                 ++result.PetOrders;
@@ -418,6 +458,15 @@ void Animus::Curriculum::DuelBlock::Apply(SeatView& view, uint32 local, SeatActi
                 bot->RemoveOwnedAura(form->Id, ObjectGuid::Empty, 0, AURA_REMOVE_BY_CANCEL);
             return;
         default:
+            // A sight stage calls its pet as the client does: Call Pet (CMSG_CAST_SPELL) through the session's
+            // handler, which summons the beast its pet stable holds; a dead one is Revive Pet's (a core spell).
+            if (view.L && view.L->Has(BlockId::Sight))
+            {
+                if (EntityActions::CastOutcome const sent = EntityActions::CallPetThroughClient(bot,
+                    view.Port ? *view.Port : EntityActions::SessionPort()); !sent.Sent)
+                    result.RefusedCast = sent.Failed ? sent.Failed - 1 : uint32(SPELL_FAILED_UNKNOWN);
+                return;
+            }
             result.CallBeast = view.Stable[local - ACTION_CALL_BEAST_FIRST];
             return;
     }

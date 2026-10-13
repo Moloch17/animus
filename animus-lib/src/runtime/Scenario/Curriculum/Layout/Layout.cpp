@@ -18,7 +18,6 @@
 
 #include "Layout.h"
 #include "ClassAssets.h"
-#include "DirectorLayout.h"
 #include "SpellInfo.h"
 #include "SpellMgr.h"
 #include "StageDefinition.h"
@@ -49,70 +48,9 @@ namespace
     /// 9: the seats' engine moves are gone (player-controller C9): the crowd block's advance and approach, the party
     /// block's follow-the-tank, the companion block's follow and its clock, the death block's corpse run (each block at
     /// revision 1). Layouts with any of those blocks changed shape.
-    constexpr uint32 MANIFEST_FORMAT = 9;
-
-    /// The catalog's long buffs, grouped by what a unit can have at once: chains joined when any of their ranks share
-    /// a spell group (spell_group, whose stack rules keep one of them per target) or an exclusive kind (a seal, an
-    /// armor, an elemental shield: SpellInfo::GetSpellSpecific), each group listing every rank.
-    std::vector<std::vector<uint32>> BuffGroupsOf(Animus::Curriculum::ActionCatalog const& catalog)
-    {
-        struct Chain
-        {
-            std::vector<uint32> Ranks;
-            std::set<uint32> Groups;
-            SpellSpecificType Specific = SPELL_SPECIFIC_NORMAL;
-        };
-
-        std::vector<Chain> chains;
-        for (Animus::Curriculum::ActionCatalog::Action const& action : catalog.Actions())
-        {
-            if (action.Type != Animus::Curriculum::ActionCatalog::Kind::Spell || !action.LongBuff)
-                continue;
-
-            Chain chain;
-            if (SpellInfo const* first = sSpellMgr->GetSpellInfo(action.FirstRank))
-                chain.Specific = first->GetSpellSpecific();
-            for (SpellInfo const* rank = sSpellMgr->GetSpellInfo(action.FirstRank); rank;
-                rank = rank->GetNextRankSpell())
-            {
-                chain.Ranks.push_back(rank->Id);
-                auto const bounds = sSpellMgr->GetSpellSpellGroupMapBounds(rank->Id);
-                for (auto itr = bounds.first; itr != bounds.second; ++itr)
-                    chain.Groups.insert(uint32(itr->second));
-            }
-            chains.push_back(std::move(chain));
-        }
-
-        // Union chains that share a group, until nothing joins.
-        std::vector<uint32> parent(chains.size());
-        for (uint32 i = 0; i < parent.size(); ++i)
-            parent[i] = i;
-        auto const root = [&parent](uint32 i)
-        {
-            while (parent[i] != i)
-                i = parent[i] = parent[parent[i]];
-            return i;
-        };
-
-        for (uint32 i = 0; i < chains.size(); ++i)
-            for (uint32 j = i + 1; j < chains.size(); ++j)
-                if ((chains[i].Specific != SPELL_SPECIFIC_NORMAL && chains[i].Specific == chains[j].Specific)
-                    || std::any_of(chains[i].Groups.begin(), chains[i].Groups.end(),
-                        [&](uint32 group) { return chains[j].Groups.contains(group); }))
-                    parent[root(j)] = root(i);
-
-        std::map<uint32, std::vector<uint32>> groups;
-        for (uint32 i = 0; i < chains.size(); ++i)
-        {
-            std::vector<uint32>& ranks = groups[root(i)];
-            ranks.insert(ranks.end(), chains[i].Ranks.begin(), chains[i].Ranks.end());
-        }
-
-        std::vector<std::vector<uint32>> result;
-        for (auto& [id, ranks] : groups)
-            result.push_back(std::move(ranks));
-        return result;
-    }
+    /// 10: the goal space has a tenth kind (search; goal block revision 5): the goal block is two columns wider in
+    /// every layout, and an exported goal head has ten kinds.
+    constexpr uint32 MANIFEST_FORMAT = 10;
 }
 
 std::string_view Animus::Curriculum::GoalName(SeatGoal goal)
@@ -126,11 +64,9 @@ std::string_view Animus::Curriculum::GoalName(SeatGoal goal)
         case SeatGoal::Position: return "position";
         case SeatGoal::Prepare:  return "prepare";
         case SeatGoal::TravelTo: return "travel_to";
-        case SeatGoal::Loot:     return "loot";
-        case SeatGoal::Gather:   return "gather";
-        case SeatGoal::Interact: return "interact";
         case SeatGoal::Rest:     return "rest";
         case SeatGoal::Resurrect: return "resurrect";
+        case SeatGoal::Search:   return "search";
         case SeatGoal::Count:    break;
     }
 
@@ -141,9 +77,7 @@ bool Animus::Curriculum::GoalAccepts(SeatGoal kind, uint32 target)
 {
     bool const none = target == GOAL_TARGET_NONE;
     bool const enemy = target >= GOAL_TARGET_ENEMY_FIRST && target < GOAL_TARGET_FRIEND_FIRST;
-    bool const friendly = target >= GOAL_TARGET_FRIEND_FIRST && target < GOAL_TARGET_OBJECTIVE_FIRST;
-    bool const objective = target >= GOAL_TARGET_OBJECTIVE_FIRST && target < GOAL_TARGET_GIVER;
-    bool const npc = target == GOAL_TARGET_GIVER || target == GOAL_TARGET_ENDER;
+    bool const friendly = target >= GOAL_TARGET_FRIEND_FIRST && target < GOAL_TARGET_PLACE_FIRST;
     bool const place = target >= GOAL_TARGET_PLACE_FIRST && target < GOAL_TARGET_ASSIGNMENT;
     switch (kind)
     {
@@ -151,94 +85,15 @@ bool Animus::Curriculum::GoalAccepts(SeatGoal kind, uint32 target)
         case SeatGoal::Position: return none || enemy;
         case SeatGoal::Control:  return enemy;
         case SeatGoal::Protect:  return friendly;
-        case SeatGoal::TravelTo: return objective || npc || place || target == GOAL_TARGET_ASSIGNMENT;
-        case SeatGoal::Gather:   return none || place;
-        case SeatGoal::Interact: return objective || npc;
+        case SeatGoal::TravelTo: return place || target == GOAL_TARGET_ASSIGNMENT;
+        case SeatGoal::Search:   return place;
         case SeatGoal::Recover:
         case SeatGoal::Prepare:
-        case SeatGoal::Loot:
         case SeatGoal::Rest:     return none;
         case SeatGoal::Resurrect: return none || friendly;
         case SeatGoal::Count:    break;
     }
     return false;
-}
-
-std::string_view Animus::Curriculum::PostureName(TeamPosture posture)
-{
-    switch (posture)
-    {
-        case TeamPosture::Attack:  return "attack";
-        case TeamPosture::Defend:  return "defend";
-        case TeamPosture::Protect: return "protect";
-        case TeamPosture::Recover: return "recover";
-        case TeamPosture::Regroup: return "regroup";
-        case TeamPosture::Hold:    return "hold";
-        case TeamPosture::Count:   break;
-    }
-
-    return "unknown";
-}
-
-std::string_view Animus::Curriculum::RallyName(TeamRally rally)
-{
-    switch (rally)
-    {
-        case TeamRally::None:      return "none";
-        case TeamRally::OwnBase:   return "own_base";
-        case TeamRally::EnemyBase: return "enemy_base";
-        case TeamRally::Carrier:   return "carrier";
-        case TeamRally::Focus:     return "focus";
-        case TeamRally::Spread:    return "spread";
-        case TeamRally::Stack:     return "stack";
-        case TeamRally::Point:     return "point";
-        case TeamRally::Count:     break;
-    }
-
-    return "unknown";
-}
-
-std::string_view Animus::Curriculum::AnchorName(PlaceAnchor anchor)
-{
-    switch (anchor)
-    {
-        case PlaceAnchor::TeamCentre:    return "team";
-        case PlaceAnchor::Focus:         return "focus";
-        case PlaceAnchor::LastSeenEnemy: return "last_seen";
-        case PlaceAnchor::Objective:     return "objective";
-        case PlaceAnchor::OwnBase:       return "own_base";
-        case PlaceAnchor::EnemyBase:     return "enemy_base";
-        case PlaceAnchor::Count:         break;
-    }
-
-    return "unknown";
-}
-
-std::string_view Animus::Curriculum::OffsetName(PlaceOffset offset)
-{
-    switch (offset)
-    {
-        case PlaceOffset::At:     return "at";
-        case PlaceOffset::Toward: return "toward";
-        case PlaceOffset::Away:   return "away";
-        case PlaceOffset::Left:   return "left";
-        case PlaceOffset::Right:  return "right";
-        case PlaceOffset::Count:  break;
-    }
-
-    return "unknown";
-}
-
-std::string_view Animus::Curriculum::RingName(PlaceRing ring)
-{
-    switch (ring)
-    {
-        case PlaceRing::Near:  return "near";
-        case PlaceRing::Far:   return "far";
-        case PlaceRing::Count: break;
-    }
-
-    return "unknown";
 }
 
 std::string_view Animus::Curriculum::BlockName(BlockId id)
@@ -247,25 +102,19 @@ std::string_view Animus::Curriculum::BlockName(BlockId id)
     {
         case BlockId::Core:      return "core";
         case BlockId::Move:      return "move";
+        case BlockId::Compass:   return "compass";
         case BlockId::Duel:      return "duel";
         case BlockId::Pack:      return "pack";
         case BlockId::Gauntlet:  return "gauntlet";
-        case BlockId::Companion: return "companion";
-        case BlockId::Party:     return "party";
-        case BlockId::Pvp:       return "pvp";
-        case BlockId::Context:   return "context";
-        case BlockId::Hostiles:  return "hostiles";
         case BlockId::Pet:       return "pet";
-        case BlockId::Travel:    return "travel";
-        case BlockId::Flag:      return "flag";
-        case BlockId::Order:     return "order";
-        case BlockId::Support:   return "support";
-        case BlockId::World:     return "world";
-        case BlockId::Forecast:  return "forecast";
-        case BlockId::Crowd:     return "crowd";
-        case BlockId::Hint:      return "hint";
-        case BlockId::Death:     return "death";
+        case BlockId::Vision:    return "vision";
+        case BlockId::Entities:  return "entities";
+        case BlockId::Map:       return "map";
+        case BlockId::Sight:     return "sight";
+        case BlockId::PartyFrames: return "party_frames";
+        case BlockId::Combat:    return "combat";
         case BlockId::Goal:      return "goal";
+        case BlockId::Coverage:  return "coverage";
         case BlockId::Count:     break;
     }
 
@@ -280,13 +129,6 @@ Animus::Curriculum::Layout Animus::Curriculum::Layout::Build(ClassProfile const&
     layout.Profile = &profile;
     layout.Assets = &ClassAssets::For(profile);
     layout.Blocks = stage.Blocks;
-
-    // Resurrections and the soulstone are cast on a dead or living ally (companion and party blocks). Heals, shields
-    // and buffs are core actions cast on the support block's selected friend.
-    if (stage.Has(BlockId::Companion) || stage.Has(BlockId::Party))
-        layout.AllyRevives = layout.Catalog().Revives();
-
-    layout.BuffGroups = BuffGroupsOf(layout.Catalog());
 
     // Each block starts where the previous one ended.
     for (BlockId id : layout.Blocks)
@@ -309,17 +151,6 @@ Animus::Curriculum::Layout Animus::Curriculum::Layout::Build(ClassProfile const&
     return layout;
 }
 
-Animus::Curriculum::Layout Animus::Curriculum::Layout::BuildDirector(StageDefinition const& stage)
-{
-    Layout layout;
-    layout.Stage = &stage;
-    layout.Director = true;
-    layout.ObsDim = DirectorLayout::OBS_COUNT;
-    layout.NumActions = DirectorLayout::ACTION_COUNT;
-    layout.ModeGroups.assign(layout.NumActions, 0);
-    return layout;
-}
-
 std::optional<Animus::Curriculum::BlockId> Animus::Curriculum::Layout::BlockOfAction(uint32 action) const
 {
     for (BlockId id : Blocks)
@@ -329,16 +160,6 @@ std::optional<Animus::Curriculum::BlockId> Animus::Curriculum::Layout::BlockOfAc
     return std::nullopt;
 }
 
-boost::json::array Animus::Curriculum::SpellList(std::vector<ActionCatalog::Action> const& actions)
-{
-    boost::json::array list;
-    list.reserve(actions.size());
-    for (ActionCatalog::Action const& action : actions)
-        list.push_back(action.FirstRank);
-
-    return list;
-}
-
 boost::json::array Animus::Curriculum::Span(uint32 first, uint32 count)
 {
     return { first, count };
@@ -346,14 +167,11 @@ boost::json::array Animus::Curriculum::Span(uint32 first, uint32 count)
 
 std::string Animus::Curriculum::Layout::ModelName() const
 {
-    return (Director ? DirectorLayout::Name() : Profile->Name) + Stage->Suffix;
+    return Profile->Name + Stage->Suffix;
 }
 
 std::vector<std::string> Animus::Curriculum::Layout::ActionNames() const
 {
-    if (Director)
-        return DirectorLayout::ActionNames();
-
     std::vector<std::string> names(NumActions);
     for (BlockId id : Blocks)
     {
@@ -375,8 +193,8 @@ std::string Animus::Curriculum::Layout::Manifest() const
     manifest["format"] = MANIFEST_FORMAT;
     manifest["model"] = ModelName();
     manifest["stage"] = Stage->Name;
-    manifest["class_name"] = Director ? DirectorLayout::Name() : Profile->Name.c_str();
-    manifest["class"] = Director ? 0 : Profile->Class;
+    manifest["class_name"] = Profile->Name.c_str();
+    manifest["class"] = Profile->Class;
     manifest["obs_dim"] = ObsDim;
     manifest["num_actions"] = NumActions;
 
@@ -387,7 +205,6 @@ std::string Animus::Curriculum::Layout::Manifest() const
     // Every build the class can have, because one model plays all of them, and what each one can do -- there is
     // no role to name, and the aptitude is the thing a reader of the manifest actually wants.
     boost::json::array& specs = manifest["specs"].emplace_array();
-    if (!Director)
     {
         ClassAssets const& assets = ClassAssets::For(*Profile);
         for (uint8 index = 0; index < uint8(Profile->Specs.size()); ++index)

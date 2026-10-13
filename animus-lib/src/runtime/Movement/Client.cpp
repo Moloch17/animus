@@ -72,8 +72,24 @@ Mv::Report Mv::Client::Snapshot(uint16_t opcode, uint32_t timeMs, uint32_t flags
 
 void Mv::Client::TakeFromServer(ServerState const& state)
 {
+    // Only with the world the client is stepping in: Finish can refuse before any tick has set it (the body then
+    // takes the server's position as it stands).
     if (_shape && _world)
+    {
         Resync(Body, state.X, state.Y, state.Z, state.Yaw, *_shape, *_world);
+        if (Body.Unburied)
+        {
+            ++Counts.Unburied;
+            UnburiedFromZ = state.Z;
+        }
+    }
+    else
+    {
+        Body.X = state.X;
+        Body.Y = state.Y;
+        Body.Z = state.Z;
+        Body.Yaw = state.Yaw;
+    }
     _reportedX = state.X;
     _reportedY = state.Y;
     _reportedZ = state.Z;
@@ -105,8 +121,7 @@ bool Mv::Client::Send(Report const& report, ServerLink& link)
 
 void Mv::Client::Start(ServerLink& link, Movement::Body const& shape, WorldQuery const& world, uint32_t nowMs)
 {
-    _shape = &shape;
-    _world = &world;
+    WorldScope const scope(*this, shape, world);
     TakeFromServer(link.State());
     _started = true;
     uint32_t flags = _granted;
@@ -125,10 +140,11 @@ void Mv::Client::Order(Animus::Client::Order const& order, ServerLink& link, Mov
     WorldQuery const& world, uint32_t nowMs)
 {
     namespace Co = Animus::Client;
-    _shape = &shape;
-    _world = &world;
+    WorldScope const scope(*this, shape, world);
     if (order.Kind == Co::OrderKind::TimeSync)
         return;
+    LastOrder = uint8_t(order.Kind);
+    LastOrderMs = nowMs;
     if (order.Kind == Co::OrderKind::Teleport)
     {
         // The server has put the seat somewhere: take the body from there.
@@ -172,8 +188,7 @@ void Mv::Client::Order(Animus::Client::Order const& order, ServerLink& link, Mov
 void Mv::Client::Tick(ControlState& control, Speeds const& speeds, Movement::Body const& shape,
     WorldQuery const& world, uint32_t diffMs, uint32_t nowMs, ServerLink& link)
 {
-    _shape = &shape;
-    _world = &world;
+    WorldScope const scope(*this, shape, world);
     TickMoved = TickCommanded = TickFallHeight = 0.0f;
     TickWall = false;
     TickJumps = TickLandings = 0;
@@ -186,6 +201,7 @@ void Mv::Client::Tick(ControlState& control, Speeds const& speeds, Movement::Bod
     {
         TakeFromServer(state);
         control.Jump = false;
+        control.FaceTurn = 0.0f;        // a stunned or moved client cannot turn itself either
         _lastFlags = _granted | (_rooted ? Flag::ROOT : 0u);
         _lastSendMs = nowMs;
         ++Counts.YieldTicks;
@@ -213,12 +229,23 @@ void Mv::Client::Tick(ControlState& control, Speeds const& speeds, Movement::Bod
         // A control changed: the client sends it at the key press, with the body as it is.
         uint32_t const before = FlagsOf(control, speeds);
         if ((before ^ _lastFlags) & CONTROL_MASK)
-            for (uint16_t opcode : Cd::Changes(_lastFlags & CONTROL_MASK, before & CONTROL_MASK, false, false))
+            for (uint16_t opcode : Cd::Changes(_lastFlags & CONTROL_MASK, before & CONTROL_MASK))
             {
                 ++Counts.Changes;
                 if (!Send(Snapshot(opcode, startMs, before), link))
                     return;
             }
+        // Turn to camera (ControlState::FaceTurn): the facing snaps at the step's start and the client says so with
+        // one MSG_MOVE_SET_FACING there, through the server's handler as a mouse-look facing is -- never a server-side
+        // SetFacing. The held turn rate then runs on from the new facing, its crossings counted from this report.
+        if (control.FaceTurn != 0.0f)
+        {
+            Body.Yaw = WrapYaw(Body.Yaw + control.FaceTurn);
+            control.FaceTurnApplied += control.FaceTurn;
+            control.FaceTurn = 0.0f;
+            if (!Send(Snapshot(Cd::Op::SET_FACING, startMs, before), link))
+                return;
+        }
         // A jump: MSG_MOVE_JUMP at the press, the fall's clock at 0 and its launch in the jump info.
         if (control.Jump && CanJump(Body, shape, world))
         {
@@ -240,7 +267,6 @@ void Mv::Client::Tick(ControlState& control, Speeds const& speeds, Movement::Bod
         float const z0 = Body.Z;
         float const yaw0 = Body.Yaw;
         float const pitch0 = Body.Pitch;
-        uint32_t const fall0 = Body.FallMs;
         bool const steered = Body.Kind == Mode::Swimming || Body.Kind == Mode::Flying;
         float const yawRate = control.KeyboardTurn ? 0.0f : control.TurnRate;
         float const pitchRate = control.KeyboardTurn || !steered ? 0.0f : control.PitchRate;
@@ -250,6 +276,13 @@ void Mv::Client::Tick(ControlState& control, Speeds const& speeds, Movement::Bod
         TickMoved += Body.Moved;
         TickCommanded += Body.Commanded;
         TickWall = TickWall || Body.AgainstWall;
+        if (Body.OverVoid)
+        {
+            ++Counts.OverVoid;
+            VoidX = Body.X;
+            VoidY = Body.Y;
+            VoidZ = Body.Z;
+        }
         TickJumps += Body.Jumped ? 1 : 0;
         TickLandings += Body.Landed ? 1 : 0;
         TickFallHeight = std::max(TickFallHeight, Body.FallHeight);
@@ -265,16 +298,34 @@ void Mv::Client::Tick(ControlState& control, Speeds const& speeds, Movement::Bod
 
         // Inside the step, at their exact moments: the mouse-look's facing and pitch reports and the heartbeat, with
         // the body where it was then (the step is a straight line at a steady turn).
+        // A step that landed was a fall until the landing, sent at its end: its reports inside it are a falling
+        // body's, and none is due at its very end before the FALL_LAND (a heartbeat there took the ground's flags
+        // first, and the server took it for the fall's new top: a 30 yd fall cost nothing).
+        uint32_t const inStep = Body.Landed ? (before | Flag::FALLING) : after;
         auto at = [&](float t, uint16_t opcode)
         {
             float const share = h > 0.0f ? std::clamp(t / h, 0.0f, 1.0f) : 1.0f;
-            Report report = Snapshot(opcode, startMs + uint32_t(std::lround(t * 1000.0f)), after);
-            report.X = x0 + (Body.X - x0) * share;
-            report.Y = y0 + (Body.Y - y0) * share;
-            report.Z = z0 + (Body.Z - z0) * share;
-            report.Yaw = WrapYaw(yaw0 + TurnBetween(yaw0, Body.Yaw) * share);
-            report.Pitch = pitch0 + (Body.Pitch - pitch0) * share;
-            if (after & Flag::FALLING)
+            Report report = Snapshot(opcode, startMs + uint32_t(std::lround(t * 1000.0f)), inStep);
+            // At the step's ends exactly the body as it is (no rounding through the interpolation): a recording
+            // replays losslessly (ReplayTest).
+            if (share <= 0.0f || share >= 1.0f)
+            {
+                bool const end = share >= 1.0f;
+                report.X = end ? Body.X : x0;
+                report.Y = end ? Body.Y : y0;
+                report.Z = end ? Body.Z : z0;
+                report.Yaw = end ? Body.Yaw : yaw0;
+                report.Pitch = end ? Body.Pitch : pitch0;
+            }
+            else
+            {
+                report.X = x0 + (Body.X - x0) * share;
+                report.Y = y0 + (Body.Y - y0) * share;
+                report.Z = z0 + (Body.Z - z0) * share;
+                report.Yaw = WrapYaw(yaw0 + TurnBetween(yaw0, Body.Yaw) * share);
+                report.Pitch = pitch0 + (Body.Pitch - pitch0) * share;
+            }
+            if (inStep & Flag::FALLING)
             {
                 uint32_t const before = uint32_t(std::lround((h - t) * 1000.0f));
                 report.FallMs = Body.FallMs > before ? Body.FallMs - before : 0u;
@@ -315,15 +366,13 @@ void Mv::Client::Tick(ControlState& control, Speeds const& speeds, Movement::Bod
                 break;
 
             float const t = done + next;
+            if (Body.Landed && t >= h - 1e-4f)
+                break;                      // after the FALL_LAND: the next step finds it again
             Report report = at(t, opcode);
             if (opcode == Cd::Op::SET_FACING)
                 report.Yaw = facing.Value;
             if (opcode == Cd::Op::SET_PITCH)
                 report.Pitch = pitch.Value;
-            if (opcode == Cd::Op::HEARTBEAT)
-                ++Counts.Heartbeats;
-            else
-                ++Counts.Facings;
             if (!Send(report, link))
                 return;
             done = t + 1e-5f;
@@ -333,7 +382,7 @@ void Mv::Client::Tick(ControlState& control, Speeds const& speeds, Movement::Bod
         if (Body.Landed)
         {
             Report land = Snapshot(Cd::Op::FALL_LAND, startMs + uint32_t(std::lround(h * 1000.0f)), after);
-            land.FallMs = fall0 + uint32_t(std::lround(h * 1000.0f));
+            land.FallMs = Body.FallMs;          // the fall's time at the moment it landed (Step times it)
             ++Counts.Changes;
             if (!Send(land, link))
                 return;

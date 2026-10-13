@@ -1,0 +1,858 @@
+/*
+ * This file is part of the AzerothCore Project. See AUTHORS file for Copyright information
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
+ * more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program. If not, see <http://www.gnu.org/licenses/>.
+ */
+
+#include "VisionCaster.h"
+#include <algorithm>
+#include <cctype>
+#include <cmath>
+#include <cstdlib>
+#include <chrono>
+#include <limits>
+#include <vector>
+
+namespace
+{
+    using namespace Animus::Vision;
+    namespace Mv = Animus::Movement;
+
+    Settings CurrentSettings;
+
+    using Clock = std::chrono::steady_clock;
+
+    constexpr float INF = std::numeric_limits<float>::infinity();
+    /// A cell's liquid plane is crossed within its footprint, give or take this much of the ray (rounding).
+    constexpr float FOOTPRINT_SLACK = 1e-3f;
+    /// A range test keeps what lies within this many yards of the range, over the rounding of the ray height at a
+    /// footprint end and of a triangle hit (a few 1e-5 yards at the camera reach), so a range never skips a cell a
+    /// hit could be in.
+    constexpr float RANGE_PAD = 0.1f;
+    /// A terrain block: 8 x 8 cells, 16 x 16 of them to a grid (BakedScene.h TERRAIN_BLOCK_CELLS).
+    constexpr int32_t BLOCK_CELLS = 8;
+    constexpr int32_t BLOCKS_PER_TILE = 16;
+    /// ... and a super-block: 4 x 4 blocks (32 x 32 cells), 4 x 4 of them to a grid (derived when a scene loads).
+    constexpr int32_t BLOCKS_PER_SUPER = 4;
+    constexpr int32_t SUPER_CELLS = BLOCKS_PER_SUPER * BLOCK_CELLS;
+    constexpr int32_t SUPERS_PER_TILE = BLOCKS_PER_TILE / BLOCKS_PER_SUPER;
+
+    /// Adds the time since `mark` to `slot` and moves `mark` to now (only when a breakdown is wanted).
+    void Charge(Breakdown* breakdown, uint64_t Breakdown::* slot, Clock::time_point& mark)
+    {
+        if (!breakdown)
+            return;
+        Clock::time_point const now = Clock::now();
+        breakdown->*slot += uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(now - mark).count());
+        mark = now;
+    }
+
+    [[nodiscard]] Vec3 Cross(Vec3 a, Vec3 b)
+    {
+        return { a.Y * b.Z - a.Z * b.Y, a.Z * b.X - a.X * b.Z, a.X * b.Y - a.Y * b.X };
+    }
+
+    /// Moller-Trumbore, one-sided: where the ray crosses the triangle going down through its upper face (the face
+    /// whose normal points up), or -1. A ray from under the terrain does not see its underside.
+    [[nodiscard]] float RayTriangleFromAbove(Vec3 origin, Vec3 dir, Vec3 a, Vec3 b, Vec3 c, float& normalZ)
+    {
+        Vec3 const e1 = b - a;
+        Vec3 const e2 = c - a;
+        Vec3 normal = Cross(e1, e2);
+        if (normal.Z < 0.0f)
+            normal = normal * -1.0f;
+        if (Dot(normal, dir) >= 0.0f)
+            return -1.0f;
+        Vec3 const p = Cross(dir, e2);
+        float const det = Dot(e1, p);
+        if (std::fabs(det) < 1e-12f)
+            return -1.0f;
+        float const inv = 1.0f / det;
+        Vec3 const s = origin - a;
+        float const u = Dot(s, p) * inv;
+        if (u < 0.0f || u > 1.0f)
+            return -1.0f;
+        Vec3 const q = Cross(s, e1);
+        float const v = Dot(dir, q) * inv;
+        if (v < 0.0f || u + v > 1.0f)
+            return -1.0f;
+        float const t = Dot(e2, q) * inv;
+        if (t < 0.0f)
+            return -1.0f;
+        float const length = Length(normal);
+        normalZ = length > 0.0f ? normal.Z / length : 1.0f;
+        return t;
+    }
+
+    /// The terrain's height at (fu, fv) within a cell (0..1 each), on the triangle holding it: getHeight's rule.
+    [[nodiscard]] float CellHeight(TerrainCell const& cell, float fu, float fv)
+    {
+        float const h1 = cell.Corner[0];
+        float const h2 = cell.Corner[1];
+        float const h3 = cell.Corner[2];
+        float const h4 = cell.Corner[3];
+        float const h5 = 2.0f * cell.Centre;
+        if (fu + fv < 1.0f)
+        {
+            if (fu > fv)
+                return h1 + (h2 - h1) * fu + (h5 - h1 - h2) * fv;
+            return h1 + (h5 - h1 - h3) * fu + (h3 - h1) * fv;
+        }
+        if (fu > fv)
+            return (h2 + h4 - h5) * fu + (h4 - h2) * fv + (h5 - h4);
+        return (h4 - h3) * fu + (h3 + h4 - h5) * fv + (h5 - h4);
+    }
+
+    /// The squares of side `size` (in cell units) the ray's (u, v) path crosses between tStart and tEnd, in order
+    /// (a 2D grid traversal: one visit a square, no fixed step). `visit(iu, iv, tIn, tOut)` returns false to stop.
+    /// The first square is clamped into [low, high], as are the rest: leaving them ends the walk.
+    template <typename Visit>
+    void Walk(float u0, float v0, float du, float dv, float tStart, float tEnd, float size, int32_t const (&low)[2],
+        int32_t const (&high)[2], Visit&& visit)
+    {
+        if (!(tEnd > tStart))
+            return;
+        float const u = u0 + du * tStart;
+        float const v = v0 + dv * tStart;
+        int32_t iu = std::clamp(int32_t(std::floor(u / size)), low[0], high[0]);
+        int32_t iv = std::clamp(int32_t(std::floor(v / size)), low[1], high[1]);
+        int32_t const stepU = du > 0.0f ? 1 : -1;
+        int32_t const stepV = dv > 0.0f ? 1 : -1;
+        bool const flatU = std::fabs(du) < 1e-12f;
+        bool const flatV = std::fabs(dv) < 1e-12f;
+        float nextU = flatU ? INF : (float(iu + (du > 0.0f ? 1 : 0)) * size - u0) / du;
+        float nextV = flatV ? INF : (float(iv + (dv > 0.0f ? 1 : 0)) * size - v0) / dv;
+        float const deltaU = flatU ? INF : size / std::fabs(du);
+        float const deltaV = flatV ? INF : size / std::fabs(dv);
+        float t = tStart;
+        while (true)
+        {
+            float const next = std::max(t, std::min({ nextU, nextV, tEnd }));
+            if (!visit(iu, iv, t, next) || next >= tEnd)
+                return;
+            t = next;
+            if (nextU < nextV)
+            {
+                iu += stepU;
+                nextU += deltaU;
+            }
+            else
+            {
+                iv += stepV;
+                nextV += deltaV;
+            }
+            if (iu < low[0] || iu > high[0] || iv < low[1] || iv > high[1])
+                return;
+        }
+    }
+
+    /// Walk for the ranged terrain's nested walks (super-blocks, blocks, cells): the same squares in the same order,
+    /// with the reciprocals of the direction taken once for the ray (a multiplication where Walk divides), since a
+    /// frame starts a hundred thousand of these.
+    struct PlaneRay
+    {
+        float U0;
+        float V0;
+        float Du;
+        float Dv;
+        float InvDu;
+        float InvDv;
+        bool FlatU;
+        bool FlatV;
+    };
+
+    [[nodiscard]] PlaneRay MakePlaneRay(float u0, float v0, float du, float dv)
+    {
+        PlaneRay ray{ u0, v0, du, dv, 0.0f, 0.0f, std::fabs(du) < 1e-12f, std::fabs(dv) < 1e-12f };
+        ray.InvDu = ray.FlatU ? 0.0f : 1.0f / du;
+        ray.InvDv = ray.FlatV ? 0.0f : 1.0f / dv;
+        return ray;
+    }
+
+    template <typename Visit>
+    void WalkPlane(PlaneRay const& ray, float tStart, float tEnd, float size, int32_t const (&low)[2],
+        int32_t const (&high)[2], Visit&& visit)
+    {
+        if (!(tEnd > tStart))
+            return;
+        float const invSize = 1.0f / size;
+        float const u = ray.U0 + ray.Du * tStart;
+        float const v = ray.V0 + ray.Dv * tStart;
+        int32_t iu = std::clamp(int32_t(std::floor(u * invSize)), low[0], high[0]);
+        int32_t iv = std::clamp(int32_t(std::floor(v * invSize)), low[1], high[1]);
+        int32_t const stepU = ray.Du > 0.0f ? 1 : -1;
+        int32_t const stepV = ray.Dv > 0.0f ? 1 : -1;
+        float nextU = ray.FlatU ? INF : (float(iu + (ray.Du > 0.0f ? 1 : 0)) * size - ray.U0) * ray.InvDu;
+        float nextV = ray.FlatV ? INF : (float(iv + (ray.Dv > 0.0f ? 1 : 0)) * size - ray.V0) * ray.InvDv;
+        float const deltaU = ray.FlatU ? INF : size * std::fabs(ray.InvDu);
+        float const deltaV = ray.FlatV ? INF : size * std::fabs(ray.InvDv);
+        float t = tStart;
+        while (true)
+        {
+            float const edge = nextU < nextV ? nextU : nextV;
+            float const next = std::max(t, edge < tEnd ? edge : tEnd);
+            if (!visit(iu, iv, t, next) || next >= tEnd)
+                return;
+            t = next;
+            if (nextU < nextV)
+            {
+                iu += stepU;
+                nextU += deltaU;
+            }
+            else
+            {
+                iv += stepV;
+                nextV += deltaV;
+            }
+            if (iu < low[0] || iu > high[0] || iv < low[1] || iv > high[1])
+                return;
+        }
+    }
+
+    constexpr int32_t NO_LIMIT_LOW[2] = { -(1 << 20), -(1 << 20) };
+    constexpr int32_t NO_LIMIT_HIGH[2] = { 1 << 20, 1 << 20 };
+
+    [[nodiscard]] bool OnMap(int32_t tileX, int32_t tileY)
+    {
+        return tileX >= 0 && tileY >= 0 && tileX < GRIDS && tileY < GRIDS;
+    }
+
+    /// Whether a ray (height z0 at t = 0, climbing dz a yard) is within [low, high], padded by RANGE_PAD, anywhere
+    /// in [tIn, tOut]: its heights at the two ends bound the heights between. An empty range (a block with no liquid:
+    /// low above high) holds nothing.
+    [[nodiscard]] bool WithinHeights(float z0, float dz, float low, float high, float tIn, float tOut)
+    {
+        if (low > high)
+            return false;
+        float const zIn = z0 + dz * tIn;
+        float const zOut = z0 + dz * tOut;
+        return std::max(zIn, zOut) + RANGE_PAD >= low && std::min(zIn, zOut) - RANGE_PAD <= high;
+    }
+
+    /// One level of the terrain's ranges: the ground (when `ground`) and the liquid (when `water`) each keep their
+    /// flag only if the ray comes within their range somewhere in [tIn, tOut]. False when neither does.
+    [[nodiscard]] bool Narrow(float z0, float dz, bool ground, float groundLow, float groundHigh, bool water,
+        float waterLow, float waterHigh, bool& keepGround, bool& keepWater, float tIn, float tOut)
+    {
+        keepGround = ground && WithinHeights(z0, dz, groundLow, groundHigh, tIn, tOut);
+        keepWater = water && WithinHeights(z0, dz, waterLow, waterHigh, tIn, tOut);
+        return keepGround || keepWater;
+    }
+
+    /// The nearest hit along the ray within `limit`: the trees, the WMO liquids and the terrain (its liquids when
+    /// `liquids`). The static world only: the boom casts with no liquids.
+    Hit Nearest(Vec3 origin, Vec3 dir, float limit, VisionWorld const& world, bool liquids, Breakdown* breakdown)
+    {
+        Clock::time_point mark = breakdown ? Clock::now() : Clock::time_point();
+        if (breakdown)
+            ++breakdown->Rays;
+
+        Vec3 const end = origin + dir * limit;
+        Hit best;
+        best.Distance = limit;
+        best.Z = end.Z;
+
+        // 1. The collision trees, cast apart so a door (the dynamic tree) is told from a model (R8).
+        SurfaceHit const model = world.StaticHit(origin, end);
+        Charge(breakdown, &Breakdown::StaticNs, mark);
+        SurfaceHit const door = world.DynamicHit(origin, end);
+        Charge(breakdown, &Breakdown::DynamicNs, mark);
+        if (breakdown)
+        {
+            ++breakdown->StaticCasts;
+            ++breakdown->DynamicCasts;
+        }
+        bool const modelHit = model.Distance >= 0.0f && model.Distance <= limit;
+        bool const doorHit = door.Distance >= 0.0f && door.Distance <= limit;
+        if (modelHit || doorHit)
+        {
+            bool const isDoor = doorHit && (!modelHit || door.Distance < model.Distance);
+            SurfaceHit const& hit = isDoor ? door : model;
+            best.Distance = hit.Distance;
+            // Every closed collision game object reads as a door; who it is, the entity list says.
+            best.What = isDoor ? Class::Door : Class::Model;
+            best.Z = (origin + dir * best.Distance).Z;
+            // The hit triangle's own slope: a floor reads its tilt, a wall 0, a ceiling seen from under it below 0
+            // (the encoding clamps it to 0, a wall's).
+            best.NormalZ = hit.NormalZ;
+        }
+
+        // 2. A WMO's liquid, entered from above (a rising ray only meets one from below, which it sees through).
+        if (liquids && dir.Z < 0.0f)
+        {
+            if (breakdown)
+                ++breakdown->LiquidCasts;
+            LiquidHit const liquid = world.ModelLiquid(origin, origin + dir * best.Distance);
+            if (liquid.Distance >= 0.0f && liquid.Distance < best.Distance)
+            {
+                best.Distance = liquid.Distance;
+                best.What = liquid.Deadly ? Class::Deadly : Class::Water;
+                best.Z = origin.Z + dir.Z * liquid.Distance;
+                best.NormalZ = 1.0f;
+            }
+        }
+        Charge(breakdown, &Breakdown::LiquidNs, mark);
+
+        // 3. The terrain and its liquids, up to the nearest hit so far.
+        Hit const terrain = CastTerrain(origin, dir, best.Distance, world, liquids, breakdown);
+        if (terrain.What != Class::Sky && terrain.Distance < best.Distance)
+            best = terrain;
+        Charge(breakdown, &Breakdown::TerrainNs, mark);
+
+        return best;
+    }
+
+    /// The static world along an unbounded ray: as far as the loaded grids go.
+    Hit CastStatic(Vec3 origin, Vec3 dir, VisionWorld const& world, Breakdown* breakdown)
+    {
+        // No range: as far as the loaded grids go, which is where the terrain ends too.
+        Clock::time_point mark = breakdown ? Clock::now() : Clock::time_point();
+        float const reach = Reach(origin, dir, world);
+        Charge(breakdown, &Breakdown::TerrainNs, mark);
+        return Nearest(origin, dir, reach, world, true, breakdown);
+    }
+
+    /// A floor hit inside a hazard disc reads as the hazard (a flat decal: the ray ends where it did).
+    void PaintHazards(Hit& hit, Vec3 origin, Vec3 dir, Sight const& sight, Breakdown* breakdown)
+    {
+        if (sight.empty() || hit.NormalZ < FLOOR_NORMAL
+            || (hit.What != Class::Terrain && hit.What != Class::Model))
+            return;
+        Clock::time_point mark = breakdown ? Clock::now() : Clock::time_point();
+        Vec3 const at = origin + dir * hit.Distance;
+        for (HazardDisc const& disc : sight)
+        {
+            if (breakdown)
+                ++breakdown->HazardTests;
+            float const dx = at.X - disc.X;
+            float const dy = at.Y - disc.Y;
+            if (dx * dx + dy * dy <= disc.Radius * disc.Radius && std::fabs(at.Z - disc.Z) <= HAZARD_REACH)
+            {
+                hit.What = Class::GroundHazard;
+                break;
+            }
+        }
+        Charge(breakdown, &Breakdown::HazardNs, mark);
+    }
+}
+
+Animus::Vision::Settings const& Animus::Vision::Current()
+{
+    return CurrentSettings;
+}
+
+void Animus::Vision::Configure(Settings const& settings)
+{
+    CurrentSettings = settings;
+}
+
+std::vector<Animus::Vision::Resolution> Animus::Vision::ParseRenderSizes(std::string const& text,
+    Settings const& canonical, std::vector<float>& weights, std::vector<std::string>& errors)
+{
+    std::vector<Resolution> sizes;
+    weights.clear();
+    std::size_t at = 0;
+    while (at <= text.size())
+    {
+        std::size_t const comma = std::min(text.find(',', at), text.size());
+        std::string entry = text.substr(at, comma - at);
+        at = comma + 1;
+        // Spaces anywhere in an entry are ignored ("48 x 24" reads as "48x24").
+        entry.erase(std::remove_if(entry.begin(), entry.end(), [](char c) { return std::isspace(uint8_t(c)); }),
+            entry.end());
+        if (entry.empty())
+            continue;
+
+        // An optional weight after a colon: "128x64:0.4".
+        float weight = 1.0f;
+        if (std::size_t const colon = entry.find(':'); colon != std::string::npos)
+        {
+            std::string const number = entry.substr(colon + 1);
+            char* end = nullptr;
+            weight = std::strtof(number.c_str(), &end);
+            if (number.empty() || end != number.c_str() + number.size() || !std::isfinite(weight) || weight <= 0.0f)
+            {
+                errors.push_back("\"" + entry + "\" has no weight above 0 after its colon");
+                continue;
+            }
+            entry.resize(colon);
+        }
+
+        std::size_t const x = entry.find_first_of("xX");
+        std::string const w = x == std::string::npos ? std::string() : entry.substr(0, x);
+        std::string const h = x == std::string::npos ? std::string() : entry.substr(x + 1);
+        auto const digits = [](std::string const& part)
+        {
+            return !part.empty() && part.size() <= 6
+                && std::all_of(part.begin(), part.end(), [](char c) { return std::isdigit(uint8_t(c)); });
+        };
+        if (!digits(w) || !digits(h))
+        {
+            errors.push_back("\"" + entry + "\" is not WxH");
+            continue;
+        }
+
+        Resolution const size{ uint32_t(std::stoul(w)), uint32_t(std::stoul(h)) };
+        if (size.Width < 1 || size.Height < 1 || size.Width > canonical.Width || size.Height > canonical.Height)
+        {
+            errors.push_back("\"" + entry + "\" is not within 1x1 to " + std::to_string(canonical.Width) + "x"
+                + std::to_string(canonical.Height));
+            continue;
+        }
+        sizes.push_back(size);
+        weights.push_back(weight);
+    }
+
+    if (sizes.empty())
+    {
+        errors.push_back("no size left: rendering at the canonical " + std::to_string(canonical.Width) + "x"
+            + std::to_string(canonical.Height));
+        sizes.push_back({ canonical.Width, canonical.Height });
+        weights.assign(1, 1.0f);
+    }
+    return sizes;
+}
+
+float Animus::Vision::Reach(Vec3 origin, Vec3 dir, VisionWorld const& world)
+{
+    // The grids the ray's path crosses, until one is not loaded.
+    float const du = -dir.X * float(GRID_CELLS) / GRID_SIZE;
+    float const dv = -dir.Y * float(GRID_CELLS) / GRID_SIZE;
+    float reach = REACH_MAX;
+    Walk(GridU(origin.X), GridU(origin.Y), du, dv, 0.0f, REACH_MAX, float(GRID_CELLS), NO_LIMIT_LOW, NO_LIMIT_HIGH,
+        [&](int32_t tileX, int32_t tileY, float tIn, float /*tOut*/)
+        {
+            if (OnMap(tileX, tileY) && world.GridLoaded(tileX, tileY))
+                return true;
+            reach = tIn;
+            return false;
+        });
+    return reach;
+}
+
+Animus::Vision::Hit Animus::Vision::CastTerrain(Vec3 origin, Vec3 dir, float limit, VisionWorld const& world,
+    bool liquids, Breakdown* breakdown)
+{
+    Hit best;
+    best.Distance = limit;
+    best.Z = origin.Z + dir.Z * limit;
+    bool found = false;
+    float const u0 = GridU(origin.X);
+    float const v0 = GridU(origin.Y);
+    float const du = -dir.X * float(GRID_CELLS) / GRID_SIZE;
+    float const dv = -dir.Y * float(GRID_CELLS) / GRID_SIZE;
+    float const rayZ0 = origin.Z;
+    float const rayDz = dir.Z;
+    Hit const sky{ limit, Class::Sky, best.Z, 0.0f };
+
+    // 0. A world that knows how high and low its terrain lies: the ray is clipped to those heights first, and walks no
+    // grid at all when it never comes within them (a ray above the highest ground and climbing, below the lowest and
+    // sinking, or level outside them). The walk then starts where the ray enters the heights, which is the walk from
+    // the origin only if the grids in between are loaded: the loaded grids are one rectangle, so from a loaded origin
+    // grid the path stays in them until it leaves, and the grid the walk starts in is checked as every grid is.
+    float tStart = 0.0f;
+    float tEnd = limit;
+    TerrainExtent const& extent = world.Extent();
+    if (extent.Known)
+    {
+        bool const ground = extent.HasGround;
+        bool const water = liquids && extent.HasLiquid && rayDz < 0.0f;
+        if (!ground && !water)
+            return sky;
+        float zLow = INF;
+        float zHigh = -INF;
+        if (ground)
+        {
+            zLow = extent.GroundMin - RANGE_PAD;
+            zHigh = extent.GroundMax + RANGE_PAD;
+        }
+        if (water)
+        {
+            zLow = std::min(zLow, extent.LiquidMin - RANGE_PAD);
+            zHigh = std::max(zHigh, extent.LiquidMax + RANGE_PAD);
+        }
+        if (std::fabs(rayDz) < 1e-9f)
+        {
+            if (rayZ0 < zLow || rayZ0 > zHigh)
+                return sky;
+        }
+        else
+        {
+            float const ta = (zLow - rayZ0) / rayDz;
+            float const tb = (zHigh - rayZ0) / rayDz;
+            tStart = std::max(tStart, std::min(ta, tb));
+            tEnd = std::min(tEnd, std::max(ta, tb));
+            if (!(tEnd > tStart))
+                return sky;
+        }
+        if (tStart > 0.0f)
+        {
+            int32_t const originX = int32_t(std::floor(u0 / float(GRID_CELLS)));
+            int32_t const originY = int32_t(std::floor(v0 / float(GRID_CELLS)));
+            if (!OnMap(originX, originY) || !world.GridLoaded(originX, originY))
+                return sky;
+        }
+    }
+
+    // One cell: the terrain's triangles when `ground`, its liquid plane when `water`.
+    auto const cellVisit = [&](TerrainTile const& tile, int32_t tileX, int32_t tileY, int32_t const (&low)[2],
+        bool ground, bool water, bool ranged, int32_t u, int32_t v, float cellIn, float cellOut)
+    {
+        if (breakdown)
+            ++breakdown->TerrainCells;
+        // A ranged tile's cells are read straight from its data (one place decodes them); any other asks the world.
+        TerrainCell const cell = ranged ? CellFromTile(tile, u - low[0], v - low[1], water)
+            : world.Cell(tileX, tileY, u - low[0], v - low[1], water);
+        float nearest = -1.0f;
+        if (ground && cell.Solid && ranged)
+        {
+            // The ground's five heights bound its triangles: a ray that stays above or below them over the cell's
+            // footprint cannot meet any of the four.
+            float const cellLow = std::min({ cell.Corner[0], cell.Corner[1], cell.Corner[2], cell.Corner[3],
+                cell.Centre });
+            float const cellHigh = std::max({ cell.Corner[0], cell.Corner[1], cell.Corner[2], cell.Corner[3],
+                cell.Centre });
+            float const zA = rayZ0 + rayDz * cellIn;
+            float const zB = rayZ0 + rayDz * cellOut;
+            ground = std::max(zA, zB) + RANGE_PAD >= cellLow && std::min(zA, zB) - RANGE_PAD <= cellHigh;
+        }
+        if (ground && cell.Solid)
+        {
+            // The four triangles round the centre, in world space.
+            auto const at = [&](float cu, float cv, float z)
+            {
+                return Vec3{ WorldOfU(float(u) + cu), WorldOfU(float(v) + cv), z };
+            };
+            Vec3 const h1 = at(0.0f, 0.0f, cell.Corner[0]);
+            Vec3 const h2 = at(1.0f, 0.0f, cell.Corner[1]);
+            Vec3 const h3 = at(0.0f, 1.0f, cell.Corner[2]);
+            Vec3 const h4 = at(1.0f, 1.0f, cell.Corner[3]);
+            Vec3 const h5 = at(0.5f, 0.5f, cell.Centre);
+            Vec3 const triangles[4][3] = { { h1, h2, h5 }, { h1, h3, h5 }, { h2, h4, h5 }, { h3, h4, h5 } };
+            for (auto const& triangle : triangles)
+            {
+                float normalZ = 1.0f;
+                float const t = RayTriangleFromAbove(origin, dir, triangle[0], triangle[1], triangle[2], normalZ);
+                if (t >= 0.0f && t <= limit && (nearest < 0.0f || t < nearest))
+                {
+                    nearest = t;
+                    best.What = Class::Terrain;
+                    best.NormalZ = normalZ;
+                }
+            }
+        }
+        if (water && cell.Liquid)
+        {
+            // The cell's liquid is a plane over its footprint, where the ground is below it.
+            float const t = (cell.Level - origin.Z) / dir.Z;
+            if (t >= 0.0f && t <= limit && t >= cellIn - FOOTPRINT_SLACK && t <= cellOut + FOOTPRINT_SLACK
+                && (nearest < 0.0f || t < nearest))
+            {
+                Vec3 const p = origin + dir * t;
+                float const fu = std::clamp(GridU(p.X) - float(u), 0.0f, 1.0f);
+                float const fv = std::clamp(GridU(p.Y) - float(v), 0.0f, 1.0f);
+                if (!cell.Solid || CellHeight(cell, fu, fv) <= cell.Level)
+                {
+                    nearest = t;
+                    best.What = cell.Deadly ? Class::Deadly : Class::Water;
+                    best.NormalZ = 1.0f;
+                }
+            }
+        }
+        if (nearest < 0.0f)
+            return true;
+        best.Distance = nearest;
+        best.Z = origin.Z + dir.Z * nearest;
+        found = true;
+        return false;
+    };
+
+    PlaneRay const plane = MakePlaneRay(u0, v0, du, dv);
+    Walk(u0, v0, du, dv, tStart, tEnd, float(GRID_CELLS), NO_LIMIT_LOW, NO_LIMIT_HIGH,
+        [&](int32_t tileX, int32_t tileY, float tileIn, float tileOut)
+        {
+            // Off the loaded grids, nothing more can be hit.
+            if (!OnMap(tileX, tileY))
+                return false;
+            TerrainTile const tile = world.Tile(tileX, tileY);
+            if (!tile.Loaded)
+                return false;
+            if (breakdown)
+                ++breakdown->TerrainTiles;
+            // Its ground only if the ray comes down to the grid's highest point over it (a ray above that and
+            // climbing never can); its liquid only going down.
+            float const zIn = rayZ0 + rayDz * tileIn;
+            float const zOut = rayZ0 + rayDz * tileOut;
+            float const lowest = std::min(zIn, zOut);
+            bool ground = tile.Heights && lowest <= tile.MaxHeight;
+            bool water = liquids && tile.Liquid && dir.Z < 0.0f;
+            if (!ground && !water)
+                return true;
+
+            int32_t const low[2] = { tileX * GRID_CELLS, tileY * GRID_CELLS };
+            int32_t const high[2] = { low[0] + GRID_CELLS - 1, low[1] + GRID_CELLS - 1 };
+            if (!tile.Ranged)
+            {
+                // No ranges: every cell the path crosses.
+                Walk(u0, v0, du, dv, tileIn, tileOut, 1.0f, low, high,
+                    [&](int32_t u, int32_t v, float cellIn, float cellOut)
+                    {
+                        return cellVisit(tile, tileX, tileY, low, ground, water, false, u, v, cellIn, cellOut);
+                    });
+                return !found;
+            }
+
+            // The tile's own ranges, then super-blocks (4 x 4 blocks of 8 x 8 cells) and blocks in turn: a square the
+            // ray does not come within the ground's range or the liquid's over is skipped whole.
+            if (!Narrow(rayZ0, rayDz, ground, tile.MinHeight, tile.GroundMax, water,
+                water ? tile.LiquidMin : 0.0f, water ? tile.LiquidMax : 0.0f, ground, water, tileIn, tileOut))
+                return true;
+
+            int32_t const superLow[2] = { tileX * SUPERS_PER_TILE, tileY * SUPERS_PER_TILE };
+            int32_t const superHigh[2] = { superLow[0] + SUPERS_PER_TILE - 1, superLow[1] + SUPERS_PER_TILE - 1 };
+            int32_t const tileBlockLow[2] = { tileX * BLOCKS_PER_TILE, tileY * BLOCKS_PER_TILE };
+            bool const tileGround = ground;
+            bool const tileWater = water;
+            WalkPlane(plane, tileIn, tileOut, float(SUPER_CELLS), superLow, superHigh,
+                [&](int32_t su, int32_t sv, float superIn, float superOut)
+                {
+                    if (breakdown)
+                        ++breakdown->TerrainSupers;
+                    std::size_t const superIndex = std::size_t(su - superLow[0]) * SUPERS_PER_TILE
+                        + std::size_t(sv - superLow[1]);
+                    bool superGround = tileGround;
+                    bool superWater = tileWater;
+                    float const* sg = tile.GroundSupers;
+                    float const* sw = tile.LiquidSupers;
+                    if (!Narrow(rayZ0, rayDz, superGround, sg ? sg[superIndex * 2] : tile.MinHeight,
+                        sg ? sg[superIndex * 2 + 1] : tile.GroundMax, superWater,
+                        superWater ? sw[superIndex * 2] : 0.0f, superWater ? sw[superIndex * 2 + 1] : 0.0f,
+                        superGround, superWater, superIn, superOut))
+                        return true;
+                    int32_t const blockLow[2] = { su * BLOCKS_PER_SUPER, sv * BLOCKS_PER_SUPER };
+                    int32_t const blockHigh[2] = { blockLow[0] + BLOCKS_PER_SUPER - 1,
+                        blockLow[1] + BLOCKS_PER_SUPER - 1 };
+                    WalkPlane(plane, superIn, superOut, float(BLOCK_CELLS), blockLow, blockHigh,
+                        [&](int32_t bu, int32_t bv, float blockIn, float blockOut)
+                        {
+                            if (breakdown)
+                                ++breakdown->TerrainBlocks;
+                            std::size_t const index = std::size_t(bu - tileBlockLow[0]) * BLOCKS_PER_TILE
+                                + std::size_t(bv - tileBlockLow[1]);
+                            bool blockGround = superGround;
+                            bool blockWater = superWater;
+                            float const* bg = tile.GroundBlocks;
+                            float const* bw = tile.LiquidBlocks;
+                            if (!Narrow(rayZ0, rayDz, blockGround, bg ? bg[index * 2] : tile.MinHeight,
+                                bg ? bg[index * 2 + 1] : tile.GroundMax, blockWater,
+                                blockWater ? bw[index * 2] : 0.0f, blockWater ? bw[index * 2 + 1] : 0.0f,
+                                blockGround, blockWater, blockIn, blockOut))
+                                return true;
+                            int32_t const cellLow[2] = { bu * BLOCK_CELLS, bv * BLOCK_CELLS };
+                            int32_t const cellHigh[2] = { cellLow[0] + BLOCK_CELLS - 1,
+                                cellLow[1] + BLOCK_CELLS - 1 };
+                            WalkPlane(plane, blockIn, blockOut, 1.0f, cellLow, cellHigh,
+                                [&](int32_t u, int32_t v, float cellIn, float cellOut)
+                                {
+                                    return cellVisit(tile, tileX, tileY, low, blockGround, blockWater, true, u, v,
+                                        cellIn, cellOut);
+                                });
+                            return !found;
+                        });
+                    return !found;
+                });
+            return !found;
+        });
+
+    if (!found)
+        best = sky;
+    return best;
+}
+
+Animus::Vision::Rig Animus::Vision::PlaceCamera(Pose const& pose, CameraState const& camera,
+    VisionWorld const& world, Breakdown* breakdown)
+{
+    Rig rig;
+    rig.Pivot = { pose.X, pose.Y, pose.Z + PIVOT_SHARE * pose.BodyHeight };
+    rig.Azimuth = pose.Yaw + camera.YawOffset;
+    rig.Elevation = camera.Pitch;
+    Vec3 const forward = Direction(rig.Azimuth, rig.Elevation);
+    float const zoom = std::max(0.0f, camera.Zoom);
+    rig.Boom = zoom;
+    if (zoom > 0.0f)
+    {
+        // One cast from the pivot back along the view, against the trees and the terrain: the camera pulls in to
+        // BOOM_BACKOFF short of what it meets, never nearer than BOOM_MIN (or the zoom, when that is nearer still).
+        Hit const back = Nearest(rig.Pivot, forward * -1.0f, zoom, world, false, breakdown);
+        if (back.What != Class::Sky)
+            rig.Boom = std::min(zoom, std::max(std::min(BOOM_MIN, zoom), back.Distance - BOOM_BACKOFF));
+    }
+    rig.Camera = rig.Pivot - forward * rig.Boom;
+    return rig;
+}
+
+void Animus::Vision::PixelAngles(Settings const& settings, uint32_t row, uint32_t col, float& yawRight,
+    float& pitchUp)
+{
+    yawRight = ((float(col) + 0.5f) / float(settings.Width) * settings.FovH - settings.FovH / 2.0f) * DEGREES;
+    pitchUp = (settings.FovV / 2.0f - (float(row) + 0.5f) / float(settings.Height) * settings.FovV) * DEGREES;
+}
+
+Animus::Vision::Vec3 Animus::Vision::PixelDirection(Rig const& rig, Settings const& settings, uint32_t row,
+    uint32_t col)
+{
+    float yawRight = 0.0f;
+    float pitchUp = 0.0f;
+    PixelAngles(settings, row, col, yawRight, pitchUp);
+    return Direction(rig.Azimuth - yawRight, rig.Elevation + pitchUp);
+}
+
+Animus::Vision::Hit Animus::Vision::CastRay(Vec3 origin, Vec3 dir, VisionWorld const& world,
+    Sight const& sight, Breakdown* breakdown)
+{
+    Hit hit = CastStatic(origin, dir, world, breakdown);
+    PaintHazards(hit, origin, dir, sight, breakdown);
+    return hit;
+}
+
+bool Animus::Vision::SegmentBlocked(VisionWorld const& world, Vec3 from, Vec3 to, void const* ignore,
+    Breakdown* breakdown)
+{
+    Vec3 const span = to - from;
+    float length = Length(span);
+    if (!(length > 1e-4f) || !std::isfinite(length))
+        return false;
+    Vec3 const dir = span * (1.0f / length);
+    if (breakdown)
+        ++breakdown->SegmentRays;
+    Vec3 end = to;
+    if (ignore)
+    {
+        // The target is itself in the dynamic tree: a nearer model blocks; the target's own surface ends the test.
+        SurfaceHit const door = world.DynamicHit(from, to);
+        if (door.Distance >= 0.0f)
+        {
+            if (door.Object != ignore)
+                return true;
+            end = from + dir * door.Distance;
+            length = door.Distance;
+        }
+    }
+    else if (world.DynamicAnyHit(from, to))
+        return true;
+    if (!(length > 1e-4f))
+        return false;
+    if (world.StaticAnyHit(from, end))
+        return true;
+    return CastTerrain(from, dir, length, world, false, breakdown).What != Class::Sky;
+}
+
+float Animus::Vision::ObjectiveFlag(Vec3 origin, Vec3 dir, float distance, Vec3 const* objective, float radius)
+{
+    if (!objective)
+        return 0.0f;
+    Vec3 const toward = *objective - origin;
+    float const along = std::clamp(Dot(toward, dir), 0.0f, std::max(0.0f, distance));
+    return Length(toward - dir * along) <= radius ? 1.0f : 0.0f;
+}
+
+void Animus::Vision::EncodePixel(Hit const& hit, float feetZ, bool objective, uint8_t* out)
+{
+    bool const sky = hit.What == Class::Sky;
+    float const distance = std::clamp(std::log(std::max(hit.Distance, NEAR) / NEAR)
+        / std::log(DISTANCE_REFERENCE / NEAR), 0.0f, 1.0f);
+    out[0] = sky ? SKY_BYTE : uint8_t(std::lround(DISTANCE_LEVELS * distance));
+    int32_t const steps = std::clamp(int32_t(std::lround((hit.Z - feetZ) / HEIGHT_STEP)), -HEIGHT_LIMIT, HEIGHT_LIMIT);
+    out[1] = sky ? HEIGHT_ZERO : uint8_t(int32_t(HEIGHT_ZERO) + steps);
+    out[2] = uint8_t(std::lround(255.0f * std::clamp(hit.NormalZ, 0.0f, 1.0f)));
+    out[CLASS_BYTE] = uint8_t((uint8_t(hit.What) & CLASS_MASK) | (objective ? OBJECTIVE_BIT : 0));
+}
+
+void Animus::Vision::DecodePixel(uint8_t const* in, float* out)
+{
+    out[CHANNEL_DISTANCE] = in[0] == SKY_BYTE ? 1.0f : float(in[0]) / DISTANCE_LEVELS;
+    out[CHANNEL_HEIGHT] = float(int32_t(in[1]) - int32_t(HEIGHT_ZERO)) / float(HEIGHT_LIMIT);
+    out[CHANNEL_NORMAL] = float(in[2]) / 255.0f;
+    out[CHANNEL_CLASS] = float(in[CLASS_BYTE] & CLASS_MASK);
+    out[CHANNEL_OBJECTIVE] = (in[CLASS_BYTE] & OBJECTIVE_BIT) ? 1.0f : 0.0f;
+}
+
+uint32_t Animus::Vision::Render(Settings const& settings, Rig const& rig, Pose const& pose,
+    CameraState const& camera, VisionWorld const& world, Sight const& sight, Vec3 const* objective, uint8_t* image,
+    float* scalars, Breakdown* breakdown, float objectiveRadius, FrameHits* hits)
+{
+    Mv::Liquid const liquid = world.LiquidAt(rig.Camera.X, rig.Camera.Y, rig.Camera.Z);
+    bool const underwater = liquid.Present && rig.Camera.Z < liquid.Level;
+
+    // The size the rays are cast at: the camera's, within the canonical size (0 or larger: the canonical itself).
+    // The thread's own copy of the angles, so a frame allocates nothing (its RenderSizes are never read here).
+    thread_local Settings cast;
+    cast.FovH = settings.FovH;
+    cast.FovV = settings.FovV;
+    cast.Width = settings.Width;
+    cast.Height = settings.Height;
+    if (camera.RenderWidth > 0 && camera.RenderHeight > 0)
+    {
+        cast.Width = std::min(camera.RenderWidth, settings.Width);
+        cast.Height = std::min(camera.RenderHeight, settings.Height);
+    }
+    bool const scaled = cast.Width != settings.Width || cast.Height != settings.Height;
+    // A smaller frame is cast into the thread's scratch and scaled up into the image; a canonical one straight in.
+    thread_local std::vector<uint8_t> scratch;
+    uint8_t* target = image;
+    if (image && scaled)
+    {
+        scratch.resize(std::size_t(cast.Width) * cast.Height * BYTES_PER_PIXEL);
+        target = scratch.data();
+    }
+
+    if (hits)
+    {
+        hits->Camera = rig.Camera;
+        hits->Width = target ? cast.Width : 0;
+        hits->Height = target ? cast.Height : 0;
+        hits->Rays.clear();
+    }
+    for (uint32_t row = 0; target && row < cast.Height; ++row)
+        for (uint32_t col = 0; col < cast.Width; ++col)
+        {
+            Vec3 const dir = PixelDirection(rig, cast, row, col);
+            Hit hit = CastStatic(rig.Camera, dir, world, breakdown);
+            PaintHazards(hit, rig.Camera, dir, sight, breakdown);
+            // The map reads what the pixel does, a hazard painted on the floor included: its class marks the area.
+            if (hits)
+                hits->Rays.push_back({ dir, hit.Distance, hit.Z, hit.NormalZ, hit.What });
+            // From the camera to the hit, or to where the ray left the loaded grids on sky (R12).
+            bool const flag = ObjectiveFlag(rig.Camera, dir, hit.Distance, objective, objectiveRadius) > 0.5f;
+            EncodePixel(hit, pose.Z, flag, target + (std::size_t(row) * cast.Width + col) * BYTES_PER_PIXEL);
+        }
+
+    if (image && scaled)
+        Upscale(target, cast.Width, cast.Height, image, settings.Width, settings.Height);
+
+    scalars[SCALAR_YAW_SIN] = std::sin(camera.YawOffset);
+    scalars[SCALAR_YAW_COS] = std::cos(camera.YawOffset);
+    scalars[SCALAR_PITCH] = camera.Pitch / (PI / 2.0f);
+    scalars[SCALAR_ZOOM] = camera.Zoom / ZOOM_SCALE;
+    scalars[SCALAR_BOOM] = rig.Boom / ZOOM_SCALE;
+    float const floor = world.FloorBelow(rig.Pivot.X, rig.Pivot.Y, rig.Pivot.Z, PIVOT_HEIGHT_SCALE);
+    scalars[SCALAR_PIVOT_HEIGHT] = floor > Mv::INVALID_FLOOR + 1.0f
+        ? std::clamp((rig.Pivot.Z - floor) / PIVOT_HEIGHT_SCALE, 0.0f, 1.0f) : 1.0f;
+    scalars[SCALAR_UNDERWATER] = underwater ? 1.0f : 0.0f;
+    scalars[SCALAR_AIRBORNE] = pose.Airborne ? 1.0f : 0.0f;
+    scalars[SCALAR_YAW_RATE] = camera.YawRate / YAW_RATE_SCALE;
+    scalars[SCALAR_PITCH_RATE] = camera.PitchRate / PITCH_RATE_SCALE;
+    scalars[SCALAR_RENDER_WIDTH] = float(cast.Width) / float(std::max<uint32_t>(1, settings.Width));
+    return (image ? cast.Width * cast.Height : 0) + (camera.Zoom > 0.0f ? 1 : 0);
+}

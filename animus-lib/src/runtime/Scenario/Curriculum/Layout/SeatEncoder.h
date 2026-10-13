@@ -34,10 +34,13 @@
 namespace Animus::Curriculum::SeatEncoder
 {
     /// Whether the layout also acts without a target (between gauntlet pulls: food, drink, sustain spells; travel;
-    /// the world outside a fight).
+    /// the world outside a fight; and a layout with nothing to fight at all -- no duel block, as the movement
+    /// stages', whose seats never have a target).
     [[nodiscard]] inline bool ActsWithoutTarget(Layout const& layout)
     {
-        return layout.Has(BlockId::Gauntlet) || layout.Has(BlockId::Travel) || layout.Has(BlockId::World);
+        // A seat that chooses its own target by sight (the sight block, dungeon-curriculum I1) has none until it
+        // selects one, and selecting is one of its actions.
+        return layout.Has(BlockId::Gauntlet) || layout.Has(BlockId::Sight) || !layout.Has(BlockId::Duel);
     }
 
     /// Write the layout's observation (view.L->ObsDim values) and action mask (view.L->NumActions). Action 0 is always
@@ -50,12 +53,7 @@ namespace Animus::Curriculum::SeatEncoder
     /// character), and at OBSERVE_VIEW what the seat does before its blocks (StageScenario::ObserveSeat: the
     /// liquid check, target and motion tracking, the memory, SeatView). `forge status` shows where it goes.
     constexpr std::size_t OBSERVE_VIEW = BLOCK_COUNT;
-    /// Parts of the move block's time (inside "move", not beside it): the ground probe's refresh as a whole, its
-    /// height marches, and its navmesh raycasts.
-    constexpr std::size_t OBSERVE_PROBE = BLOCK_COUNT + 1;
-    constexpr std::size_t OBSERVE_PROBE_MARCH = BLOCK_COUNT + 2;
-    constexpr std::size_t OBSERVE_PROBE_RAYS = BLOCK_COUNT + 3;
-    constexpr std::size_t OBSERVE_SLOTS = BLOCK_COUNT + 4;
+    constexpr std::size_t OBSERVE_SLOTS = BLOCK_COUNT + 1;
 
     /// One map thread's share of it, on cache lines of its own: shared counters that every map thread added to
     /// bounced the same lines between cores every block of every seat. Written by its thread alone (a relaxed store,
