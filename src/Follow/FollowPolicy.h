@@ -25,6 +25,11 @@
 #include <memory>
 #include <string>
 
+namespace Animus
+{
+    class MlpPolicy;
+}
+
 namespace Animus::Follow
 {
     /// The goal slots a follower holds: the primary and the secondary (the forge's GOAL_SLOTS, StageState.h, which the
@@ -76,7 +81,7 @@ namespace Animus::Follow
 
     /// The policy for `modelName` (`<class>_follow`, the layout's ModelName), from the module's model directory
     /// (sAnimusMod->ModelDir()); null when there is none it can run, which refuses the summon.
-    [[nodiscard]] std::unique_ptr<FollowPolicy> MakeFollowPolicy(std::string const& modelName);
+    [[nodiscard]] std::unique_ptr<FollowPolicy> MakeFollowPolicy(std::string const& modelName, MlpPolicy* model);
 }
 
 #endif

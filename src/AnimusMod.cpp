@@ -262,11 +262,13 @@ bool Animus::AnimusMod::Summon(Player* caller, uint32 count, std::string& messag
     for (uint32 i = 0; i < count; ++i)
     {
         Choice const& choice = choices[urand(0, uint32(choices.size()) - 1)];
-        std::unique_ptr<Follow::FollowPolicy> policy = Follow::MakeFollowPolicy(choice.L->ModelName());
+        std::string loadError;
+        std::unique_ptr<Follow::FollowPolicy> policy = Follow::MakeFollowPolicy(choice.L->ModelName(),
+            _models.Find(*choice.L, loadError));
         if (!policy)
         {
-            message = Acore::StringFormat("The {} model cannot be run by this build (the follow model runtime is not "
-                "linked yet; see the server log).", choice.L->ModelName());
+            message = Acore::StringFormat("The {} model cannot be run by this build (see the server log).",
+                choice.L->ModelName());
             return false;
         }
         planned.push_back({ &choice, std::move(policy) });
