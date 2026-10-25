@@ -35,6 +35,7 @@
 #include "ObjectMgr.h"
 #include "ObjectAccessor.h"
 #include "Player.h"
+#include "AnimusPlayerSettings.h"
 #include "StageDefinition.h"
 #include "StringFormat.h"
 #include <algorithm>
@@ -149,6 +150,8 @@ void Animus::AnimusMod::LoadConfig()
 {
     _config.Load();
     sLife->Configure(_config.Life);
+    // A GM's realm-wide party-fill override lasts until this: the config's own value is back.
+    _partyFillOverride.reset();
 
     // Models load when a companion or a stage seat first needs them, from the (new) model directory.
     _models.Reset(_config.Enable ? _config.ModelDir : "");
@@ -167,6 +170,7 @@ void Animus::AnimusMod::OnStartup()
 void Animus::AnimusMod::OnUpdate(uint32 diff)
 {
     CompanionLoader::Update();
+    Capture::UpdateRecordings();
 
     if (!_pendingFill.empty())
     {
@@ -178,7 +182,7 @@ void Animus::AnimusMod::OnUpdate(uint32 diff)
         {
             _pendingFill.erase(owner);
             Player* player = ObjectAccessor::FindPlayer(owner);
-            if (player && player->IsInWorld() && !player->IsBeingTeleported() && _config.Enable && _config.PartyFill)
+            if (player && player->IsInWorld() && !player->IsBeingTeleported() && PartyFillFor(player))
                 FillParty(player);
         }
     }
@@ -632,6 +636,8 @@ std::vector<std::string> Animus::AnimusMod::PurgeAll()
     if (out)
         lines.push_back(Acore::StringFormat("{} companion{} sent away unsaved.", out, out == 1 ? "" : "s"));
     lines.push_back("Table animus_companion dropped.");
+    PlayerSettings::DropTable();
+    lines.push_back("Table animus_player_settings dropped.");
 
     QueryResult accounts = LoginDatabase.Query("SELECT id, username FROM account WHERE username LIKE 'ANIMUS%'");
     if (!accounts)
@@ -801,6 +807,58 @@ void Animus::AnimusMod::OnPlayerLogout(Player* player)
     _filledInstance.erase(player->GetGUID());
     _pendingFill.erase(player->GetGUID());
     SaveParty(player->GetGUID());
+    PlayerSettings::Forget(player->GetGUID());
+}
+
+void Animus::AnimusMod::OnPlayerLogin(Player* player)
+{
+    if (player && !IsBot(player->GetGUID()))
+        PlayerSettings::Load(player->GetGUID());
+}
+
+bool Animus::AnimusMod::PartyFillFor(Player const* player) const
+{
+    if (!_config.Enable || !_partyFillOverride.value_or(_config.PartyFill) || !player)
+        return false;
+    return PlayerSettings::PartyFill(player->GetGUID());
+}
+
+bool Animus::AnimusMod::SetPartyFill(Player* player, bool on, std::string& message)
+{
+    if (!player)
+    {
+        message = "No player.";
+        return false;
+    }
+    PlayerSettings::SetPartyFill(player->GetGUID(), on);
+    if (!on)
+        _pendingFill.erase(player->GetGUID());
+    PartyFillStatus const status = PartyFillState(player);
+    message = on ? "Your dungeon party will be filled with bots." : "Your dungeon party will not be filled with "
+        "bots; temporary members already with you stay until you leave their dungeon.";
+    if (on && !status.Realm)
+        message += " (The realm has party fill off right now.)";
+    return true;
+}
+
+bool Animus::AnimusMod::PartyFillRealm(bool on, std::string& message)
+{
+    _partyFillOverride = on;
+    if (!on)
+        _pendingFill.clear();
+    message = Acore::StringFormat("Dungeon party fill is {} for every player until the next config reload (the "
+        "config says {}).", on ? "on" : "off", _config.PartyFill ? "on" : "off");
+    return true;
+}
+
+Animus::AnimusMod::PartyFillStatus Animus::AnimusMod::PartyFillState(Player const* player) const
+{
+    PartyFillStatus status;
+    status.Config = _config.PartyFill;
+    status.Overridden = _partyFillOverride.has_value();
+    status.Realm = _config.Enable && _partyFillOverride.value_or(_config.PartyFill);
+    status.Mine = player ? PlayerSettings::PartyFill(player->GetGUID()) : true;
+    return status;
 }
 
 void Animus::AnimusMod::PutAway(ObjectGuid owner, bool save)
@@ -852,7 +910,7 @@ void Animus::AnimusMod::OnPlayerMapChanged(Player* player)
         }
     }
 
-    if (_config.Enable && _config.PartyFill && dungeon && !_filledInstance.contains(guid))
+    if (PartyFillFor(player) && dungeon && !_filledInstance.contains(guid))
         _pendingFill[guid] = 2000;
 }
 

@@ -31,9 +31,12 @@ namespace Animus::Addon
     /// How the Animus addon (interface_addon/animus_addon/Animus) talks to the module: addon whispers a player sends
     /// to themselves, tab-separated, the first word a request (`hello`, `list`, `create <name> <race> <class>`,
     /// `summon`, `dismiss`, `rename <name>`, `reroll <race> <class>`, `talent <name> learn|unlearn <id>`,
-    /// `pettalent ...`, `pet <name>`, `equip <name> <bag> <slot> <inv slot>`, `rate +|- [reason]`).
+    /// `pettalent ...`, `pet <name>`, `equip <name> <bag> <slot> <inv slot>`, `rate +|- [reason]`; protocol 3:
+    /// `record [on|off keep|discard [title]]`, `note <client ms> <text>`, `settings`, `partyfill on|off`,
+    /// `partyfill realm on|off`, `specs`, `prepare <level> <spec>`, `god on|off`, `life <feature> on|off`).
     /// Replies are addon whispers from the player to themselves, tab-separated, the first word in capitals (HELLO,
-    /// RACE, COMPANION, PET, PETTALENT, OK, ERR), so the addon can tell an answer from its own request
+    /// RACE, COMPANION, PET, PETTALENT, RECORD, NOTE, SETTINGS, SPEC, LEVELS, OK, ERR), so the addon can tell an
+    /// answer from its own request
     /// echoed back by a realm without the module. interface_addon/animus_addon/Animus/README.md describes every
     /// message.
     ///

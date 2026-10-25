@@ -21,25 +21,49 @@
 
 #include "Define.h"
 #include <string>
+#include <vector>
 
 namespace Animus::Capture
 {
-    /// Animus.Capture.*: recording every player's play to files (mod_animus.conf.dist documents every key). Read at
-    /// startup and on config reload; Dir and BufferRecords take effect at startup only.
+    /// Animus.Capture.*: recording play to files (mod_animus.conf.dist documents every key). Two tiers share the
+    /// writer: the realm-wide **automatic** capture of every player (Enable + Auto: the hourly files), and the
+    /// **manual recordings** a player starts of their own play (Enable alone makes them available: `recordings/<id>/`,
+    /// richer and faster, the Recording.* keys). Read at startup and on config reload; Dir and BufferRecords take
+    /// effect at startup only.
     struct CaptureConfig
     {
         bool Enable = false;
-        /// Where the files go: <Dir>/<yyyy-mm-dd>/<hh>/<stream>-<map>.bin.gz, index.json per hour, and the salt.
+        /// The automatic tier: every player from login into the hourly files. Off leaves only manual recordings.
+        bool Auto = true;
+        /// Where the files go: <Dir>/<yyyy-mm-dd>/<hh>/<stream>-<map>.bin.gz, index.json per hour, the salt, and
+        /// <Dir>/recordings/<id>/ for the manual recordings.
         std::string Dir;
         uint32 SnapshotMs = 250;            // while in combat or moving
         uint32 IdleSnapshotMs = 1000;       // otherwise
-        /// Which streams are written: 1 session, 2 move, 4 action, 8 snapshot, 16 outcome, 32 companion.
-        uint32 Streams = 63;
+        /// Which streams the automatic tier writes: 1 session, 2 move, 4 action, 8 snapshot, 16 outcome, 32
+        /// companion, 64 note, 128 packet. A manual recording writes every stream.
+        uint32 Streams = 255;
         uint32 FlushMs = 1000;              // how often buffered records become a gzip member on disk
-        uint32 BufferRecords = 32768;       // per producing thread, in 128-byte record slots
+        uint32 BufferRecords = 131072;      // per producing thread, in 128-byte record slots
         float DiskWarnGB = 50.0f;
         float DiskReserveGB = 10.0f;
-        std::string LoginNotice;
+        std::string LoginNotice;            // the automatic tier's notice at login
+
+        /// Animus.Capture.Recording.*: a manual recording's rates and reach.
+        struct RecordingConfig
+        {
+            uint32 SnapshotMs = 100;        // the player's Snapshot, moving or not
+            uint32 UnitMs = 100;            // one UnitState per visible unit this often
+            float UnitRange = 80.0f;        // ... within this many yards
+            uint32 MaxUnits = 128;          // ... the nearest this many
+            bool Packets = true;            // the raw packet stream
+            uint32 PacketMaxBytes = 1048576;    // a longer packet is cut
+            std::vector<uint16> PacketSkip;     // opcodes left out of the packet stream (the chat opcodes, Warden)
+            bool OthersChat = false;        // other real players' text outside the group, unredacted
+            uint32 MaxMinutes = 240;        // a recording stops by itself after this long
+            std::string Notice;             // the chat line at Record
+            uint32 GodSecurity = 2;         // the account security `god` needs (SEC_GAMEMASTER)
+        } Recording;
 
         void Load();
     };

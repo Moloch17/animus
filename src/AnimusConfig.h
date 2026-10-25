@@ -59,6 +59,10 @@ namespace Animus
         /// topped up to five with temporary members in the roles it lacks -- one to hold the pull, one to keep the
         /// others up, the rest damage -- read off every member's talents, the owner's companion included.
         bool PartyFill = true;
+        /// Animus.Prepare.*: the account security the addon's Prepare needs (SEC_GAMEMASTER = 2 by default; 0 lets
+        /// every player use it) and the bag given four of after it (4500: a 16-slot Traveler's Backpack).
+        uint32 PrepareSecurity = 2;
+        uint32 PrepareBagItem = 4500;
 
         std::string ProbeSource = "geometry";
         std::string ProbeDir;

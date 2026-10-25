@@ -43,7 +43,13 @@ namespace Animus::Capture::Format
     /// 3: every Move carries the server's handling time on its monotonic clock (`server_ms`) beside the client's own
     /// (`client_ms`), MoveTally (type 14) counts each mover's movement packets sent and kept, and MapUpdate (type 15)
     /// records each tick of a map instance that holds a captured mover.
-    constexpr uint16_t FORMAT_VERSION = 3;
+    /// 4 (2026-10-25, manual recordings): a player's own recording of their play (FORMAT §1.2: `recordings/<id>/`,
+    /// a manifest.json) beside the realm-wide hourly files. Two streams more -- Note (7: Annotation, RecordingStart,
+    /// RecordingEnd, Chat) and Packet (8: RawPacket, every packet both ways) -- and the records a recording adds to
+    /// the old streams: Inventory, ActionButtons and Talents (session), UnitState, GameObjectState, PlayerDetail,
+    /// MapSpawns and InstanceCreatures (snapshot), CombatEdge (outcome); Kill gains `victim_spawn_id` and Interact
+    /// `spawn_id`, appended (an older file reads them as 0).
+    constexpr uint16_t FORMAT_VERSION = 4;
 
     /// FileHeader `stream`, and the file name's prefix (StreamName).
     enum class Stream : uint16_t
@@ -54,8 +60,12 @@ namespace Animus::Capture::Format
         Snapshot = 4,
         Outcome = 5,
         Companion = 6,
+        Note = 7,
+        Packet = 8,
     };
-    constexpr uint32_t STREAM_COUNT = 6;
+    constexpr uint32_t STREAM_COUNT = 8;
+    /// Every stream's bit (Animus.Capture.Streams).
+    constexpr uint32_t STREAMS_ALL = (1u << STREAM_COUNT) - 1;
 
     constexpr std::string_view StreamName(Stream stream)
     {
@@ -67,6 +77,8 @@ namespace Animus::Capture::Format
             case Stream::Snapshot: return "snapshot";
             case Stream::Outcome: return "outcome";
             case Stream::Companion: return "companion";
+            case Stream::Note: return "note";
+            case Stream::Packet: return "packet";
         }
         return "unknown";
     }
@@ -80,6 +92,9 @@ namespace Animus::Capture::Format
         GroupState = 4,
         KnownSpells = 5,
         Latency = 6,
+        Inventory = 7,
+        ActionButtons = 8,
+        Talents = 9,
         Move = 10,
         Speeds = 11,
         MotionEvent = 12,
@@ -94,6 +109,11 @@ namespace Animus::Capture::Format
         Attack = 25,
         Interact = 26,
         Snapshot = 30,
+        UnitState = 31,
+        GameObjectState = 32,
+        PlayerDetail = 33,
+        MapSpawns = 34,
+        InstanceCreatures = 35,
         Damage = 40,
         Heal = 41,
         Kill = 42,
@@ -102,25 +122,35 @@ namespace Animus::Capture::Format
         Encounter = 45,
         PvP = 46,
         Area = 47,
+        CombatEdge = 48,
         CompanionDecision = 50,
         CompanionCommand = 51,
         CompanionRating = 52,
+        Annotation = 60,
+        RecordingStart = 61,
+        RecordingEnd = 62,
+        Chat = 63,
+        RawPacket = 70,
     };
 
     /// The stream a record type is written to.
     constexpr Stream StreamOf(Type type)
     {
         uint16_t const t = uint16_t(type);
-        if (t >= 1 && t <= 6)
+        if (t >= 1 && t <= 9)
             return Stream::Session;
         if (t >= 10 && t <= 15)
             return Stream::Move;
         if (t >= 20 && t <= 26)
             return Stream::Action;
-        if (t == 30)
+        if (t >= 30 && t <= 39)
             return Stream::Snapshot;
-        if (t >= 40 && t <= 47)
+        if (t >= 40 && t <= 49)
             return Stream::Outcome;
+        if (t >= 60 && t <= 69)
+            return Stream::Note;
+        if (t >= 70 && t <= 79)
+            return Stream::Packet;
         return Stream::Companion;
     }
 
@@ -391,6 +421,116 @@ namespace Animus::Capture::Format
             out.Put<uint64_t>(Ms);
             out.Put<uint64_t>(Player);
             out.Put<uint16_t>(LatencyMs);
+            out.End(start);
+        }
+    };
+
+    /// Format 4, a recording's: what the player carries and wears -- every item of the equipment, the backpack, the
+    /// bags and the bag slots themselves -- at the recording's start and, at most once a second, after a change.
+    struct InventoryItem
+    {
+        uint8_t Bag = 0;                // INVENTORY_SLOT_BAG_0 (255) for the equipment and the backpack
+        uint8_t Slot = 0;
+        uint32_t Entry = 0;
+        uint32_t Count = 0;
+        uint32_t PermEnchant = 0;
+        uint32_t TempEnchant = 0;
+        int32_t RandomProperty = 0;
+        uint32_t Durability = 0;
+        uint32_t MaxDurability = 0;
+    };
+
+    struct Inventory
+    {
+        uint64_t Ms = 0;
+        uint64_t Player = 0;
+        InventoryItem const* Items = nullptr;
+        uint16_t Count = 0;
+
+        void Write(Out& out) const
+        {
+            std::size_t const start = out.Begin(Type::Inventory);
+            out.Put<uint64_t>(Ms);
+            out.Put<uint64_t>(Player);
+            out.Put<uint16_t>(Count);
+            for (uint16_t i = 0; i < Count; ++i)
+            {
+                out.Put<uint8_t>(Items[i].Bag);
+                out.Put<uint8_t>(Items[i].Slot);
+                out.Put<uint32_t>(Items[i].Entry);
+                out.Put<uint32_t>(Items[i].Count);
+                out.Put<uint32_t>(Items[i].PermEnchant);
+                out.Put<uint32_t>(Items[i].TempEnchant);
+                out.Put<int32_t>(Items[i].RandomProperty);
+                out.Put<uint32_t>(Items[i].Durability);
+                out.Put<uint32_t>(Items[i].MaxDurability);
+            }
+            out.End(start);
+        }
+    };
+
+    /// Format 4, a recording's: the action bars (every button that holds something), at the start and on change.
+    struct ActionButton
+    {
+        uint8_t Button = 0;
+        uint8_t Kind = 0;               // ActionButtonType: 0 spell, 64 class, 128 item, 192 macro ...
+        uint32_t Action = 0;
+    };
+
+    struct ActionButtons
+    {
+        uint64_t Ms = 0;
+        uint64_t Player = 0;
+        ActionButton const* Buttons = nullptr;
+        uint8_t Count = 0;
+
+        void Write(Out& out) const
+        {
+            std::size_t const start = out.Begin(Type::ActionButtons);
+            out.Put<uint64_t>(Ms);
+            out.Put<uint64_t>(Player);
+            out.Put<uint8_t>(Count);
+            for (uint8_t i = 0; i < Count; ++i)
+            {
+                out.Put<uint8_t>(Buttons[i].Button);
+                out.Put<uint8_t>(Buttons[i].Kind);
+                out.Put<uint32_t>(Buttons[i].Action);
+            }
+            out.End(start);
+        }
+    };
+
+    /// Format 4, a recording's: the active spec's talents (id and rank) and glyphs, at the start and on change.
+    struct TalentRank
+    {
+        uint32_t Talent = 0;
+        uint8_t Rank = 0;
+    };
+
+    struct Talents
+    {
+        uint64_t Ms = 0;
+        uint64_t Player = 0;
+        uint8_t ActiveSpec = 0;
+        TalentRank const* Ranks = nullptr;
+        uint8_t Count = 0;
+        uint32_t const* Glyphs = nullptr;
+        uint8_t GlyphCount = 0;
+
+        void Write(Out& out) const
+        {
+            std::size_t const start = out.Begin(Type::Talents);
+            out.Put<uint64_t>(Ms);
+            out.Put<uint64_t>(Player);
+            out.Put<uint8_t>(ActiveSpec);
+            out.Put<uint8_t>(Count);
+            for (uint8_t i = 0; i < Count; ++i)
+            {
+                out.Put<uint32_t>(Ranks[i].Talent);
+                out.Put<uint8_t>(Ranks[i].Rank);
+            }
+            out.Put<uint8_t>(GlyphCount);
+            out.PutBytes(Glyphs, std::size_t(GlyphCount) * sizeof(uint32_t));
             out.End(start);
         }
     };
@@ -718,6 +858,7 @@ namespace Animus::Capture::Format
         uint32_t Entry = 0;
         uint64_t Target = 0;
         uint32_t Arg = 0;
+        uint32_t SpawnId = 0;           // format 4: the target's world spawn (a door, a lever, the cannon)
 
         void Write(Out& out) const
         {
@@ -728,6 +869,7 @@ namespace Animus::Capture::Format
             out.Put<uint32_t>(Entry);
             out.Put<uint64_t>(Target);
             out.Put<uint32_t>(Arg);
+            out.Put<uint32_t>(SpawnId);
             out.End(start);
         }
     };
@@ -898,6 +1040,324 @@ namespace Animus::Capture::Format
         uint32_t _phase = 0;
     };
 
+    // ---- §2.5 snapshot, format 4: a recording's surroundings ------------------------------------------------------
+
+    /// One unit the recording player's client can see, as the server has it this tick (FORMAT §2.5 UnitState): every
+    /// field a tool could want to work the fight out from, its auras and its full threat list. One record per unit
+    /// per Recording.UnitMs, the nearest Recording.MaxUnits within Recording.UnitRange.
+    struct UnitStateAura
+    {
+        uint32_t Spell = 0;
+        uint8_t Stacks = 0;
+        int32_t RemainingMs = -1;
+        uint8_t Positive = 0;
+        uint64_t Caster = 0;
+    };
+
+    struct UnitStateThreat
+    {
+        uint64_t Unit = 0;
+        float Threat = 0.0f;
+    };
+
+    struct UnitState
+    {
+        uint64_t Ms = 0;
+        uint64_t Player = 0;
+        uint64_t Unit = 0;
+        uint32_t SpawnId = 0;
+        uint32_t Entry = 0;
+        uint8_t UnitType = 0;           // 0 creature, 1 player, 2 pet or guardian
+        TargetKind Kind = TargetKind::None;
+        float X = 0.0f;
+        float Y = 0.0f;
+        float Z = 0.0f;
+        float O = 0.0f;
+        float VX = 0.0f;
+        float VY = 0.0f;
+        float VZ = 0.0f;
+        uint32_t MoveFlags = 0;
+        uint32_t Health = 0;
+        uint32_t MaxHealth = 0;
+        uint8_t PowerType = 0;
+        uint32_t Power = 0;
+        uint32_t MaxPower = 0;
+        uint8_t Level = 0;
+        uint8_t Reaction = 0;           // 0 hostile, 1 neutral, 2 friendly
+        uint8_t ReactState = 0;         // Creature::GetReactState (0 passive, 1 defensive, 2 aggressive)
+        uint8_t Rank = 0;               // CreatureTemplate::rank
+        uint8_t Boss = 0;               // CREATURE_FLAG_EXTRA_DUNGEON_BOSS
+        uint32_t UnitFlags = 0;
+        uint32_t NpcFlags = 0;
+        uint32_t DynamicFlags = 0;
+        uint32_t UnitStateFlags = 0;    // UNIT_STATE_*
+        uint8_t DeathState = 0;
+        uint64_t Target = 0;
+        uint64_t Victim = 0;
+        uint32_t CastingSpell = 0;
+        int32_t CastLeftMs = 0;
+        uint8_t MotionType = 0;         // the top movement generator's type
+        float HomeX = 0.0f;
+        float HomeY = 0.0f;
+        float HomeZ = 0.0f;
+        uint32_t FormationLeaderSpawn = 0;
+        uint8_t Flags = 0;              // 1 combat, 2 evading, 4 party, 8 my pet, 16 companion, 32 engaged with my
+                                        // group, 64 tapped by me
+        UnitStateAura const* Auras = nullptr;
+        uint8_t AuraCount = 0;
+        UnitStateThreat const* Threats = nullptr;
+        uint8_t ThreatCount = 0;
+
+        void Write(Out& out) const
+        {
+            std::size_t const start = out.Begin(Type::UnitState);
+            out.Put<uint64_t>(Ms);
+            out.Put<uint64_t>(Player);
+            out.Put<uint64_t>(Unit);
+            out.Put<uint32_t>(SpawnId);
+            out.Put<uint32_t>(Entry);
+            out.Put<uint8_t>(UnitType);
+            out.Put<uint8_t>(uint8_t(Kind));
+            out.Put<float>(X);
+            out.Put<float>(Y);
+            out.Put<float>(Z);
+            out.Put<float>(O);
+            out.Put<float>(VX);
+            out.Put<float>(VY);
+            out.Put<float>(VZ);
+            out.Put<uint32_t>(MoveFlags);
+            out.Put<uint32_t>(Health);
+            out.Put<uint32_t>(MaxHealth);
+            out.Put<uint8_t>(PowerType);
+            out.Put<uint32_t>(Power);
+            out.Put<uint32_t>(MaxPower);
+            out.Put<uint8_t>(Level);
+            out.Put<uint8_t>(Reaction);
+            out.Put<uint8_t>(ReactState);
+            out.Put<uint8_t>(Rank);
+            out.Put<uint8_t>(Boss);
+            out.Put<uint32_t>(UnitFlags);
+            out.Put<uint32_t>(NpcFlags);
+            out.Put<uint32_t>(DynamicFlags);
+            out.Put<uint32_t>(UnitStateFlags);
+            out.Put<uint8_t>(DeathState);
+            out.Put<uint64_t>(Target);
+            out.Put<uint64_t>(Victim);
+            out.Put<uint32_t>(CastingSpell);
+            out.Put<int32_t>(CastLeftMs);
+            out.Put<uint8_t>(MotionType);
+            out.Put<float>(HomeX);
+            out.Put<float>(HomeY);
+            out.Put<float>(HomeZ);
+            out.Put<uint32_t>(FormationLeaderSpawn);
+            out.Put<uint8_t>(Flags);
+            out.Put<uint8_t>(AuraCount);
+            for (uint8_t i = 0; i < AuraCount; ++i)
+            {
+                out.Put<uint32_t>(Auras[i].Spell);
+                out.Put<uint8_t>(Auras[i].Stacks);
+                out.Put<int32_t>(Auras[i].RemainingMs);
+                out.Put<uint8_t>(Auras[i].Positive);
+                out.Put<uint64_t>(Auras[i].Caster);
+            }
+            out.Put<uint8_t>(ThreatCount);
+            for (uint8_t i = 0; i < ThreatCount; ++i)
+            {
+                out.Put<uint64_t>(Threats[i].Unit);
+                out.Put<float>(Threats[i].Threat);
+            }
+            out.End(start);
+        }
+    };
+
+    /// A game object the recording player's client can see (FORMAT §2.5 GameObjectState): every one at the
+    /// recording's start and at each map entry (`event` 0 seen), then each one whose state changed (1) or went (2).
+    struct GameObjectState
+    {
+        uint64_t Ms = 0;
+        uint64_t Player = 0;
+        uint64_t Object = 0;
+        uint32_t SpawnId = 0;
+        uint32_t Entry = 0;
+        uint8_t GoType = 0;
+        uint8_t GoState = 0;            // GOState: 0 active (a door open), 1 ready (shut), 2 active alternative
+        uint8_t LootState = 0;
+        uint32_t Flags = 0;
+        float X = 0.0f;
+        float Y = 0.0f;
+        float Z = 0.0f;
+        float O = 0.0f;
+        uint8_t Event = 0;
+
+        void Write(Out& out) const
+        {
+            std::size_t const start = out.Begin(Type::GameObjectState);
+            out.Put<uint64_t>(Ms);
+            out.Put<uint64_t>(Player);
+            out.Put<uint64_t>(Object);
+            out.Put<uint32_t>(SpawnId);
+            out.Put<uint32_t>(Entry);
+            out.Put<uint8_t>(GoType);
+            out.Put<uint8_t>(GoState);
+            out.Put<uint8_t>(LootState);
+            out.Put<uint32_t>(Flags);
+            out.Put<float>(X);
+            out.Put<float>(Y);
+            out.Put<float>(Z);
+            out.Put<float>(O);
+            out.Put<uint8_t>(Event);
+            out.End(start);
+        }
+    };
+
+    /// The recording player's own numbers (FORMAT §2.5 PlayerDetail), once a second and on change.
+    struct PlayerDetail
+    {
+        uint64_t Ms = 0;
+        uint64_t Player = 0;
+        std::array<uint32_t, 5> Stats{};        // strength, agility, stamina, intellect, spirit
+        uint32_t Armor = 0;
+        std::array<uint32_t, 6> Resistances{};  // holy, fire, nature, frost, shadow, arcane
+        uint32_t AttackPower = 0;
+        uint32_t RangedAttackPower = 0;
+        uint32_t SpellPower = 0;
+        uint32_t HealPower = 0;
+        std::array<float, 11> Ratings{};        // crit melee/ranged/spell, haste melee/ranged/spell, hit melee/spell,
+                                                // dodge, parry, block (percent)
+        float Expertise = 0.0f;
+        uint32_t MaxHealth = 0;
+        std::array<uint32_t, 7> MaxPower{};
+        uint32_t Money = 0;
+        uint32_t Xp = 0;
+        uint32_t NextXp = 0;
+        uint8_t ComboPoints = 0;
+        uint64_t ComboTarget = 0;
+        uint32_t CheatFlags = 0;                // PlayerCommandStates: 1 god, 2 casttime, 4 cooldown, 8 power, ...
+        uint8_t GameMaster = 0;
+
+        void Write(Out& out) const
+        {
+            std::size_t const start = out.Begin(Type::PlayerDetail);
+            out.Put<uint64_t>(Ms);
+            out.Put<uint64_t>(Player);
+            for (uint32_t stat : Stats)
+                out.Put<uint32_t>(stat);
+            out.Put<uint32_t>(Armor);
+            for (uint32_t resistance : Resistances)
+                out.Put<uint32_t>(resistance);
+            out.Put<uint32_t>(AttackPower);
+            out.Put<uint32_t>(RangedAttackPower);
+            out.Put<uint32_t>(SpellPower);
+            out.Put<uint32_t>(HealPower);
+            for (float rating : Ratings)
+                out.Put<float>(rating);
+            out.Put<float>(Expertise);
+            out.Put<uint32_t>(MaxHealth);
+            for (uint32_t power : MaxPower)
+                out.Put<uint32_t>(power);
+            out.Put<uint32_t>(Money);
+            out.Put<uint32_t>(Xp);
+            out.Put<uint32_t>(NextXp);
+            out.Put<uint8_t>(ComboPoints);
+            out.Put<uint64_t>(ComboTarget);
+            out.Put<uint32_t>(CheatFlags);
+            out.Put<uint8_t>(GameMaster);
+            out.End(start);
+        }
+    };
+
+    /// The map's spawn table (FORMAT §2.5 MapSpawns), creatures and game objects, so a tool never needs the world
+    /// database: written once per map a recording enters, in parts of at most MAP_SPAWNS_PART entries.
+    constexpr uint16_t MAP_SPAWNS_PART = 1500;
+
+    struct MapSpawn
+    {
+        uint32_t SpawnId = 0;
+        uint32_t Entry = 0;
+        float X = 0.0f;
+        float Y = 0.0f;
+        float Z = 0.0f;
+        float O = 0.0f;
+        uint8_t Rank = 0;
+        uint8_t Boss = 0;
+        uint32_t FormationLeaderSpawn = 0;
+        uint8_t Kind = 0;               // 0 creature, 1 game object
+        uint8_t GoType = 0;
+    };
+
+    struct MapSpawns
+    {
+        uint64_t Ms = 0;
+        uint32_t Map = 0;
+        uint16_t Part = 0;
+        uint16_t Parts = 1;
+        MapSpawn const* Spawns = nullptr;
+        uint16_t Count = 0;
+
+        void Write(Out& out) const
+        {
+            std::size_t const start = out.Begin(Type::MapSpawns);
+            out.Put<uint64_t>(Ms);
+            out.Put<uint32_t>(Map);
+            out.Put<uint16_t>(Part);
+            out.Put<uint16_t>(Parts);
+            out.Put<uint16_t>(Count);
+            for (uint16_t i = 0; i < Count; ++i)
+            {
+                out.Put<uint32_t>(Spawns[i].SpawnId);
+                out.Put<uint32_t>(Spawns[i].Entry);
+                out.Put<float>(Spawns[i].X);
+                out.Put<float>(Spawns[i].Y);
+                out.Put<float>(Spawns[i].Z);
+                out.Put<float>(Spawns[i].O);
+                out.Put<uint8_t>(Spawns[i].Rank);
+                out.Put<uint8_t>(Spawns[i].Boss);
+                out.Put<uint32_t>(Spawns[i].FormationLeaderSpawn);
+                out.Put<uint8_t>(Spawns[i].Kind);
+                out.Put<uint8_t>(Spawns[i].GoType);
+            }
+            out.End(start);
+        }
+    };
+
+    /// Which of a map instance's spawned creatures are alive (FORMAT §2.5 InstanceCreatures): at the recording's
+    /// start, at each map entry and at its end, in parts of at most INSTANCE_CREATURES_PART.
+    constexpr uint16_t INSTANCE_CREATURES_PART = 10000;
+
+    struct InstanceCreature
+    {
+        uint32_t SpawnId = 0;
+        uint8_t Alive = 0;
+    };
+
+    struct InstanceCreatures
+    {
+        uint64_t Ms = 0;
+        uint32_t Map = 0;
+        uint32_t Instance = 0;
+        uint16_t Part = 0;
+        uint16_t Parts = 1;
+        InstanceCreature const* Creatures = nullptr;
+        uint16_t Count = 0;
+
+        void Write(Out& out) const
+        {
+            std::size_t const start = out.Begin(Type::InstanceCreatures);
+            out.Put<uint64_t>(Ms);
+            out.Put<uint32_t>(Map);
+            out.Put<uint32_t>(Instance);
+            out.Put<uint16_t>(Part);
+            out.Put<uint16_t>(Parts);
+            out.Put<uint16_t>(Count);
+            for (uint16_t i = 0; i < Count; ++i)
+            {
+                out.Put<uint32_t>(Creatures[i].SpawnId);
+                out.Put<uint8_t>(Creatures[i].Alive);
+            }
+            out.End(start);
+        }
+    };
+
     // ---- §2.6 outcome ---------------------------------------------------------------------------------------------
 
     struct Damage
@@ -959,6 +1419,7 @@ namespace Animus::Capture::Format
         uint64_t Victim = 0;
         uint32_t VictimEntry = 0;
         TargetKind VictimKind = TargetKind::None;
+        uint32_t VictimSpawnId = 0;     // format 4: the victim's world spawn (0 a player, a pet or a summon)
 
         void Write(Out& out) const
         {
@@ -968,6 +1429,7 @@ namespace Animus::Capture::Format
             out.Put<uint64_t>(Victim);
             out.Put<uint32_t>(VictimEntry);
             out.Put<uint8_t>(uint8_t(VictimKind));
+            out.Put<uint32_t>(VictimSpawnId);
             out.End(start);
         }
     };
@@ -1076,6 +1538,50 @@ namespace Animus::Capture::Format
         }
     };
 
+    /// A unit entering, leaving or evading a fight on a recording's map (FORMAT §2.6 CombatEdge, format 4): the
+    /// unit and the other side when the hook knows it, both positions. The first creature engaged of a pull.
+    struct CombatEdge
+    {
+        uint64_t Ms = 0;
+        uint32_t Map = 0;
+        uint32_t Instance = 0;
+        uint64_t Unit = 0;
+        uint32_t SpawnId = 0;
+        uint32_t Entry = 0;
+        uint8_t Event = 0;              // 0 enter, 1 exit, 2 evade
+        uint8_t EvadeReason = 0;
+        uint64_t Other = 0;
+        uint32_t OtherSpawnId = 0;
+        float X = 0.0f;
+        float Y = 0.0f;
+        float Z = 0.0f;
+        float OX = 0.0f;
+        float OY = 0.0f;
+        float OZ = 0.0f;
+
+        void Write(Out& out) const
+        {
+            std::size_t const start = out.Begin(Type::CombatEdge);
+            out.Put<uint64_t>(Ms);
+            out.Put<uint32_t>(Map);
+            out.Put<uint32_t>(Instance);
+            out.Put<uint64_t>(Unit);
+            out.Put<uint32_t>(SpawnId);
+            out.Put<uint32_t>(Entry);
+            out.Put<uint8_t>(Event);
+            out.Put<uint8_t>(EvadeReason);
+            out.Put<uint64_t>(Other);
+            out.Put<uint32_t>(OtherSpawnId);
+            out.Put<float>(X);
+            out.Put<float>(Y);
+            out.Put<float>(Z);
+            out.Put<float>(OX);
+            out.Put<float>(OY);
+            out.Put<float>(OZ);
+            out.End(start);
+        }
+    };
+
     // ---- §2.7 companion -------------------------------------------------------------------------------------------
 
     struct CompanionDecision
@@ -1142,6 +1648,236 @@ namespace Animus::Capture::Format
             out.Put<uint64_t>(Companion);
             out.Put<int8_t>(Rating);
             out.Put<uint8_t>(Reason);
+            out.End(start);
+        }
+    };
+
+    // ---- §2.8 note (format 4, a recording's) ----------------------------------------------------------------------
+
+    /// A free-text note the recording player typed (FORMAT §2.8 Annotation), with where they stood, what they
+    /// targeted and the state of the moment.
+    struct Annotation
+    {
+        uint64_t Ms = 0;
+        uint64_t Player = 0;
+        uint32_t Seq = 0;
+        uint16_t Kind = 1;              // 1 note
+        uint32_t Map = 0;
+        uint32_t Instance = 0;
+        uint32_t Zone = 0;
+        uint32_t Area = 0;
+        float X = 0.0f;
+        float Y = 0.0f;
+        float Z = 0.0f;
+        float O = 0.0f;
+        uint64_t Target = 0;
+        uint32_t TargetSpawnId = 0;
+        uint32_t TargetEntry = 0;
+        TargetKind TargetKindOf = TargetKind::None;
+        float TargetHealthPct = 0.0f;
+        float TargetDistance = 0.0f;
+        uint8_t State = 0;              // 1 combat, 2 dead, 4 mounted, 8 casting, 16 swimming, 32 falling, 64 god
+        float HealthPct = 0.0f;
+        float PowerPct = 0.0f;
+        uint8_t PowerType = 0;
+        uint8_t ThreatOnMe = 0;         // creatures with the player on their threat list
+        uint8_t HostilesNear = 0;       // hostile units within 30 yards
+        uint8_t PartyAlive = 0;
+        uint8_t PartySize = 0;
+        uint32_t ClientMs = 0;
+        std::string_view Text;
+
+        void Write(Out& out) const
+        {
+            std::size_t const start = out.Begin(Type::Annotation);
+            out.Put<uint64_t>(Ms);
+            out.Put<uint64_t>(Player);
+            out.Put<uint32_t>(Seq);
+            out.Put<uint16_t>(Kind);
+            out.Put<uint32_t>(Map);
+            out.Put<uint32_t>(Instance);
+            out.Put<uint32_t>(Zone);
+            out.Put<uint32_t>(Area);
+            out.Put<float>(X);
+            out.Put<float>(Y);
+            out.Put<float>(Z);
+            out.Put<float>(O);
+            out.Put<uint64_t>(Target);
+            out.Put<uint32_t>(TargetSpawnId);
+            out.Put<uint32_t>(TargetEntry);
+            out.Put<uint8_t>(uint8_t(TargetKindOf));
+            out.Put<float>(TargetHealthPct);
+            out.Put<float>(TargetDistance);
+            out.Put<uint8_t>(State);
+            out.Put<float>(HealthPct);
+            out.Put<float>(PowerPct);
+            out.Put<uint8_t>(PowerType);
+            out.Put<uint8_t>(ThreatOnMe);
+            out.Put<uint8_t>(HostilesNear);
+            out.Put<uint8_t>(PartyAlive);
+            out.Put<uint8_t>(PartySize);
+            out.Put<uint32_t>(ClientMs);
+            std::size_t const length = std::min<std::size_t>(Text.size(), 0xFFFF);
+            out.Put<uint16_t>(uint16_t(length));
+            out.PutBytes(Text.data(), length);
+            out.End(start);
+        }
+    };
+
+    /// The first record of a recording (FORMAT §2.8 RecordingStart): who, where, and under what settings.
+    struct RecordingStart
+    {
+        uint64_t Ms = 0;
+        uint64_t Player = 0;
+        uint64_t Session = 0;
+        std::string_view Id;            // char[64]: the recording's directory name
+        uint8_t Class = 0;
+        uint8_t Race = 0;
+        uint8_t Gender = 0;
+        uint8_t Level = 0;
+        uint32_t Map = 0;
+        uint32_t Instance = 0;
+        uint32_t Zone = 0;
+        uint32_t Area = 0;
+        float X = 0.0f;
+        float Y = 0.0f;
+        float Z = 0.0f;
+        float O = 0.0f;
+        uint16_t SnapshotMs = 0;
+        uint16_t UnitMs = 0;
+        uint32_t Streams = 0;
+        uint8_t Flags = 0;              // 1 god, 2 game master, 4 party fill off
+        std::string_view Name;          // the character's name
+
+        void Write(Out& out) const
+        {
+            std::size_t const start = out.Begin(Type::RecordingStart);
+            out.Put<uint64_t>(Ms);
+            out.Put<uint64_t>(Player);
+            out.Put<uint64_t>(Session);
+            out.PutChars<64>(Id);
+            out.Put<uint8_t>(Class);
+            out.Put<uint8_t>(Race);
+            out.Put<uint8_t>(Gender);
+            out.Put<uint8_t>(Level);
+            out.Put<uint32_t>(Map);
+            out.Put<uint32_t>(Instance);
+            out.Put<uint32_t>(Zone);
+            out.Put<uint32_t>(Area);
+            out.Put<float>(X);
+            out.Put<float>(Y);
+            out.Put<float>(Z);
+            out.Put<float>(O);
+            out.Put<uint16_t>(SnapshotMs);
+            out.Put<uint16_t>(UnitMs);
+            out.Put<uint32_t>(Streams);
+            out.Put<uint8_t>(Flags);
+            std::size_t const length = std::min<std::size_t>(Name.size(), 0xFF);
+            out.Put<uint16_t>(uint16_t(length));
+            out.PutBytes(Name.data(), length);
+            out.End(start);
+        }
+    };
+
+    /// The last record of a recording (FORMAT §2.8 RecordingEnd): why it ended and the player's verdict.
+    struct RecordingEnd
+    {
+        uint64_t Ms = 0;
+        uint64_t Player = 0;
+        uint64_t Session = 0;
+        uint8_t Reason = 0;             // 0 stop, 1 logout, 2 disconnect, 3 shutdown, 4 disk, 5 max minutes
+        uint8_t Verdict = 0;            // 0 none, 1 keep, 2 discard
+        uint32_t Notes = 0;
+        uint32_t Seconds = 0;
+        std::string_view Title;
+
+        void Write(Out& out) const
+        {
+            std::size_t const start = out.Begin(Type::RecordingEnd);
+            out.Put<uint64_t>(Ms);
+            out.Put<uint64_t>(Player);
+            out.Put<uint64_t>(Session);
+            out.Put<uint8_t>(Reason);
+            out.Put<uint8_t>(Verdict);
+            out.Put<uint32_t>(Notes);
+            out.Put<uint32_t>(Seconds);
+            std::size_t const length = std::min<std::size_t>(Title.size(), 0xFFFF);
+            out.Put<uint16_t>(uint16_t(length));
+            out.PutBytes(Title.data(), length);
+            out.End(start);
+        }
+    };
+
+    /// A chat line the recording player sent or was shown (FORMAT §2.8 Chat). Another real player's text, outside
+    /// the recorder's group, is redacted (the length kept) unless Animus.Capture.Recording.OthersChat.
+    struct Chat
+    {
+        uint64_t Ms = 0;
+        uint64_t Player = 0;
+        uint8_t Direction = 0;          // 0 sent, 1 received
+        uint8_t ChatType = 0;           // ChatMsg
+        uint32_t Language = 0;
+        uint64_t Sender = 0;
+        uint8_t SenderKind = 0;         // 0 self, 1 group player, 2 companion, 3 creature, 4 other player, 5 system
+        uint32_t SenderEntry = 0;
+        uint64_t Receiver = 0;
+        uint8_t Redacted = 0;
+        std::string_view Text;
+
+        void Write(Out& out) const
+        {
+            std::size_t const start = out.Begin(Type::Chat);
+            out.Put<uint64_t>(Ms);
+            out.Put<uint64_t>(Player);
+            out.Put<uint8_t>(Direction);
+            out.Put<uint8_t>(ChatType);
+            out.Put<uint32_t>(Language);
+            out.Put<uint64_t>(Sender);
+            out.Put<uint8_t>(SenderKind);
+            out.Put<uint32_t>(SenderEntry);
+            out.Put<uint64_t>(Receiver);
+            out.Put<uint8_t>(Redacted);
+            std::size_t const length = std::min<std::size_t>(Text.size(), 0xFFFF);
+            out.Put<uint16_t>(uint16_t(length));
+            out.PutBytes(Text.data(), length);
+            out.End(start);
+        }
+    };
+
+    // ---- §2.9 packet (format 4, a recording's) --------------------------------------------------------------------
+
+    /// A chunk of a packet between the recording player's client and the server (FORMAT §2.9 RawPacket), as sent:
+    /// every opcode both ways but those Animus.Capture.Recording.PacketSkip names; a payload longer than
+    /// RAW_PACKET_CHUNK bytes is written in chunks (`offset` into `total`, flag 2 on all but the last) and one past
+    /// Recording.PacketMaxBytes is cut (flag 1).
+    constexpr std::size_t RAW_PACKET_CHUNK = 60000;
+
+    struct RawPacket
+    {
+        uint64_t Ms = 0;
+        uint64_t Player = 0;
+        uint8_t Direction = 0;          // 0 client to server, 1 server to client
+        uint16_t Opcode = 0;
+        uint32_t ServerMs = 0;          // getMSTime()
+        uint32_t Total = 0;
+        uint32_t Offset = 0;
+        uint8_t Flags = 0;              // 1 truncated, 2 continued in the next chunk
+        uint8_t const* Bytes = nullptr;
+        uint16_t Length = 0;
+
+        void Write(Out& out) const
+        {
+            std::size_t const start = out.Begin(Type::RawPacket);
+            out.Put<uint64_t>(Ms);
+            out.Put<uint64_t>(Player);
+            out.Put<uint8_t>(Direction);
+            out.Put<uint16_t>(Opcode);
+            out.Put<uint32_t>(ServerMs);
+            out.Put<uint32_t>(Total);
+            out.Put<uint32_t>(Offset);
+            out.Put<uint8_t>(Flags);
+            out.Put<uint16_t>(Length);
+            out.PutBytes(Bytes, Length);
             out.End(start);
         }
     };

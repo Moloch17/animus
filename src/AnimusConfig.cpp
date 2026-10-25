@@ -139,6 +139,8 @@ void Animus::AnimusConfig::Load()
     Life.IdleSeconds = sConfigMgr->GetOption<uint32>("Animus.Life.IdleSeconds", 20);
 
     PartyFill = sConfigMgr->GetOption<bool>("Animus.PartyFill.Enable", true);
+    PrepareSecurity = std::min<uint32>(4, sConfigMgr->GetOption<uint32>("Animus.Prepare.Security", 2));
+    PrepareBagItem = sConfigMgr->GetOption<uint32>("Animus.Prepare.BagItem", 4500);
 
     // The ground probe, as the forge's AnimusForge.Probe.* sets it for training. The files are the forge's own
     // (`forge fieldworld` bakes every map's fields), shipped beside the core's maps, vmaps and mmaps by default.

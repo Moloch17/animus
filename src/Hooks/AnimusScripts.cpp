@@ -18,6 +18,8 @@
 
 #include "AnimusAddon.h"
 #include "AnimusMod.h"
+#include "Capture.h"
+#include "CharacterPrep.h"
 #include "AchievementMgr.h"
 #include "AchievementScript.h"
 #include "Chat.h"
@@ -67,8 +69,19 @@ namespace
                 { "list",       HandleStageListCommand,     SEC_GAMEMASTER, Console::No },
             };
 
+            static ChatCommandTable partyFillCommandTable =
+            {
+                { "realm",      HandlePartyFillRealmCommand, SEC_GAMEMASTER, Console::No },
+                { "",           HandlePartyFillCommand,      SEC_PLAYER,     Console::No },
+            };
+
             static ChatCommandTable animusCommandTable =
             {
+                { "record",     HandleRecordCommand,    SEC_PLAYER,     Console::No },
+                { "note",       HandleNoteCommand,      SEC_PLAYER,     Console::No },
+                { "partyfill",  partyFillCommandTable },
+                { "prepare",    HandlePrepareCommand,   SEC_PLAYER,     Console::No },
+                { "god",        HandleGodCommand,       SEC_PLAYER,     Console::No },
                 { "create",     HandleCreateCommand,    SEC_GAMEMASTER, Console::No },
                 { "summon",     HandleSummonCommand,    SEC_GAMEMASTER, Console::No },
                 { "list",       HandleListCommand,      SEC_GAMEMASTER, Console::No },
@@ -170,6 +183,107 @@ namespace
             return ReplyLines(handler, sAnimusMod->StageList(), "There are no stages.");
         }
 
+        /// .animus record [on | off [keep|discard] [title...]]: a recording of your own play (the addon's Record).
+        static bool HandleRecordCommand(ChatHandler* handler, Optional<std::string_view> state,
+            Optional<std::string_view> verdict, Tail title)
+        {
+            Player* player = handler->GetPlayer();
+            std::string message;
+            if (!state)
+            {
+                Animus::Capture::RecordingStatus const status = Animus::Capture::Status(player);
+                if (!status.Available)
+                    return Reply(handler, false, "Recording is not available on this realm.");
+                return Reply(handler, true, status.On ? Acore::StringFormat("Recording {} for {}m{:02}s, {} notes.",
+                    status.Id, status.Seconds / 60, status.Seconds % 60, status.Notes) : "Not recording.");
+            }
+            if (*state == "on")
+                return Reply(handler, Animus::Capture::StartRecording(player, message), message);
+            if (*state == "off")
+            {
+                std::string_view const given = verdict.value_or("");
+                if (!given.empty() && given != "keep" && given != "discard")
+                    return Reply(handler, false, "A recording is kept or discarded.");
+                return Reply(handler, Animus::Capture::StopRecording(player, Animus::Capture::StopReason::Stop, given,
+                    std::string_view(title), message), message);
+            }
+            return Reply(handler, false, ".animus record on, or .animus record off keep|discard [title].");
+        }
+
+        /// .animus note <text...>: a note into your running recording.
+        static bool HandleNoteCommand(ChatHandler* handler, Tail text)
+        {
+            std::string message;
+            uint32 seq = 0;
+            return Reply(handler, Animus::Capture::Note(handler->GetPlayer(), std::string_view(text), 0, seq, message),
+                message);
+        }
+
+        /// .animus partyfill [on|off]: whether your own dungeon party is filled with bots.
+        static bool HandlePartyFillCommand(ChatHandler* handler, Optional<std::string_view> state)
+        {
+            Player* player = handler->GetPlayer();
+            std::string message;
+            if (!state)
+            {
+                Animus::AnimusMod::PartyFillStatus const fill = sAnimusMod->PartyFillState(player);
+                return Reply(handler, true, Acore::StringFormat("Your dungeon party fill is {}; the realm's is {}{}.",
+                    fill.Mine ? "on" : "off", fill.Realm ? "on" : "off", fill.Overridden ? " (a game master's override "
+                    "until the next config reload)" : ""));
+            }
+            if (*state != "on" && *state != "off")
+                return Reply(handler, false, ".animus partyfill on|off.");
+            return Reply(handler, sAnimusMod->SetPartyFill(player, *state == "on", message), message);
+        }
+
+        /// .animus partyfill realm on|off: the realm's dungeon party fill, for every player, until the next config
+        /// reload.
+        static bool HandlePartyFillRealmCommand(ChatHandler* handler, std::string_view state)
+        {
+            if (state != "on" && state != "off")
+                return Reply(handler, false, ".animus partyfill realm on|off.");
+            std::string message;
+            return Reply(handler, sAnimusMod->PartyFillRealm(state == "on", message), message);
+        }
+
+        /// .animus prepare <level> <spec>: your character at that level, geared and talented for the spec (an index
+        /// or a name of your class's specs).
+        static bool HandlePrepareCommand(ChatHandler* handler, uint8 level, std::string_view spec)
+        {
+            Player* player = handler->GetPlayer();
+            std::vector<std::string> const specs = Animus::Prepare::Specs(player);
+            uint8 index = 0;
+            bool found = false;
+            for (std::size_t i = 0; i < specs.size(); ++i)
+                if (specs[i] == spec || std::to_string(i) == spec)
+                {
+                    index = uint8(i);
+                    found = true;
+                }
+            if (!found)
+            {
+                std::string names;
+                for (std::size_t i = 0; i < specs.size(); ++i)
+                    names += Acore::StringFormat("{}{} {}", i ? ", " : "", i, specs[i]);
+                return Reply(handler, false, Acore::StringFormat("The spec is one of: {}.", names));
+            }
+            std::string message;
+            return Reply(handler, Animus::Prepare::Prepare(player, level, index, message), message);
+        }
+
+        /// .animus god on|off: invulnerable while your recording runs (the account security Prepare needs).
+        static bool HandleGodCommand(ChatHandler* handler, std::string_view state)
+        {
+            Player* player = handler->GetPlayer();
+            if (state != "on" && state != "off")
+                return Reply(handler, false, ".animus god on|off.");
+            if (!player->GetSession() || uint32(player->GetSession()->GetSecurity())
+                < sAnimusMod->Config().PrepareSecurity)
+                return Reply(handler, false, "God mode is not for your account on this realm.");
+            std::string message;
+            return Reply(handler, Animus::Capture::God(player, state == "on", message), message);
+        }
+
     };
 
     class AnimusWorldScript : public WorldScript
@@ -188,7 +302,7 @@ namespace
     {
     public:
         AnimusPlayerScript() : PlayerScript("AnimusPlayerScript",
-            { PLAYERHOOK_ON_LOGOUT, PLAYERHOOK_CAN_PLAYER_USE_PRIVATE_CHAT, PLAYERHOOK_ON_DELETE,
+            { PLAYERHOOK_ON_LOGIN, PLAYERHOOK_ON_LOGOUT, PLAYERHOOK_CAN_PLAYER_USE_PRIVATE_CHAT, PLAYERHOOK_ON_DELETE,
                 PLAYERHOOK_CAN_SEND_MAIL, PLAYERHOOK_CAN_GIVE_MAIL_REWARD_AT_GIVE_LEVEL,
                 PLAYERHOOK_ON_BEFORE_ACHI_COMPLETE, PLAYERHOOK_ON_PLAYER_QUEST_ACCEPT,
                 PLAYERHOOK_ON_QUEST_ABANDON, PLAYERHOOK_ON_MAP_CHANGED, PLAYERHOOK_ON_AFTER_UPDATE }) { }
@@ -200,6 +314,7 @@ namespace
             Animus::Client::Clients::OnPlayerAfterUpdate(player, diff);
         }
 
+        void OnPlayerLogin(Player* player) override { sAnimusMod->OnPlayerLogin(player); }
         void OnPlayerLogout(Player* player) override { sAnimusMod->OnPlayerLogout(player); }
 
         /// Into a five-player dungeon, the group is filled out to a tank, a healer and damage (Animus.PartyFill.Enable);

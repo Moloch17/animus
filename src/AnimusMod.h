@@ -126,6 +126,28 @@ namespace Animus
         /// A player arrived on a map (Animus.PartyFill): a group's leader entering a five-man dungeon has the group
         /// topped up by role; leaving it, the temporary members go.
         void OnPlayerMapChanged(Player* player);
+        /// A player logged in: their own settings are read (PlayerSettings).
+        void OnPlayerLogin(Player* player);
+
+        /// **Dungeon party fill, per player and for the realm** (2026-10-25). Whether `player`'s group is filled on
+        /// entering a dungeon: the module on, the realm's switch (Animus.PartyFill.Enable, or the GM override that
+        /// lasts until the next config reload), and the player's own setting (the group leader's decides: only a
+        /// leader's group is filled).
+        [[nodiscard]] bool PartyFillFor(Player const* player) const;
+        /// The player's own setting (`.animus partyfill on|off`, the addon's checkbox), kept per character.
+        bool SetPartyFill(Player* player, bool on, std::string& message);
+        /// The realm-wide override (`.animus partyfill realm on|off`, GM), in memory until the config is reloaded.
+        bool PartyFillRealm(bool on, std::string& message);
+        /// Both, for the addon's SETTINGS: the player's, the realm's now, whether the realm's is an override, and
+        /// the config's own value.
+        struct PartyFillStatus
+        {
+            bool Mine = true;
+            bool Realm = true;
+            bool Overridden = false;
+            bool Config = true;
+        };
+        [[nodiscard]] PartyFillStatus PartyFillState(Player const* player) const;
 
         /// Every account and character the module ever made, gone: companions out of the world unsaved, every
         /// `ANIMUS<guid>` account deleted with its characters (orphans of older runs included), the module's table
@@ -185,6 +207,13 @@ namespace Animus
 
         /// The stage whose models companions play (Animus.Curriculum.Stage).
         [[nodiscard]] std::string const& CurrentStage() const { return _config.CurriculumStage; }
+        /// The configured stage's layout of a class profile, built on first use (Prepare builds a player character
+        /// with it as a companion is built).
+        [[nodiscard]] Curriculum::Layout const& PrepareLayout(Curriculum::ClassProfile const& profile)
+        {
+            return LayoutFor(profile);
+        }
+        [[nodiscard]] AnimusConfig const& Config() const { return _config; }
 
         /// Every curriculum stage with its arenas: the names Animus.Curriculum.Stage accepts, and so which models a
         /// companion will look for.
@@ -250,6 +279,7 @@ namespace Animus
         /// that brought them is still finishing, and after the group's other members have had a moment to arrive.
         std::unordered_map<ObjectGuid, int32> _pendingFill;
         uint32 _nextFillerAccount = 0;
+        std::optional<bool> _partyFillOverride;     // the realm-wide GM override, cleared by LoadConfig
     };
 }
 

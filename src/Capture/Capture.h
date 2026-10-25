@@ -74,6 +74,54 @@ namespace Animus::Capture
     /// `message` set when the words are not understood.
     bool CompanionRating(ObjectGuid owner, ObjectGuid companion, std::string_view sign, std::string_view reason,
         std::string& message);
+
+    // ---- manual recordings (format 4): a player's own recording of their play -------------------------------------
+    // World thread only (the addon's requests and the chat commands arrive there, while no map updates).
+
+    /// Why a recording ended (RecordingEnd `reason`).
+    enum class StopReason : uint8
+    {
+        Stop = 0,
+        Logout = 1,
+        Disconnect = 2,
+        Shutdown = 3,
+        Disk = 4,
+        MaxMinutes = 5,
+    };
+
+    /// Start recording `player`'s own play: refused (false, `message` says why) when capture is not available on
+    /// this realm, the player is a bot, one is already running, or no slot is free. On success `message` is the
+    /// line to show the player.
+    bool StartRecording(Player* player, std::string& message);
+    /// Stop it, with the player's verdict ("keep", "discard" or empty) and an optional title. False when none runs.
+    bool StopRecording(Player* player, StopReason reason, std::string_view verdict, std::string_view title,
+        std::string& message);
+    /// A free-text note into the running recording, with where the player stands and what they target; `clientMs`
+    /// the addon's clock when it was typed (0 from a chat command). `seq` gets the note's number. False with
+    /// `message` when nothing is recording or the text is empty.
+    bool Note(Player* player, std::string_view text, uint32 clientMs, uint32& seq, std::string& message);
+
+    struct RecordingStatus
+    {
+        bool Available = false;         // capture runs on this realm
+        bool On = false;
+        std::string Id;
+        uint32 Seconds = 0;
+        uint32 Notes = 0;
+        bool God = false;
+    };
+    [[nodiscard]] RecordingStatus Status(Player* player);
+
+    /// Invulnerability for a recording player (CHEAT_GOD): on or off, GM-gated by the caller. False with `message`
+    /// when the player is not recording. Turned off by itself when the recording stops, if it turned it on.
+    bool God(Player* player, bool on, std::string& message);
+
+    /// The recording slot of a player (0 none): what the companion hooks write their records to.
+    [[nodiscard]] uint16 RecordingSlotOf(Player* player);
+
+    /// Once a world tick (AnimusMod::OnUpdate): the recordings the writer asked stopped (the disk) and the ones
+    /// past Recording.MaxMinutes are stopped, their players told.
+    void UpdateRecordings();
 }
 
 void AddSC_animus_capture();
