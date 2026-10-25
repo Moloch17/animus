@@ -147,7 +147,7 @@ end
 
 -- Free text into the running recording; tabs, newlines and pipes cannot travel, so they become spaces.
 function A.Note(text)
-    text = strtrim((text or ""):gsub("[\t\r\n|]", " "))
+    text = strtrim(((text or ""):gsub("[\t\r\n|]", " ")))
     if text == "" then
         A.SetMessage(false, "A note needs some text.")
         return

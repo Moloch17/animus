@@ -136,6 +136,7 @@ StaticPopupDialogs["ANIMUS_STOP"] = {
     timeout = 0,
     whileDead = true,
     hideOnEscape = true,
+    noCancelOnEscape = 1,       -- Esc only hides: it never discards a recording
     preferredIndex = 3,
 }
 

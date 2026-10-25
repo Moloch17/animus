@@ -496,8 +496,11 @@ StaticPopupDialogs["ANIMUS_PREPARE"] = {
         .. "talents are reset and your level is changed. This cannot be undone.",
     button1 = "Prepare",
     button2 = CANCEL,
-    OnAccept = function()
-        A.Prepare(levelBox:GetNumber(), chosenSpec and chosenSpec.index)
+    OnAccept = function(self, data)
+        -- The level and spec the dialog was shown for, not whatever the boxes hold now.
+        if data then
+            A.Prepare(data.level, data.spec)
+        end
     end,
     timeout = 0,
     whileDead = 1,
@@ -511,8 +514,10 @@ prepareButton:SetHeight(24)
 prepareButton:SetPoint("TOPLEFT", levelBox, "BOTTOMLEFT", -6, -10)
 prepareButton:SetText("Prepare")
 prepareButton:SetScript("OnClick", function()
-    if chosenSpec then
-        StaticPopup_Show("ANIMUS_PREPARE", UnitName("player"), levelBox:GetNumber(), chosenSpec.name)
+    local level = levelBox:GetNumber()
+    if chosenSpec and level >= A.state.levels.min and level <= A.state.levels.max then
+        StaticPopup_Show("ANIMUS_PREPARE", UnitName("player"), level, chosenSpec.name,
+            { level = level, spec = chosenSpec.index })
     end
 end)
 
@@ -605,7 +610,10 @@ local function Refresh(s)
     end
 
     local companion = s.companion
-    if companion then
+    if currentTab ~= 1 then
+        createPanel:Hide()
+        companionPanel:Hide()
+    elseif companion then
         createPanel:Hide()
         companionPanel:Show()
         HostPickers(companionPanel, rerollHelp, -8)
@@ -634,7 +642,7 @@ local function Refresh(s)
         SetEnabled(rateBadButton, ready and companion.out and not companion.loading)
         SetEnabled(renameButton, ready and not companion.loading)
         SetEnabled(rerollButton, ready and not companion.loading and chosen.race ~= nil and chosen.class ~= nil)
-    else
+    elseif currentTab == 1 then
         companionPanel:Hide()
         createPanel:Show()
         HostPickers(createPanel, nameBox, -10)
