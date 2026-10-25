@@ -102,17 +102,28 @@ Game master commands, not available from the console; the addon does the same fo
 | `.animus stage list` | Every curriculum stage and its arenas: the names `Animus.Curriculum.Stage` accepts |
 | `.animus models` | Console too: every class's model for `Animus.Curriculum.Stage` and whether it loads, and if not the first manifest field that differs. Run it after copying models in, before anyone summons |
 | `.animus rate <+\|-> [movement\|combat\|healing\|tanking\|stuck\|other]` | Any player: your verdict on your companion's play, recorded for training (play capture) |
+| `.animus record [on\|off [keep\|discard] [title]]` | Any player: a recording of your own play started, stopped with a verdict and a title, or its status (play capture, "Recordings") |
+| `.animus note <text>` | Any player: a note into your running recording |
+| `.animus partyfill [on\|off]` | Any player: whether your own dungeon parties are filled with bots (saved per character) |
+| `.animus partyfill realm [on\|off]` | Game master: the realm's dungeon party fill until the next `.reload config` |
+| `.animus prepare <level> <spec>` | `Animus.Prepare.Security`: this character set to that level, geared, talented and taught for the spec (its name or index), everything it wore and carried mailed to it first |
+| `.animus god on\|off` | `Animus.Capture.Recording.GodSecurity`: god mode, flagged in the recording and switched off when the recording that switched it on stops |
 | `.animus purge` | Administrator, console too: every account the module made (`ANIMUS<guid>`) deleted with its characters, every companion sent away unsaved, the module's table dropped |
 
 ## Play capture
 
-With `Animus.Capture.Enable = 1` and `Animus.Capture.Dir` set, the module records what every player on the realm
-does, and what the companions decide, to files the forge trains on: realistic movement first (a learned style
-reward and a realism score), then reference numbers, prices and scenarios from real play. The module only records;
-it scores and trains nothing.
+With `Animus.Capture.Enable = 1` and `Animus.Capture.Dir` set, the module records play to files the forge trains
+on: realistic movement first (a learned style reward and a realism score), then reference numbers, prices and
+scenarios from real play, and whole dungeon runs to learn a dungeon from. The module only records; it scores and
+trains nothing. Two tiers share one writer and one format (version 4):
 
-**What is recorded**, in six streams (the format is [doc/capture-format.md](doc/capture-format.md), a copy of the
-forge's `apps/forge/python/animus/human/FORMAT.md`):
+- **The automatic tier** (`Animus.Capture.Auto`, on by default): every player from login, and what the companions
+  decide, into hourly files at the realm's rates, pseudonymous, no opt-in.
+- **Recordings**: one player's own play from the moment they press Record until they stop, into a folder of their
+  own at a far higher rate and detail, identified, with notes. See "Recordings" below.
+
+**What is recorded**, in eight streams (the format is [doc/capture-format.md](doc/capture-format.md), a copy of the
+forge's `apps/forge/python/animus/human/FORMAT.md`; the last two carry recordings only):
 
 | Stream | Content |
 |---|---|
@@ -122,10 +133,20 @@ forge's `apps/forge/python/animus/human/FORMAT.md`):
 | snapshot | every 250 ms in combat or moving, 1 s otherwise: the player, the nearest 24 hostile and 10 friendly units within 40 yards, party members on the map and the pet, auras and cooldowns |
 | outcome | damage and healing to or from a player, kills, deaths with cause, quests, boss encounters, PvP kills and duels, area changes |
 | companion | each companion decision (model, observation hash, action, goals), the owner's commands, and ratings (`.animus rate`, the addon's Good and Bad buttons) |
+| note | recordings: the player's typed notes (with where they stood, their target and the state of the moment), the recording's start and end, their group's chat |
+| packet | recordings: every packet between the player's client and the server, both ways, as sent |
 
-**Privacy.** Everyone is captured with no opt-in, and told so at login (`Animus.Capture.LoginNotice`). No chat,
-whispers, mail, names, account data or IPs are written. Characters and every other unit are 8-byte ids hashed with
-a realm-local salt (`<Dir>/salt`, made once; keep it, and keep it on the realm).
+Recordings add to the session, snapshot and outcome streams too: the inventory, action bars and talents; every
+nearby unit's full state every 100 ms with its auras and threat list; every visible object's state and each change;
+the player's own numbers once a second; the map's whole spawn table and which creatures of the instance are alive;
+and every unit entering, leaving or evading a fight.
+
+**Privacy.** In the automatic tier everyone is captured with no opt-in, and told so at login
+(`Animus.Capture.LoginNotice`). No chat, whispers, mail, names, account data or IPs are written there. Characters and
+every other unit are 8-byte ids hashed with a realm-local salt (`<Dir>/salt`, made once; keep it, and keep it on the
+realm). A recording is the player's own and identified: it holds their character's name, their group's chat (other
+players' text redacted unless `Recording.OthersChat`), and the raw packets; they are told when it starts
+(`Recording.Notice`).
 
 **Files.** `<Dir>/<yyyy-mm-dd>/<hh>/<stream>-<map>.bin.gz` (UTC; session and companion files are `-all`), each a
 run of gzip members (one per flush, so a crash loses at most the last), and an `index.json` per hour once it closes:
@@ -139,8 +160,32 @@ player-hour compressed, most of it snapshots: lower `Animus.Capture.IdleSnapshot
 off (`Animus.Capture.Streams`) first if storage is short. Below `Animus.Capture.DiskReserveGB` free the snapshot
 stream pauses by itself; movement is never thinned.
 
-**Keys** (`Animus.Capture.*`, documented in `conf/mod_animus.conf.dist`): `Enable`, `Dir`, `SnapshotMs`,
-`IdleSnapshotMs`, `Streams`, `FlushMs`, `BufferRecords`, `DiskWarnGB`, `DiskReserveGB`, `LoginNotice`.
+**Keys** (`Animus.Capture.*`, documented in `conf/mod_animus.conf.dist`): `Enable`, `Auto`, `Dir`, `SnapshotMs`,
+`IdleSnapshotMs`, `Streams`, `FlushMs`, `BufferRecords`, `DiskWarnGB`, `DiskReserveGB`, `LoginNotice`, and for
+recordings `Recording.SnapshotMs`, `Recording.UnitMs`, `Recording.UnitRange`, `Recording.MaxUnits`,
+`Recording.Packets`, `Recording.PacketMaxBytes`, `Recording.PacketSkip`, `Recording.OthersChat`,
+`Recording.MaxMinutes`, `Recording.Notice`, `Recording.GodSecurity`.
+
+### Recordings
+
+A recording starts only when the player says so: the addon's Record tab (or the recorder bar, `/animus rec`, a key
+binding) or `.animus record on`. From then until they stop, their play and everything around them is written to
+`<Dir>/recordings/<id>/` (`<yyyy-mm-dd>T<hhmmss>Z-<character>-<6 hex>`) at the `Recording.*` rates, and not to the
+hourly files; unit events on their map still reach the automatic tier as before. Stopping asks for a verdict
+(keep or discard: a discarded recording is marked in its `manifest.json`, never deleted) and a title. A logout, a
+disconnect, a shutdown, a disk shortage or `Recording.MaxMinutes` ends it too, with the reason in the manifest.
+
+Nothing but notes is typed. The Note box (or `/animus note <text>`, `.animus note`, the key binding) writes free
+text with where the player stood, what they targeted and the state of the moment. Pulls, rests, doors, bosses and
+skips are not tagged: the forge's `python -m animus.human dungeon-run` reads them off the recording (combat edges,
+threat lists, object changes, the spawn table) and writes the **clear way** a PointNav stage follows
+(`AnimusForge.Curriculum.PointNav.ClearWayFile`), so the bots learn the dungeon as a person ran it.
+
+For a run recorded solo: switch your own party fill off (Settings tab), **Prepare** the character at the dungeon's
+level (Settings tab: a level you type and a spec; everything you wore and carried is mailed back to you first,
+`Animus.Prepare.Security`), and record. God mode (`Recording.GodSecurity`) is there for a character that would not
+survive, but it is flagged everywhere it shows, since health and damage under it are not human-like; play as a
+group would (pull by pull, rest, drink) so the movement and pacing stay real. Several runs beat one.
 
 **Not recorded or approximate** (what the stock core's hooks do not carry): damage and heal records carry no spell,
 school, absorb, crit or overheal; an encounter's `boss_entry` is the instance script's boss index; breath is
@@ -155,6 +200,11 @@ then damage dealers. Each member's role is read off its talents, not its class, 
 counts as a member. The new members are of your level and faction, are never saved, and stay behind
 when you leave the dungeon alive. They play with the configured stage's models, so they only tank and
 heal well with a stage trained for party combat.
+
+Each player can switch their own fill off and on (the addon's Settings tab, `.animus partyfill off`), saved per
+character in `animus_player_settings`; a game master can switch the realm's off until the next `.reload config`
+(`.animus partyfill realm off`). Both are checked when the group would be filled, so a running group is not sent
+away.
 
 ## Testing a model from the forge
 

@@ -46,6 +46,17 @@ realm, the default) and:
 
 The companion gets no mail (players cannot send it any; the server's level rewards skip it) and no achievements.
 
+## Recording, settings, Prepare
+
+Two more tabs beside Companion. **Record**: a recording of your own play on the realm (movement, actions, combat,
+your group's chat and everything around you) from the moment you press Record until you stop; it is identified
+as yours. The recorder bar (`/animus rec`, movable, remembers its place) shows the clock and the note count and
+holds the Note box; `/animus note <text>` and a key binding (Esc > Key Bindings > Animus) note too. Stop asks for a
+title and whether to keep or discard it. **Settings**: whether your dungeon parties are filled with bots (saved
+per character; a game master also sees the realm's switch), and, when the realm allows it for your account,
+Prepare -- a level you type and a spec, then your character set to it with gear, talents and spells, everything
+you wore and carried mailed back to you first -- and god mode, flagged in the recording.
+
 ## Protocol
 
 The addon whispers itself with prefix `Animus`; the module swallows those whispers and answers with addon whispers
@@ -68,17 +79,33 @@ Requests (lower case):
 | `pet <name>` | `PET` and one `PETTALENT` per talent of its tree, or `ERR` for a companion without a hunter pet out |
 | `equip <name> <bag> <slot> <inventory slot>` | `OK` or `ERR`; bag 0 is the backpack, slots from 1, inventory slots 1 to 19 as the client numbers them |
 | `rate +\|- [movement\|combat\|healing\|tanking\|stuck\|other]` | `OK` or `ERR`: your verdict on your companion's play, recorded for training when the realm records play (the Good and Bad buttons) |
+| `record` | `RECORD` |
+| `record on` | `OK` or `ERR`, then `RECORD`: a recording of your own play starts (protocol 3) |
+| `record off <keep\|discard> [title]` | `OK` or `ERR`, then `RECORD`: the recording ends with your verdict and an optional title (free text, last) |
+| `note <client ms> <text>` | `NOTE` or `ERR`: free text (at most 200 bytes, last) into the running recording |
+| `settings` | `SETTINGS` |
+| `partyfill on\|off` | `OK` or `ERR`, then `SETTINGS`: whether your own dungeon parties are filled with bots (saved per character) |
+| `partyfill realm on\|off` | `OK` or `ERR`, then `SETTINGS`: the realm's dungeon party fill until its config is reloaded (game master) |
+| `specs` | one `SPEC` per spec of your class, then `LEVELS` (when Prepare is for your account) |
+| `prepare <level> <spec index>` | `OK` or `ERR`: your character set to that level, geared, talented and taught for the spec; everything worn and carried mailed to you first (Animus.Prepare.Security) |
+| `god on\|off` | `OK` or `ERR`, then `RECORD` (Animus.Capture.Recording.GodSecurity) |
+| `life ...` | as before, now game master only |
 
 Replies (upper case, so the addon can tell an answer from its own request echoed back by a realm without the
 module):
 
 | Reply | Fields |
 |---|---|
-| `HELLO` | protocol version (`2`), `1` when Animus is enabled else `0`, the stage name |
+| `HELLO` | protocol version (`3`), `1` when Animus is enabled else `0`, the stage name, `1` when the realm can record play, `1` for a game master, `1` when Prepare is for this account |
 | `RACE` | race word, comma-separated class words that race can be; races of the player's faction only |
 | `COMPANION` | `0` for none; else `1`, name, race word, class word, level, spec, `1` when out, `1` while loading, `1` when parked, model name, `loaded` or why the model is not (the last two when out) |
 | `PET` | companion name, pet name, level, unspent points, talent count |
 | `PETTALENT` | companion name, talent id, row, column, max rank, rank, the ranks' spell ids comma-separated, prerequisite talent id (0 for none), the rank it needs |
+| `RECORD` | `1` while recording else `0`, the recording id, seconds so far, notes so far, `1` under god mode, `1` when the realm can record |
+| `NOTE` | the note's sequence number in the recording, notes so far |
+| `SETTINGS` | your own dungeon party fill (`1`/`0`), the realm's, `1` while a game master's override is in force, the config's value |
+| `SPEC` | spec index, spec name (one line per spec of your class) |
+| `LEVELS` | the lowest and the highest level Prepare takes for your class |
 | `OK` / `ERR` | the module's message |
 
 Talent ids are Talent.dbc's, the ones in the client's talent hyperlinks (`|Htalent:1234:...`). The race and class

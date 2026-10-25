@@ -26,6 +26,7 @@ void Addmod_animusScripts()
     // animus-lib's hooks, which feed the stage viewers' env pools (registered once, whichever module asks first).
     Addmod_animus_libScripts();
     AddSC_animus();
-    // Recording every player's play to files for training (Animus.Capture.*, off by default).
+    // Play capture (Animus.Capture.*, off by default): every player's play to hourly files (the automatic tier) and,
+    // opt-in per player from the addon, a recording of their own play with notes into a folder of its own.
     AddSC_animus_capture();
 }

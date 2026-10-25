@@ -6,7 +6,7 @@ Animus = {}
 local A = Animus
 
 A.PREFIX = "Animus"
-A.PROTOCOL = 2
+A.PROTOCOL = 3
 A.TIMEOUT = 5           -- seconds without an answer before the realm is declared silent
 
 -- The words the module accepts, shown the way the game spells them.
@@ -36,6 +36,14 @@ A.state = {
     message = nil,          -- the last OK/ERR text
     messageOk = true,
     waitingSince = nil,     -- GetTime() of the request still unanswered
+    -- Protocol 3: recordings, settings, Prepare.
+    captureAvailable = false,   -- the realm can record (Animus.Capture.Enable and Dir)
+    isGM = false,
+    prepareAllowed = false,     -- Prepare (and god) are for this account (Animus.Prepare.Security)
+    recording = { on = false, id = nil, startedAt = nil, notes = 0, god = false },
+    settings = { partyFill = true, partyFillRealm = true, partyFillOverridden = false, partyFillConfig = true },
+    specs = {},             -- { { index = 0, name = "arms" }, ... } of the player's class
+    levels = { min = 1, max = 80 },
 }
 
 A.listeners = {}
@@ -117,6 +125,82 @@ function A.Reroll(race, class)
     A.Send("reroll", race, class)
 end
 
+-- ---------------------------------------------------------------------------------------------------------------
+-- Recordings (protocol 3): your own play, recorded on the realm while you say so; notes into it.
+
+function A.RequestRecord()
+    A.Send("record")
+end
+
+function A.StartRecording()
+    A.Send("record", "on")
+end
+
+-- verdict "keep" or "discard" (or nil), an optional title.
+function A.StopRecording(verdict, title)
+    if title and title ~= "" then
+        A.Send("record", "off", verdict or "", title)
+    else
+        A.Send("record", "off", verdict or "")
+    end
+end
+
+-- Free text into the running recording; tabs, newlines and pipes cannot travel, so they become spaces.
+function A.Note(text)
+    text = strtrim((text or ""):gsub("[\t\r\n|]", " "))
+    if text == "" then
+        A.SetMessage(false, "A note needs some text.")
+        return
+    end
+    if #text > 200 then
+        text = text:sub(1, 200)
+    end
+    A.Send("note", floor(GetTime() * 1000), text)
+end
+
+function A.IsRecording()
+    return A.state.recording.on
+end
+
+function A.RecordingSeconds()
+    local r = A.state.recording
+    if not r.on or not r.startedAt then
+        return 0
+    end
+    return floor(GetTime() - r.startedAt)
+end
+
+-- Settings: your own dungeon party fill, and (a game master's) the realm's.
+function A.RequestSettings()
+    A.Send("settings")
+end
+
+function A.PartyFill(on)
+    A.Send("partyfill", on and "on" or "off")
+end
+
+function A.PartyFillRealm(on)
+    A.Send("partyfill", "realm", on and "on" or "off")
+end
+
+-- Prepare: the specs and the levels your class takes, then the character set up at a level you typed.
+function A.RequestSpecs()
+    A.Send("specs")
+end
+
+function A.Prepare(level, spec)
+    level = tonumber(level)
+    if not level or not spec then
+        A.SetMessage(false, "Type a level and pick a spec first.")
+        return
+    end
+    A.Send("prepare", floor(level), spec)
+end
+
+function A.God(on)
+    A.Send("god", on and "on" or "off")
+end
+
 -- One rank of the companion's talent learned (learn true) or unlearned, by talent id; the same of its pet.
 function A.Talent(name, learn, talentId)
     A.Send("talent", name, learn and "learn" or "unlearn", talentId)
@@ -158,15 +242,20 @@ end
 
 local handlers = {}
 
-function handlers.HELLO(protocol, enabled, stage)
+function handlers.HELLO(protocol, enabled, stage, capture, gm, prepare)
     local s = A.state
     s.connected = true
     s.absent = false
     s.protocol = tonumber(protocol)
     s.enabled = enabled == "1"
     s.stage = stage
+    s.captureAvailable = capture == "1"
+    s.isGM = gm == "1"
+    s.prepareAllowed = prepare == "1"
     s.races = {}
     s.raceOrder = {}
+    s.specs = {}
+    s.specsAsked = false
     if s.protocol ~= A.PROTOCOL then
         A.SetMessage(false, format("The realm speaks Animus protocol %s, this addon %d: update one of them.",
             tostring(protocol), A.PROTOCOL))
@@ -214,6 +303,53 @@ function handlers.PETTALENT(name, id, row, col, maxRank, rank, spells, dependsOn
         rank = tonumber(rank) or 0, spells = list, dependsOn = tonumber(dependsOn) or 0,
         dependsOnRank = tonumber(dependsOnRank) or 0,
     })
+end
+
+function handlers.RECORD(on, id, seconds, notes, god, available)
+    local r = A.state.recording
+    r.on = on == "1"
+    r.id = r.on and id or nil
+    r.startedAt = r.on and (GetTime() - (tonumber(seconds) or 0)) or nil
+    r.notes = tonumber(notes) or 0
+    r.god = god == "1"
+    if available ~= nil then
+        A.state.captureAvailable = available == "1"
+    end
+end
+
+function handlers.NOTE(seq, count)
+    A.state.recording.notes = tonumber(count) or A.state.recording.notes
+    if A.OnNoteKept then
+        A.OnNoteKept(tonumber(seq) or 0)
+    end
+end
+
+function handlers.SETTINGS(mine, realm, overridden, config)
+    local s = A.state.settings
+    s.partyFill = mine == "1"
+    s.partyFillRealm = realm == "1"
+    s.partyFillOverridden = overridden == "1"
+    s.partyFillConfig = config == "1"
+end
+
+function handlers.SPEC(index, name)
+    local n = tonumber(index)
+    if not n then
+        return
+    end
+    for i, spec in ipairs(A.state.specs) do
+        if spec.index == n then
+            table.remove(A.state.specs, i)
+            break
+        end
+    end
+    table.insert(A.state.specs, { index = n, name = name or tostring(n) })
+    table.sort(A.state.specs, function(a, b) return a.index < b.index end)
+end
+
+function handlers.LEVELS(min, max)
+    A.state.levels.min = tonumber(min) or 1
+    A.state.levels.max = tonumber(max) or 80
 end
 
 function handlers.OK(text)
@@ -286,6 +422,20 @@ end)
 -- /animus
 
 SLASH_ANIMUS1 = "/animus"
-SlashCmdList.ANIMUS = function()
-    A.ToggleWindow()
+SlashCmdList.ANIMUS = function(input)
+    local word, rest = strsplit(" ", strtrim(input or ""), 2)
+    word = strlower(word or "")
+    if word == "rec" or word == "record" then
+        if A.ToggleRecordBar then
+            A.ToggleRecordBar()
+        end
+    elseif word == "note" then
+        if rest and rest ~= "" then
+            A.Note(rest)
+        elseif A.FocusNote then
+            A.FocusNote()
+        end
+    else
+        A.ToggleWindow()
+    end
 end

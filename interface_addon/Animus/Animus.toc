@@ -1,10 +1,11 @@
 ## Interface: 30300
 ## Title: Animus
-## Notes: Summon and manage your Animus class companions (needs mod-animus on the realm).
+## Notes: Animus companions, recordings of your play, settings and Prepare (needs mod-animus on the realm).
 ## Author: Animus
-## Version: 1.0
+## Version: 1.1
 ## SavedVariables: AnimusDB
 
 Animus.lua
 AnimusUI.lua
+AnimusRecord.lua
 AnimusInspect.lua

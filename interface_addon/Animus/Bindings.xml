@@ -1,0 +1,9 @@
+<Bindings>
+  <!-- Loaded by the client from the addon folder (never list it in the .toc). The names are set in AnimusRecord.lua. -->
+  <Binding name="ANIMUS_NOTE" header="ANIMUS">
+    Animus.FocusNote()
+  </Binding>
+  <Binding name="ANIMUS_RECORD_TOGGLE">
+    Animus.ToggleRecording()
+  </Binding>
+</Bindings>
