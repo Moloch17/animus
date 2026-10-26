@@ -36,7 +36,7 @@ namespace Animus::Capture
         /// The automatic tier: every player from login into the hourly files. Off leaves only manual recordings.
         bool Auto = true;
         /// Where the files go: <Dir>/<yyyy-mm-dd>/<hh>/<stream>-<map>.bin.gz, index.json per hour, the salt, and
-        /// <Dir>/recordings/<id>/ for the manual recordings.
+        /// <Dir>/recordings/<id>/ for the manual recordings. Unset in the conf: <LogsDir>/animus-capture.
         std::string Dir;
         uint32 SnapshotMs = 250;            // while in combat or moving
         uint32 IdleSnapshotMs = 1000;       // otherwise

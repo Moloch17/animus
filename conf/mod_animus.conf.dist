@@ -1232,11 +1232,11 @@ Animus.Life.IdleSeconds = 20
 #
 #    Animus.Capture.Enable
 #        Description: The writer: capture of either tier to Animus.Capture.Dir. Can be switched on
-#                     and off with ".reload config"; the first switch on needs Dir set.
-#        Default:     0 - (Disabled)
-#                     1 - (Enabled)
+#                     and off with ".reload config".
+#        Default:     1 - (Enabled)
+#                     0 - (Disabled)
 
-Animus.Capture.Enable = 0
+Animus.Capture.Enable = 1
 
 #
 #    Animus.Capture.Auto
@@ -1253,9 +1253,11 @@ Animus.Capture.Auto = 1
 #                     index.json per hour, <Dir>/recordings/<id>/ per manual recording with its
 #                     manifest.json, and <Dir>/salt (made once, never replaced). Must be a writable
 #                     directory with room to grow: nothing is ever deleted (under Docker, not the
-#                     read-only data volume; mount a volume for it). Unset, capture stays off and
-#                     the startup log says so. Read at startup only.
-#        Default:     ""
+#                     read-only data volume). Empty: <LogsDir>/animus-capture, the logs directory
+#                     the realm already writes to (under Docker the logs bind mount,
+#                     env/dist/logs/animus-capture on the host); the working directory when there
+#                     is no LogsDir either. Read at startup only.
+#        Default:     "" - (<LogsDir>/animus-capture)
 
 Animus.Capture.Dir = ""
 

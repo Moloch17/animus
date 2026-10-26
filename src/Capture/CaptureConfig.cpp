@@ -23,12 +23,21 @@
 #include "StringConvert.h"
 #include "Tokenize.h"
 #include <algorithm>
+#include <filesystem>
 
 void Animus::Capture::CaptureConfig::Load()
 {
-    Enable = sConfigMgr->GetOption<bool>("Animus.Capture.Enable", false);
+    Enable = sConfigMgr->GetOption<bool>("Animus.Capture.Enable", true);
     Auto = sConfigMgr->GetOption<bool>("Animus.Capture.Auto", true);
     Dir = sConfigMgr->GetOption<std::string>("Animus.Capture.Dir", "");
+    // Unset: <LogsDir>/animus-capture -- the logs directory is the one place a stock realm (and its container's
+    // bind mounts) already writes to; the working directory when there is no LogsDir either.
+    if (Dir.empty())
+    {
+        std::string const logs = sConfigMgr->GetOption<std::string>("LogsDir", "");
+        Dir = ((logs.empty() ? std::filesystem::current_path() : std::filesystem::path(logs)) / "animus-capture")
+            .string();
+    }
     SnapshotMs = std::max<uint32>(50, sConfigMgr->GetOption<uint32>("Animus.Capture.SnapshotMs", 250));
     IdleSnapshotMs = std::max<uint32>(SnapshotMs, sConfigMgr->GetOption<uint32>("Animus.Capture.IdleSnapshotMs",
         1000));

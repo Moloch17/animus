@@ -112,8 +112,8 @@ Game master commands, not available from the console; the addon does the same fo
 
 ## Play capture
 
-With `Animus.Capture.Enable = 1` and `Animus.Capture.Dir` set, the module records play to files the forge trains
-on: realistic movement first (a learned style reward and a realism score), then reference numbers, prices and
+The module records play (`Animus.Capture.Enable`, on by default) to files the forge trains on, under
+`Animus.Capture.Dir` (empty: `<LogsDir>/animus-capture`, so under Docker `env/dist/logs/animus-capture` on the host): realistic movement first (a learned style reward and a realism score), then reference numbers, prices and
 scenarios from real play, and whole dungeon runs to learn a dungeon from. The module only records; it scores and
 trains nothing. Two tiers share one writer and one format (version 4):
 
