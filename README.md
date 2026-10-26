@@ -34,8 +34,8 @@ without their surface normal (live-follow decision 2).
 ## Commands
 
 Everything the addon does with buttons can be typed. `.animus help` lists the commands you may use with their
-syntax, `.help animus <command>` explains one, and a wrong call prints its usage line (the module writes its help into
-the core's `command` table at startup, with the same securities as below).
+syntax, and a wrong call prints its usage line (the help lives in the module's code; nothing of it is written to the
+world database, so `.help animus <command>` has no entry).
 
 | Command | Who | Effect |
 |---|---|---|

@@ -25,7 +25,6 @@
 #include "Chat.h"
 #include "CompanionClient.h"
 #include "CommandScript.h"
-#include "DatabaseEnv.h"
 #include "Log.h"
 #include "Optional.h"
 #include "Player.h"
@@ -59,10 +58,10 @@ namespace
         return true;
     }
 
-    /// Every `.animus` command: its name in the core's `command` table, who may use it, and its help -- the usage
-    /// line the core prints on a wrong syntax and `.help animus <command>` shows. Written into the world database
-    /// at startup (the table is where the core reads help and security from), so the chat commands work and explain
-    /// themselves without a separate SQL step. The security here is the one the code table carries.
+    /// Every `.animus` command: its name, who may use it, and its help -- the usage line a wrong call prints
+    /// (Usage) and what `.animus help` lists. Kept in the code alone: the core's `command` table (where `.help`
+    /// reads from) is not written (the user, 2026-10-26: nothing of the module's goes into the world database). The
+    /// security here is the one the code table carries.
     struct CommandHelp
     {
         char const* Name;
@@ -100,23 +99,6 @@ namespace
         { "animus models", SEC_GAMEMASTER, "Syntax: .animus models\r\n\r\nEvery class's model for the configured "
           "stage, whether it loads, and the camera scenes loaded." },
     };
-
-    /// The help of every `.animus` command into the world database's `command` table (help and security), and the
-    /// command map reloaded so the running server has it. World thread, at startup.
-    void InstallCommandHelp()
-    {
-        for (CommandHelp const& command : COMMAND_HELP)
-        {
-            std::string help(command.Help);
-            WorldDatabase.EscapeString(help);
-            WorldDatabase.DirectExecute(Acore::StringFormat("INSERT INTO `command` (`name`, `security`, `help`) VALUES "
-                "('{}', {}, '{}') ON DUPLICATE KEY UPDATE `security` = VALUES(`security`), `help` = VALUES(`help`)",
-                command.Name, command.Security, help));
-        }
-        Acore::ChatCommands::InvalidateCommandMap();
-        LOG_INFO("module.animus", "Animus: {} .animus commands with their help in the command table",
-            std::size(COMMAND_HELP));
-    }
 
     /// The usage line of a command, as the help table has it (its first line), for a wrong call.
     bool Usage(ChatHandler* handler, char const* name)
@@ -334,11 +316,7 @@ namespace
             { WORLDHOOK_ON_AFTER_CONFIG_LOAD, WORLDHOOK_ON_STARTUP, WORLDHOOK_ON_UPDATE, WORLDHOOK_ON_SHUTDOWN }) { }
 
         void OnAfterConfigLoad(bool /*reload*/) override { sAnimusMod->LoadConfig(); }
-        void OnStartup() override
-        {
-            sAnimusMod->OnStartup();
-            InstallCommandHelp();
-        }
+        void OnStartup() override { sAnimusMod->OnStartup(); }
         void OnUpdate(uint32 diff) override { sAnimusMod->OnUpdate(diff); }
         void OnShutdown() override { sAnimusMod->OnShutdown(); }
     };
