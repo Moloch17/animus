@@ -44,7 +44,10 @@ A.state = {
     settings = { partyFill = true, partyFillRealm = true, partyFillOverridden = false, partyFillConfig = true },
     specs = {},             -- { { index = 0, name = "arms" }, ... } of the player's class
     levels = { min = 1, max = 80 },
+    life = nil,             -- { all, quests, auction, mail, taxi, crafting } booleans (the realm's life switches)
 }
+
+A.LIFE_FEATURES = { "all", "quests", "auction", "mail", "taxi", "crafting" }
 
 A.listeners = {}
 
@@ -201,6 +204,15 @@ function A.God(on)
     A.Send("god", on and "on" or "off")
 end
 
+-- The realm's life switches (what companions do outside the fight): read by anyone, flipped by a game master.
+function A.RequestLife()
+    A.Send("life")
+end
+
+function A.Life(feature, on)
+    A.Send("life", feature, on and "on" or "off")
+end
+
 -- One rank of the companion's talent learned (learn true) or unlearned, by talent id; the same of its pet.
 function A.Talent(name, learn, talentId)
     A.Send("talent", name, learn and "learn" or "unlearn", talentId)
@@ -256,9 +268,13 @@ function handlers.HELLO(protocol, enabled, stage, capture, gm, prepare)
     s.raceOrder = {}
     s.specs = {}
     s.specsAsked = false
-    if s.protocol ~= A.PROTOCOL then
-        A.SetMessage(false, format("The realm speaks Animus protocol %s, this addon %d: update one of them.",
-            tostring(protocol), A.PROTOCOL))
+    if (s.protocol or 0) < A.PROTOCOL then
+        A.SetMessage(false, format("The realm's mod-animus speaks protocol %s, this addon %d: the realm's module is "
+            .. "older. Companions still work; recordings and settings need the newer module.", tostring(protocol),
+            A.PROTOCOL))
+    elseif s.protocol ~= A.PROTOCOL then
+        A.SetMessage(false, format("The realm's mod-animus speaks protocol %s, this addon %d: update the addon "
+            .. "(interface_addon/Animus in the module).", tostring(protocol), A.PROTOCOL))
     elseif not s.enabled then
         A.SetMessage(false, "Animus is disabled on this realm.")
     end
@@ -345,6 +361,11 @@ function handlers.SPEC(index, name)
     end
     table.insert(A.state.specs, { index = n, name = name or tostring(n) })
     table.sort(A.state.specs, function(a, b) return a.index < b.index end)
+end
+
+function handlers.LIFE(all, quests, auction, mail, taxi, crafting)
+    A.state.life = { all = all == "1", quests = quests == "1", auction = auction == "1", mail = mail == "1",
+        taxi = taxi == "1", crafting = crafting == "1" }
 end
 
 function handlers.LEVELS(min, max)
@@ -435,7 +456,10 @@ SlashCmdList.ANIMUS = function(input)
         elseif A.FocusNote then
             A.FocusNote()
         end
-    else
+    elseif word == "" then
         A.ToggleWindow()
+    else
+        A.Print("/animus opens the window; /animus rec the recorder bar; /animus note <text> notes into the "
+            .. "recording. Everything else is a chat command: .animus help lists them.")
     end
 end

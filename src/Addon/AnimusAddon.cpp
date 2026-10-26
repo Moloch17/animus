@@ -26,6 +26,7 @@
 #include "SharedDefines.h"
 #include "StringFormat.h"
 #include "WorldPacket.h"
+#include <array>
 #include <charconv>
 #include <optional>
 #include <string>
@@ -35,7 +36,8 @@ namespace
 {
     /// Bumped when a reply changes shape; the addon shows what it expects.
     /// 3 (2026-10-25): recordings (record, note; RECORD, NOTE), settings (partyfill; SETTINGS), Prepare (specs,
-    /// prepare; SPEC, LEVELS), god; HELLO gained capture available, isGM and prepare allowed.
+    /// prepare; SPEC, LEVELS), god; HELLO gained capture available, isGM and prepare allowed. LIFE (the life
+    /// switches, in HELLO and after `life`) was added within 3: an addon that does not know it ignores the line.
     constexpr uint32 PROTOCOL = 3;
 
     /// The client drops a longer addon message. Replies put the one free-text field last, so it is what a cut
@@ -165,6 +167,14 @@ namespace
         Send(player, Acore::StringFormat("LEVELS\t{}\t{}", minLevel, maxLevel));
     }
 
+    /// LIFE <all> <quests> <auction> <mail> <taxi> <crafting>: the realm's life switches (any player may read them).
+    void SendLife(Player* player)
+    {
+        std::array<bool, 6> const flags = sAnimusMod->LifeFlags();
+        Send(player, Acore::StringFormat("LIFE\t{}\t{}\t{}\t{}\t{}\t{}", flags[0] ? 1 : 0, flags[1] ? 1 : 0,
+            flags[2] ? 1 : 0, flags[3] ? 1 : 0, flags[4] ? 1 : 0, flags[5] ? 1 : 0));
+    }
+
     /// Everything the addon needs to open: HELLO <protocol> <enabled> <stage> <capture available> <is gm>
     /// <prepare allowed>, a RACE line per race of the player's faction with the classes it can be, the companion,
     /// the recording and the settings.
@@ -178,6 +188,7 @@ namespace
         SendCompanion(player);
         SendRecord(player);
         SendSettings(player);
+        SendLife(player);
     }
 
     /// The addon's free text, last word of a request: tabs cannot reach here (the split), so the rest is taken
@@ -224,16 +235,18 @@ bool Animus::Addon::Handle(Player* player, std::string_view msg)
     }
     else if (request == "life")
     {
-        // The realm's life switches: a game master's to flip (any player may read them).
+        // The realm's life switches: a game master's to flip (any player may read them). LIFE either way.
         if (words.size() == 1)
-            for (std::string const& line : sAnimusMod->LifeStatus())
-                SendResult(player, true, line);
+            SendLife(player);
         else if (words.size() != 3)
             SendResult(player, false, "A life switch names a feature and on or off.");
         else if (!IsGameMaster(player))
             SendResult(player, false, "The realm's life switches are a game master's to change.");
         else
+        {
             SendResult(player, sAnimusMod->LifeToggle(words[1], words[2], message), message);
+            SendLife(player);
+        }
     }
     else if (request == "record")
     {

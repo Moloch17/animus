@@ -55,7 +55,12 @@ holds the Note box; `/animus note <text>` and a key binding (Esc > Key Bindings 
 title and whether to keep or discard it. **Settings**: whether your dungeon parties are filled with bots (saved
 per character; a game master also sees the realm's switch), and, when the realm allows it for your account,
 Prepare -- a level you type and a spec, then your character set to it with gear, talents and spells, everything
-you wore and carried mailed back to you first -- and god mode, flagged in the recording.
+you wore and carried mailed back to you first -- and god mode, flagged in the recording. A game master also sees
+the realm's companion-life switches (all, quests, auction, mail, taxi, crafting) there. Everything the window does
+can also be typed: `.animus help` lists the chat commands.
+
+Against an older module (protocol below 3) the Record and Settings tabs are hidden and the companion tab still
+works; the window says which side is older.
 
 ## Protocol
 
@@ -89,7 +94,8 @@ Requests (lower case):
 | `specs` | one `SPEC` per spec of your class, then `LEVELS` (when Prepare is for your account) |
 | `prepare <level> <spec index>` | `OK` or `ERR`: your character set to that level, geared, talented and taught for the spec; everything worn and carried mailed to you first (Animus.Prepare.Security) |
 | `god on\|off` | `OK` or `ERR`, then `RECORD` (Animus.Capture.Recording.GodSecurity) |
-| `life ...` | as before, now game master only |
+| `life` | `LIFE` |
+| `life <feature> on\|off` | `OK` or `ERR`, then `LIFE` (game master): a life switch of all, quests, auction, mail, taxi, crafting |
 
 Replies (upper case, so the addon can tell an answer from its own request echoed back by a realm without the
 module):
@@ -106,6 +112,7 @@ module):
 | `SETTINGS` | your own dungeon party fill (`1`/`0`), the realm's, `1` while a game master's override is in force, the config's value |
 | `SPEC` | spec index, spec name (one line per spec of your class) |
 | `LEVELS` | the lowest and the highest level Prepare takes for your class |
+| `LIFE` | the realm's life switches as `1`/`0`: all, quests, auction, mail, taxi, crafting (in `HELLO` too) |
 | `OK` / `ERR` | the module's message |
 
 Talent ids are Talent.dbc's, the ones in the client's talent hyperlinks (`|Htalent:1234:...`). The race and class

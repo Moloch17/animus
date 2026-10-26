@@ -89,26 +89,32 @@ every save, players cannot mail it, level rewards skip it and its achievement cr
 
 ## Commands
 
-Game master commands, not available from the console; the addon does the same for every player.
+Everything the addon does with buttons can be typed. The companion, recording and settings commands are every
+player's; the realm's switches are a game master's. `.animus help` lists the commands you may use with their syntax,
+`.help animus <command>` explains one, and a wrong call prints its usage line (the module writes its help into the
+core's `command` table at startup, with the same securities as below, so `.help` and the syntax errors know it).
 
-| Command | Effect |
-|---|---|
-| `.animus create <name> <race> <class>` | Your companion character (`.animus create Tarn orc warrior`) |
-| `.animus summon` | It comes to you |
-| `.animus dismiss` | Saved and sent away |
-| `.animus rename <name>` | A new name, nothing else changed |
-| `.animus reroll <race> <class>` | A new character of the same name |
-| `.animus list` | Your companion and whether its model is loaded |
-| `.animus stage list` | Every curriculum stage and its arenas: the names `Animus.Curriculum.Stage` accepts |
-| `.animus models` | Console too: every class's model for `Animus.Curriculum.Stage` and whether it loads, and if not the first manifest field that differs. Run it after copying models in, before anyone summons |
-| `.animus rate <+\|-> [movement\|combat\|healing\|tanking\|stuck\|other]` | Any player: your verdict on your companion's play, recorded for training (play capture) |
-| `.animus record [on\|off [keep\|discard] [title]]` | Any player: a recording of your own play started, stopped with a verdict and a title, or its status (play capture, "Recordings") |
-| `.animus note <text>` | Any player: a note into your running recording |
-| `.animus partyfill [on\|off]` | Any player: whether your own dungeon parties are filled with bots (saved per character) |
-| `.animus partyfill realm [on\|off]` | Game master: the realm's dungeon party fill until the next `.reload config` |
-| `.animus prepare <level> <spec>` | `Animus.Prepare.Security`: this character set to that level, geared, talented and taught for the spec (its name or index), everything it wore and carried mailed to it first |
-| `.animus god on\|off` | `Animus.Capture.Recording.GodSecurity`: god mode, flagged in the recording and switched off when the recording that switched it on stops |
-| `.animus purge` | Administrator, console too: every account the module made (`ANIMUS<guid>`) deleted with its characters, every companion sent away unsaved, the module's table dropped |
+| Command | Who | Effect |
+|---|---|---|
+| `.animus help` | Any player | Every `.animus` command you may use, with its syntax |
+| `.animus create <name> <race> <class>` | Any player | Your companion character (`.animus create Tarn orc warrior`) |
+| `.animus summon` | Any player | It comes to you |
+| `.animus dismiss` | Any player | Saved and sent away |
+| `.animus rename <name>` | Any player | A new name, nothing else changed |
+| `.animus reroll <race> <class>` | Any player | A new character of the same name |
+| `.animus list` | Any player | Your companion and whether its model is loaded |
+| `.animus talent <companion> learn\|unlearn <talent id>` | Any player | One rank of its talent (the addon's talent pane does this by clicking) |
+| `.animus life [<feature> on\|off]` | Game master | What companions do outside the fight: switches for all, quests, auction, mail, taxi, crafting, until the next `.reload config` (the addon's Settings tab shows them to game masters) |
+| `.animus stage list` | Game master | Every curriculum stage and its arenas: the names `Animus.Curriculum.Stage` accepts |
+| `.animus models` | Game master | Console too: every class's model for `Animus.Curriculum.Stage` and whether it loads, and if not the first manifest field that differs. Run it after copying models in, before anyone summons |
+| `.animus rate <+\|-> [movement\|combat\|healing\|tanking\|stuck\|other]` | Any player | Your verdict on your companion's play, recorded for training (play capture) |
+| `.animus record [on\|off [keep\|discard] [title]]` | Any player | A recording of your own play started, stopped with a verdict and a title, or its status (play capture, "Recordings") |
+| `.animus note <text>` | Any player | A note into your running recording |
+| `.animus partyfill [on\|off]` | Any player | Whether your own dungeon parties are filled with bots (saved per character) |
+| `.animus partyfill realm [on\|off]` | Game master | The realm's dungeon party fill until the next `.reload config` |
+| `.animus prepare <level> <spec>` | `Animus.Prepare.Security` | This character set to that level, geared, talented and taught for the spec (its name or index), everything it wore and carried mailed to it first |
+| `.animus god on\|off` | `Animus.Capture.Recording.GodSecurity` | God mode, flagged in the recording and switched off when the recording that switched it on stops |
+| `.animus purge` | Administrator | Console too: every account the module made (`ANIMUS<guid>`) deleted with its characters, every companion sent away unsaved, the module's table dropped |
 
 ## Play capture
 

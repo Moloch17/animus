@@ -27,6 +27,7 @@
 #include "ObjectGuid.h"
 #include "Unit.h"
 #include <memory>
+#include <array>
 #include <string>
 #include <string_view>
 #include <optional>
@@ -223,6 +224,8 @@ namespace Animus
         void OnOwnerQuestAccept(Player* owner, Quest const* quest);
         void OnOwnerQuestAbandon(Player* owner, uint32 questId);
         [[nodiscard]] std::vector<std::string> LifeStatus() const;
+        /// The life switches as flags, in the order all, quests, auction, mail, taxi, crafting (the addon's LIFE).
+        [[nodiscard]] std::array<bool, 6> LifeFlags() const;
         bool LifeToggle(std::string_view feature, std::string_view state, std::string& message);
 
         /// A player logged out: their companion is saved and removed.

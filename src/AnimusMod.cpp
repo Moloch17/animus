@@ -1190,6 +1190,12 @@ std::vector<std::string> Animus::AnimusMod::LifeStatus() const
     return sLife->Status();
 }
 
+std::array<bool, 6> Animus::AnimusMod::LifeFlags() const
+{
+    Life::Settings const& life = sLife->Current();
+    return { life.Enable, life.Quests, life.Auction, life.Mail, life.Taxi, life.Crafting };
+}
+
 bool Animus::AnimusMod::LifeToggle(std::string_view feature, std::string_view state, std::string& message)
 {
     bool const on = state == "on";

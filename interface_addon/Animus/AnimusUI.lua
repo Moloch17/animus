@@ -521,6 +521,31 @@ prepareButton:SetScript("OnClick", function()
     end
 end)
 
+-- The realm's life switches (a game master's): what companions do outside the fight.
+local lifeHeader = settingsPanel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+lifeHeader:SetText("Companion life (realm, until the config is reloaded)")
+
+local lifeChecks = {}
+local LIFE_LABELS = { all = "Life on", quests = "Quests", auction = "Auction house", mail = "Mail", taxi = "Taxi",
+    crafting = "Crafting" }
+for i, feature in ipairs(A.LIFE_FEATURES) do
+    local check = CreateFrame("CheckButton", "AnimusLifeCheck" .. feature, settingsPanel, "UICheckButtonTemplate")
+    check:SetWidth(24)
+    check:SetHeight(24)
+    getglobal("AnimusLifeCheck" .. feature .. "Text"):SetText(LIFE_LABELS[feature])
+    if i == 1 then
+        check:SetPoint("TOPLEFT", lifeHeader, "BOTTOMLEFT", -4, -2)
+    elseif i == 4 then
+        check:SetPoint("TOPLEFT", lifeChecks[1], "BOTTOMLEFT", 0, 0)
+    else
+        check:SetPoint("LEFT", lifeChecks[i - 1], "RIGHT", 90, 0)
+    end
+    check:SetScript("OnClick", function(self)
+        A.Life(feature, self:GetChecked() and true or false)
+    end)
+    lifeChecks[i] = check
+end
+
 local godCheck = CreateFrame("CheckButton", "AnimusGodCheck", settingsPanel, "UICheckButtonTemplate")
 godCheck:SetPoint("TOPLEFT", prepareButton, "BOTTOMLEFT", -4, -10)
 godCheck:SetWidth(26)
@@ -575,6 +600,25 @@ local function RefreshSettings(s)
             widget:Hide()
         end
     end
+
+    -- The life switches, under Prepare (or under the party fill text when Prepare is hidden), game masters only.
+    lifeHeader:ClearAllPoints()
+    lifeHeader:SetPoint("TOPLEFT", prep and godCheck or fillNote, "BOTTOMLEFT", prep and 4 or 0, prep and -6 or -14)
+    for i, feature in ipairs(A.LIFE_FEATURES) do
+        local check = lifeChecks[i]
+        if s.isGM and s.life then
+            check:Show()
+            check:SetChecked(s.life[feature])
+            SetEnabled(check, ready)
+        else
+            check:Hide()
+        end
+    end
+    if s.isGM and s.life then
+        lifeHeader:Show()
+    else
+        lifeHeader:Hide()
+    end
     if prep then
         if levelBox:GetText() == "" then
             levelBox:SetText(tostring(UnitLevel("player")))
@@ -595,6 +639,19 @@ end
 
 local function Refresh(s)
     local ready = s.connected and s.enabled
+    -- An older module (protocol below 3) has no recordings or settings: those tabs are hidden.
+    local modern = not s.connected or (s.protocol or 0) >= 3
+    for i = 2, #TABS do
+        if modern then
+            tabButtons[i]:Show()
+        else
+            tabButtons[i]:Hide()
+        end
+    end
+    if not modern and currentTab ~= 1 then
+        ShowTab(1)
+        return
+    end
     if s.absent then
         status:SetText(Color(RED, "mod-animus is not installed on this realm."))
     elseif not s.connected then

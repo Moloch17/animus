@@ -25,6 +25,8 @@
 #include "Chat.h"
 #include "CompanionClient.h"
 #include "CommandScript.h"
+#include "DatabaseEnv.h"
+#include "Log.h"
 #include "Optional.h"
 #include "Player.h"
 #include "PlayerScript.h"
@@ -57,6 +59,96 @@ namespace
         return true;
     }
 
+    /// Every `.animus` command: its name in the core's `command` table, who may use it, and its help -- the usage
+    /// line the core prints on a wrong syntax and `.help animus <command>` shows. Written into the world database
+    /// at startup (the table is where the core reads help and security from), so the chat commands work and explain
+    /// themselves without a separate SQL step. The security here is the one the code table carries.
+    struct CommandHelp
+    {
+        char const* Name;
+        uint32 Security;
+        char const* Help;
+    };
+
+    constexpr CommandHelp COMMAND_HELP[] =
+    {
+        { "animus", SEC_PLAYER,
+          "Syntax: .animus <command>\r\n\r\nAnimus companions, recordings and settings. Commands: create, summon, "
+          "dismiss, list, rename, reroll, talent, rate, record, note, partyfill, prepare, god; game masters also "
+          "life, stage list, models, purge. .animus help lists them with their syntax." },
+        { "animus help", SEC_PLAYER, "Syntax: .animus help\r\n\r\nEvery .animus command with its syntax." },
+        { "animus create", SEC_PLAYER,
+          "Syntax: .animus create $name $race $class\r\n\r\nYour one companion character, of that name, race and "
+          "class (race and class words as the game spells them, one word: nightelf, deathknight). Example: .animus "
+          "create Tarn orc warrior" },
+        { "animus summon", SEC_PLAYER, "Syntax: .animus summon\r\n\r\nYour companion comes to you." },
+        { "animus dismiss", SEC_PLAYER, "Syntax: .animus dismiss\r\n\r\nYour companion is saved and sent away." },
+        { "animus list", SEC_PLAYER, "Syntax: .animus list\r\n\r\nYour companion and whether its model is loaded." },
+        { "animus rename", SEC_PLAYER, "Syntax: .animus rename $name\r\n\r\nYour companion's new name; nothing else "
+          "changes." },
+        { "animus reroll", SEC_PLAYER, "Syntax: .animus reroll $race $class\r\n\r\nYour companion becomes a new "
+          "character of the same name, with default talents and gear. Everything you changed on it is lost." },
+        { "animus talent", SEC_PLAYER, "Syntax: .animus talent $companion learn|unlearn $talentId\r\n\r\nOne rank of "
+          "your companion's talent learned or unlearned, by Talent.dbc id (the id in a talent link). The addon's "
+          "talent pane does this by clicking." },
+        { "animus rate", SEC_PLAYER, "Syntax: .animus rate +|- [movement|combat|healing|tanking|stuck|other]\r\n\r\n"
+          "Your verdict on your companion's play, recorded for training while the realm records play." },
+        { "animus record", SEC_PLAYER, "Syntax: .animus record [on | off [keep|discard] [$title]]\r\n\r\nA recording "
+          "of your own play: on starts one, off ends it with your verdict and an optional title; alone, its status. "
+          "Notes go in with .animus note." },
+        { "animus note", SEC_PLAYER, "Syntax: .animus note $text\r\n\r\nFree text into your running recording, with "
+          "where you stand, your target and the state of the moment." },
+        { "animus partyfill", SEC_PLAYER, "Syntax: .animus partyfill [on|off]\r\n\r\nWhether your own dungeon parties "
+          "are filled with bots (saved per character); alone, the current setting and the realm's." },
+        { "animus partyfill realm", SEC_GAMEMASTER, "Syntax: .animus partyfill realm on|off\r\n\r\nThe realm's "
+          "dungeon party fill for every player, until the next .reload config." },
+        { "animus prepare", SEC_PLAYER, "Syntax: .animus prepare $level $spec\r\n\r\nYour character set to that "
+          "level, geared, talented and taught for the spec (its name or index: .animus prepare 18 arms). Everything "
+          "you wear and carry is mailed to you first. Needs the account security Animus.Prepare.Security." },
+        { "animus god", SEC_PLAYER, "Syntax: .animus god on|off\r\n\r\nGod mode for a recording, flagged in it and "
+          "switched off when the recording ends. Needs Animus.Capture.Recording.GodSecurity." },
+        { "animus life", SEC_GAMEMASTER, "Syntax: .animus life [$feature on|off]\r\n\r\nWhat companions do outside "
+          "the fight; a switch for each of all, quests, auction, mail, taxi, crafting (until the next .reload "
+          "config). Alone, the current switches." },
+        { "animus stage", SEC_GAMEMASTER, "Syntax: .animus stage list\r\n\r\nThe curriculum stages." },
+        { "animus stage list", SEC_GAMEMASTER, "Syntax: .animus stage list\r\n\r\nEvery curriculum stage and its "
+          "arenas: the names Animus.Curriculum.Stage accepts." },
+        { "animus models", SEC_GAMEMASTER, "Syntax: .animus models\r\n\r\nEvery class's model for the configured "
+          "stage and whether it loads." },
+        { "animus purge", SEC_ADMINISTRATOR, "Syntax: .animus purge\r\n\r\nEvery account and character the module "
+          "made deleted, every companion sent away unsaved, the module's tables dropped." },
+    };
+
+    /// The help of every `.animus` command into the world database's `command` table (help and security), and the
+    /// command map reloaded so the running server has it. World thread, at startup.
+    void InstallCommandHelp()
+    {
+        for (CommandHelp const& command : COMMAND_HELP)
+        {
+            std::string help(command.Help);
+            WorldDatabase.EscapeString(help);
+            WorldDatabase.DirectExecute(Acore::StringFormat("INSERT INTO `command` (`name`, `security`, `help`) VALUES "
+                "('{}', {}, '{}') ON DUPLICATE KEY UPDATE `security` = VALUES(`security`), `help` = VALUES(`help`)",
+                command.Name, command.Security, help));
+        }
+        Acore::ChatCommands::InvalidateCommandMap();
+        LOG_INFO("module.animus", "Animus: {} .animus commands with their help in the command table",
+            std::size(COMMAND_HELP));
+    }
+
+    /// The usage line of a command, as the help table has it (its first line), for a wrong call.
+    bool Usage(ChatHandler* handler, char const* name)
+    {
+        for (CommandHelp const& command : COMMAND_HELP)
+            if (std::string_view(command.Name) == name)
+            {
+                std::string_view const text(command.Help);
+                handler->SendErrorMessage(std::string(text.substr(0, text.find("\r\n"))), false);
+                return false;
+            }
+        return false;
+    }
+
     class AnimusCommandScript : public CommandScript
     {
     public:
@@ -75,19 +167,24 @@ namespace
                 { "",           HandlePartyFillCommand,      SEC_PLAYER,     Console::No },
             };
 
+            // Every player's: what the addon does with buttons, typed. Game masters' and the administrator's
+            // commands stay theirs. The `command` table (InstallCommandHelp) carries the same securities with the
+            // help text.
             static ChatCommandTable animusCommandTable =
             {
+                { "help",       HandleHelpCommand,      SEC_PLAYER,     Console::Yes },
                 { "record",     HandleRecordCommand,    SEC_PLAYER,     Console::No },
                 { "note",       HandleNoteCommand,      SEC_PLAYER,     Console::No },
                 { "partyfill",  partyFillCommandTable },
                 { "prepare",    HandlePrepareCommand,   SEC_PLAYER,     Console::No },
                 { "god",        HandleGodCommand,       SEC_PLAYER,     Console::No },
-                { "create",     HandleCreateCommand,    SEC_GAMEMASTER, Console::No },
-                { "summon",     HandleSummonCommand,    SEC_GAMEMASTER, Console::No },
-                { "list",       HandleListCommand,      SEC_GAMEMASTER, Console::No },
-                { "dismiss",    HandleDismissCommand,   SEC_GAMEMASTER, Console::No },
-                { "rename",     HandleRenameCommand,    SEC_GAMEMASTER, Console::No },
-                { "reroll",     HandleRerollCommand,    SEC_GAMEMASTER, Console::No },
+                { "create",     HandleCreateCommand,    SEC_PLAYER,     Console::No },
+                { "summon",     HandleSummonCommand,    SEC_PLAYER,     Console::No },
+                { "list",       HandleListCommand,      SEC_PLAYER,     Console::No },
+                { "dismiss",    HandleDismissCommand,   SEC_PLAYER,     Console::No },
+                { "rename",     HandleRenameCommand,    SEC_PLAYER,     Console::No },
+                { "reroll",     HandleRerollCommand,    SEC_PLAYER,     Console::No },
+                { "talent",     HandleTalentCommand,    SEC_PLAYER,     Console::No },
                 { "purge",      HandlePurgeCommand,     SEC_ADMINISTRATOR, Console::Yes },
                 { "life",       HandleLifeCommand,      SEC_GAMEMASTER, Console::Yes },
                 { "models",     HandleModelsCommand,    SEC_GAMEMASTER, Console::Yes },
@@ -103,12 +200,46 @@ namespace
             return commandTable;
         }
 
-        /// .animus create <name> <race> <class>: your one companion character, of that name, race and class.
-        static bool HandleCreateCommand(ChatHandler* handler, std::string name, std::string_view race,
-            std::string_view playerClass)
+        /// .animus help: every command with its syntax, from the help table (what the player may use).
+        static bool HandleHelpCommand(ChatHandler* handler)
         {
+            uint32 const security = handler->GetSession() ? uint32(handler->GetSession()->GetSecurity())
+                : uint32(SEC_CONSOLE);
+            handler->SendSysMessage("Animus commands (.help animus <command> for the details):");
+            for (CommandHelp const& command : COMMAND_HELP)
+            {
+                std::string_view const name(command.Name);
+                std::string_view const text(command.Help);
+                if (name == "animus" || name == "animus help" || name == "animus stage" || command.Security > security)
+                    continue;
+                // The usage line without its "Syntax: " prefix.
+                std::string_view usage = text.substr(0, text.find("\r\n"));
+                if (usage.rfind("Syntax: ", 0) == 0)
+                    usage.remove_prefix(8);
+                handler->SendSysMessage(std::string(usage));
+            }
+            return true;
+        }
+
+        /// .animus create <name> <race> <class>: your one companion character, of that name, race and class.
+        static bool HandleCreateCommand(ChatHandler* handler, Optional<std::string> name,
+            Optional<std::string_view> race, Optional<std::string_view> playerClass)
+        {
+            if (!name || !race || !playerClass)
+                return Usage(handler, "animus create");
             std::string message;
-            return Reply(handler, sAnimusMod->Create(handler->GetPlayer(), std::move(name), race, playerClass,
+            return Reply(handler, sAnimusMod->Create(handler->GetPlayer(), std::move(*name), *race, *playerClass,
+                message), message);
+        }
+
+        /// .animus talent <companion> learn|unlearn <talent id>: one rank of its talent.
+        static bool HandleTalentCommand(ChatHandler* handler, Optional<std::string_view> companion,
+            Optional<std::string_view> action, Optional<uint32> talentId)
+        {
+            if (!companion || !action || !talentId || (*action != "learn" && *action != "unlearn"))
+                return Usage(handler, "animus talent");
+            std::string message;
+            return Reply(handler, sAnimusMod->Talent(handler->GetPlayer(), *companion, *talentId, *action == "learn",
                 message), message);
         }
 
@@ -133,17 +264,22 @@ namespace
         }
 
         /// .animus rename <name>
-        static bool HandleRenameCommand(ChatHandler* handler, std::string name)
+        static bool HandleRenameCommand(ChatHandler* handler, Optional<std::string> name)
         {
+            if (!name)
+                return Usage(handler, "animus rename");
             std::string message;
-            return Reply(handler, sAnimusMod->Rename(handler->GetPlayer(), std::move(name), message), message);
+            return Reply(handler, sAnimusMod->Rename(handler->GetPlayer(), std::move(*name), message), message);
         }
 
         /// .animus reroll <race> <class>: a new companion character of the same name.
-        static bool HandleRerollCommand(ChatHandler* handler, std::string_view race, std::string_view playerClass)
+        static bool HandleRerollCommand(ChatHandler* handler, Optional<std::string_view> race,
+            Optional<std::string_view> playerClass)
         {
+            if (!race || !playerClass)
+                return Usage(handler, "animus reroll");
             std::string message;
-            return Reply(handler, sAnimusMod->Reroll(handler->GetPlayer(), race, playerClass, message), message);
+            return Reply(handler, sAnimusMod->Reroll(handler->GetPlayer(), *race, *playerClass, message), message);
         }
 
         /// .animus purge: every account and character the module made, deleted; every companion sent away unsaved.
@@ -170,10 +306,13 @@ namespace
 
         /// .animus rate <+|-> [movement|combat|healing|tanking|stuck|other]: your verdict on your companion's play,
         /// recorded for training (Animus.Capture). Any player may rate their own companion.
-        static bool HandleRateCommand(ChatHandler* handler, std::string_view sign, Optional<std::string_view> reason)
+        static bool HandleRateCommand(ChatHandler* handler, Optional<std::string_view> sign,
+            Optional<std::string_view> reason)
         {
+            if (!sign || (*sign != "+" && *sign != "-"))
+                return Usage(handler, "animus rate");
             std::string message;
-            return Reply(handler, sAnimusMod->Rate(handler->GetPlayer(), sign, reason.value_or(""), message),
+            return Reply(handler, sAnimusMod->Rate(handler->GetPlayer(), *sign, reason.value_or(""), message),
                 message);
         }
 
@@ -207,12 +346,14 @@ namespace
                 return Reply(handler, Animus::Capture::StopRecording(player, Animus::Capture::StopReason::Stop, given,
                     std::string_view(title), message), message);
             }
-            return Reply(handler, false, ".animus record on, or .animus record off keep|discard [title].");
+            return Usage(handler, "animus record");
         }
 
         /// .animus note <text...>: a note into your running recording.
         static bool HandleNoteCommand(ChatHandler* handler, Tail text)
         {
+            if (std::string_view(text).empty())
+                return Usage(handler, "animus note");
             std::string message;
             uint32 seq = 0;
             return Reply(handler, Animus::Capture::Note(handler->GetPlayer(), std::string_view(text), 0, seq, message),
@@ -232,30 +373,32 @@ namespace
                     "until the next config reload)" : ""));
             }
             if (*state != "on" && *state != "off")
-                return Reply(handler, false, ".animus partyfill on|off.");
+                return Usage(handler, "animus partyfill");
             return Reply(handler, sAnimusMod->SetPartyFill(player, *state == "on", message), message);
         }
 
         /// .animus partyfill realm on|off: the realm's dungeon party fill, for every player, until the next config
         /// reload.
-        static bool HandlePartyFillRealmCommand(ChatHandler* handler, std::string_view state)
+        static bool HandlePartyFillRealmCommand(ChatHandler* handler, Optional<std::string_view> state)
         {
-            if (state != "on" && state != "off")
-                return Reply(handler, false, ".animus partyfill realm on|off.");
+            if (!state || (*state != "on" && *state != "off"))
+                return Usage(handler, "animus partyfill realm");
             std::string message;
-            return Reply(handler, sAnimusMod->PartyFillRealm(state == "on", message), message);
+            return Reply(handler, sAnimusMod->PartyFillRealm(*state == "on", message), message);
         }
 
         /// .animus prepare <level> <spec>: your character at that level, geared and talented for the spec (an index
         /// or a name of your class's specs).
-        static bool HandlePrepareCommand(ChatHandler* handler, uint8 level, std::string_view spec)
+        static bool HandlePrepareCommand(ChatHandler* handler, Optional<uint8> level, Optional<std::string_view> spec)
         {
+            if (!level || !spec)
+                return Usage(handler, "animus prepare");
             Player* player = handler->GetPlayer();
             std::vector<std::string> const specs = Animus::Prepare::Specs(player);
             uint8 index = 0;
             bool found = false;
             for (std::size_t i = 0; i < specs.size(); ++i)
-                if (specs[i] == spec || std::to_string(i) == spec)
+                if (specs[i] == *spec || std::to_string(i) == *spec)
                 {
                     index = uint8(i);
                     found = true;
@@ -268,20 +411,20 @@ namespace
                 return Reply(handler, false, Acore::StringFormat("The spec is one of: {}.", names));
             }
             std::string message;
-            return Reply(handler, Animus::Prepare::Prepare(player, level, index, message), message);
+            return Reply(handler, Animus::Prepare::Prepare(player, *level, index, message), message);
         }
 
         /// .animus god on|off: invulnerable while your recording runs (the account security Prepare needs).
-        static bool HandleGodCommand(ChatHandler* handler, std::string_view state)
+        static bool HandleGodCommand(ChatHandler* handler, Optional<std::string_view> state)
         {
             Player* player = handler->GetPlayer();
-            if (state != "on" && state != "off")
-                return Reply(handler, false, ".animus god on|off.");
+            if (!state || (*state != "on" && *state != "off"))
+                return Usage(handler, "animus god");
             if (!player->GetSession() || uint32(player->GetSession()->GetSecurity())
                 < sAnimusMod->Config().PrepareSecurity)
                 return Reply(handler, false, "God mode is not for your account on this realm.");
             std::string message;
-            return Reply(handler, Animus::Capture::God(player, state == "on", message), message);
+            return Reply(handler, Animus::Capture::God(player, *state == "on", message), message);
         }
 
     };
@@ -293,7 +436,11 @@ namespace
             { WORLDHOOK_ON_AFTER_CONFIG_LOAD, WORLDHOOK_ON_STARTUP, WORLDHOOK_ON_UPDATE, WORLDHOOK_ON_SHUTDOWN }) { }
 
         void OnAfterConfigLoad(bool /*reload*/) override { sAnimusMod->LoadConfig(); }
-        void OnStartup() override { sAnimusMod->OnStartup(); }
+        void OnStartup() override
+        {
+            sAnimusMod->OnStartup();
+            InstallCommandHelp();
+        }
         void OnUpdate(uint32 diff) override { sAnimusMod->OnUpdate(diff); }
         void OnShutdown() override { sAnimusMod->OnShutdown(); }
     };
