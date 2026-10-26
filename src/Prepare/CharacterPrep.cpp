@@ -113,6 +113,15 @@ namespace
         return uint32(above.size());
     }
 
+    /// The class profile of `playerClass`, or null for a class without one.
+    Curriculum::ClassProfile const* FindProfile(uint8 playerClass)
+    {
+        for (Curriculum::ClassProfile const& profile : Curriculum::ClassProfiles())
+            if (profile.Class == playerClass)
+                return &profile;
+        return nullptr;
+    }
+
     uint32 GiveBags(Player* player, uint32 bagEntry)
     {
         uint32 given = 0;
@@ -150,7 +159,7 @@ bool Animus::Prepare::Allowed(Player const* player)
 std::vector<std::string> Animus::Prepare::Specs(Player const* player)
 {
     std::vector<std::string> names;
-    Curriculum::ClassProfile const* profile = player ? Curriculum::ClassAssets::FindProfile(player->getClass())
+    Curriculum::ClassProfile const* profile = player ? FindProfile(player->getClass())
         : nullptr;
     if (!profile)
         return names;
@@ -204,7 +213,7 @@ bool Animus::Prepare::Prepare(Player* player, uint8 level, uint8 spec, std::stri
         message = "Stop recording first: Prepare changes the character the recording is of.";
         return false;
     }
-    Curriculum::ClassProfile const* profile = Curriculum::ClassAssets::FindProfile(player->getClass());
+    Curriculum::ClassProfile const* profile = FindProfile(player->getClass());
     if (!profile)
     {
         message = "Your class has no Animus profile.";
@@ -249,7 +258,7 @@ bool Animus::Prepare::Prepare(Player* player, uint8 level, uint8 spec, std::stri
 
     // 3. Built as a companion is: proficiencies, the spec's standard talents, the kit's spells, glyphs, gear,
     //    reagents and ammo (SeatCharacter::Configure), then full health and power.
-    Curriculum::SeatCharacter::Built const built = Curriculum::SeatCharacter::Configure(player, layout, spec, false);
+    Curriculum::SeatCharacter::Built const built = Curriculum::SeatCharacter::Configure(player, layout, spec);
 
     // 4. Bags back (empty ones), a hearthstone, and the character saved as it stands.
     uint32 const bags = GiveBags(player, sAnimusMod->Config().PrepareBagItem);

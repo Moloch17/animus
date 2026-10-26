@@ -6,20 +6,8 @@ Animus = {}
 local A = Animus
 
 A.PREFIX = "Animus"
-A.PROTOCOL = 3
+A.PROTOCOL = 4
 A.TIMEOUT = 5           -- seconds without an answer before the realm is declared silent
-
--- The words the module accepts, shown the way the game spells them.
-A.NAMES = {
-    races = {
-        human = "Human", dwarf = "Dwarf", nightelf = "Night Elf", gnome = "Gnome", draenei = "Draenei",
-        orc = "Orc", undead = "Undead", tauren = "Tauren", troll = "Troll", bloodelf = "Blood Elf",
-    },
-    classes = {
-        warrior = "Warrior", paladin = "Paladin", hunter = "Hunter", rogue = "Rogue", priest = "Priest",
-        deathknight = "Death Knight", shaman = "Shaman", mage = "Mage", warlock = "Warlock", druid = "Druid",
-    },
-}
 
 A.state = {
     connected = false,      -- the module answered a hello
@@ -27,11 +15,9 @@ A.state = {
     enabled = true,         -- Animus.Enable on the realm
     stage = nil,            -- the stage whose models companions play
     protocol = nil,
-    races = {},             -- race word -> ordered list of class words
-    raceOrder = {},
-    companion = nil,        -- { name, race, class, level, spec, out, loading, parked, modelName, model } or nil
-    pets = {},              -- companion name -> { name, level, free, talents = { {id, row, col, maxRank, rank,
-                            --   spells, dependsOn, dependsOnRank} } }
+    followers = {},         -- the lines the realm lists your followers with (name, level, class, model, clock)
+    maxFollowers = 4,
+    maySummon = false,      -- this account may summon followers (Animus.Follow.Security)
     lastRequest = nil,      -- the first word of the request the last answer was for
     message = nil,          -- the last OK/ERR text
     messageOk = true,
@@ -44,10 +30,7 @@ A.state = {
     settings = { partyFill = true, partyFillRealm = true, partyFillOverridden = false, partyFillConfig = true },
     specs = {},             -- { { index = 0, name = "arms" }, ... } of the player's class
     levels = { min = 1, max = 80 },
-    life = nil,             -- { all, quests, auction, mail, taxi, crafting } booleans (the realm's life switches)
 }
-
-A.LIFE_FEATURES = { "all", "quests", "auction", "mail", "taxi", "crafting" }
 
 A.listeners = {}
 
@@ -60,10 +43,6 @@ local function Changed()
     for _, callback in ipairs(A.listeners) do
         callback(A.state)
     end
-end
-
-function A.Display(kind, word)
-    return A.NAMES[kind][word] or word
 end
 
 function A.Print(text)
@@ -85,47 +64,23 @@ function A.Hello()
     A.Send("hello")
 end
 
-function A.List()
-    A.Send("list")
+-- Followers (protocol 4): bots of your level and faction, played by the follow models, in your party until you
+-- dismiss them (or log out, or leave the dungeon they filled).
+function A.RequestFollowers()
+    A.Send("followers")
 end
 
--- The one companion: created with a name, race and class; summoned and dismissed; renamed; or given a new race and
--- class (which makes a new character of the same name).
-function A.Create(name, race, class)
-    if not (name and name ~= "" and race and class) then
-        A.SetMessage(false, "A companion needs a name, a race and a class.")
+function A.Follow(count)
+    count = tonumber(count)
+    if not count or count < 1 or count > A.state.maxFollowers then
+        A.SetMessage(false, format("Summon 1 to %d followers.", A.state.maxFollowers))
         return
     end
-    A.Send("create", name, race, class)
-end
-
-function A.Summon()
-    A.Send("summon")
+    A.Send("follow", floor(count))
 end
 
 function A.Dismiss()
     A.Send("dismiss")
-end
-
--- Your verdict on how your companion played ("+" or "-"), recorded for training when the realm records play.
-function A.Rate(sign)
-    A.Send("rate", sign)
-end
-
-function A.Rename(name)
-    if not name or name == "" then
-        A.SetMessage(false, "Enter the new name first.")
-        return
-    end
-    A.Send("rename", name)
-end
-
-function A.Reroll(race, class)
-    if not (race and class) then
-        A.SetMessage(false, "Pick a race and a class first.")
-        return
-    end
-    A.Send("reroll", race, class)
 end
 
 -- ---------------------------------------------------------------------------------------------------------------
@@ -204,39 +159,6 @@ function A.God(on)
     A.Send("god", on and "on" or "off")
 end
 
--- The realm's life switches (what companions do outside the fight): read by anyone, flipped by a game master.
-function A.RequestLife()
-    A.Send("life")
-end
-
-function A.Life(feature, on)
-    A.Send("life", feature, on and "on" or "off")
-end
-
--- One rank of the companion's talent learned (learn true) or unlearned, by talent id; the same of its pet.
-function A.Talent(name, learn, talentId)
-    A.Send("talent", name, learn and "learn" or "unlearn", talentId)
-end
-
-function A.PetTalent(name, learn, talentId)
-    A.Send("pettalent", name, learn and "learn" or "unlearn", talentId)
-end
-
-function A.RequestPet(name)
-    A.Send("pet", name)
-end
-
--- The item in the owner's bag `bag` slot `slot` (client numbering) goes on the companion's inventory slot.
-function A.Equip(name, bag, slot, invSlot)
-    A.Send("equip", name, bag, slot, invSlot)
-end
-
--- Whether `name` is the owner's companion, out in the world.
-function A.IsCompanion(name)
-    local companion = A.state.companion
-    return name ~= nil and companion ~= nil and companion.out and companion.name == name
-end
-
 function A.SetMessage(ok, text)
     if text == "" then
         text = nil
@@ -254,7 +176,7 @@ end
 
 local handlers = {}
 
-function handlers.HELLO(protocol, enabled, stage, capture, gm, prepare)
+function handlers.HELLO(protocol, enabled, stage, capture, gm, prepare, summon)
     local s = A.state
     s.connected = true
     s.absent = false
@@ -264,13 +186,12 @@ function handlers.HELLO(protocol, enabled, stage, capture, gm, prepare)
     s.captureAvailable = capture == "1"
     s.isGM = gm == "1"
     s.prepareAllowed = prepare == "1"
-    s.races = {}
-    s.raceOrder = {}
+    s.maySummon = summon == "1"
     s.specs = {}
     s.specsAsked = false
     if (s.protocol or 0) < A.PROTOCOL then
         A.SetMessage(false, format("The realm's mod-animus speaks protocol %s, this addon %d: the realm's module is "
-            .. "older. Companions still work; recordings and settings need the newer module.", tostring(protocol),
+            .. "older. Update the realm's module (this addon is its interface_addon/Animus).", tostring(protocol),
             A.PROTOCOL))
     elseif s.protocol ~= A.PROTOCOL then
         A.SetMessage(false, format("The realm's mod-animus speaks protocol %s, this addon %d: update the addon "
@@ -280,45 +201,14 @@ function handlers.HELLO(protocol, enabled, stage, capture, gm, prepare)
     end
 end
 
-function handlers.RACE(race, classes)
-    local s = A.state
-    if not s.races[race] then
-        table.insert(s.raceOrder, race)
-    end
-    s.races[race] = { strsplit(",", classes or "") }
+function handlers.FOLLOW(count, max)
+    A.state.followers = {}
+    A.state.maxFollowers = tonumber(max) or 4
+    A.state.followersExpected = tonumber(count) or 0
 end
 
-function handlers.COMPANION(exists, name, race, class, level, spec, out, loading, parked, modelName, model)
-    if exists ~= "1" then
-        A.state.companion = nil
-        return
-    end
-    A.state.companion = {
-        name = name, race = race, class = class, level = tonumber(level) or 0, spec = spec or "",
-        out = out == "1", loading = loading == "1", parked = parked == "1", modelName = modelName or "",
-        model = model or "",
-    }
-end
-
-function handlers.PET(name, petName, level, free, count)
-    A.state.pets[name] = { name = petName, level = tonumber(level) or 0, free = tonumber(free) or 0,
-        expected = tonumber(count) or 0, talents = {} }
-end
-
-function handlers.PETTALENT(name, id, row, col, maxRank, rank, spells, dependsOn, dependsOnRank)
-    local pet = A.state.pets[name]
-    if not pet then
-        return
-    end
-    local list = {}
-    for spell in string.gmatch(spells or "", "%d+") do
-        table.insert(list, tonumber(spell))
-    end
-    table.insert(pet.talents, {
-        id = tonumber(id), row = tonumber(row) or 0, col = tonumber(col) or 0, maxRank = tonumber(maxRank) or 0,
-        rank = tonumber(rank) or 0, spells = list, dependsOn = tonumber(dependsOn) or 0,
-        dependsOnRank = tonumber(dependsOnRank) or 0,
-    })
+function handlers.FOLLOWER(text)
+    table.insert(A.state.followers, text or "")
 end
 
 function handlers.RECORD(on, id, seconds, notes, god, available)
@@ -361,11 +251,6 @@ function handlers.SPEC(index, name)
     end
     table.insert(A.state.specs, { index = n, name = name or tostring(n) })
     table.sort(A.state.specs, function(a, b) return a.index < b.index end)
-end
-
-function handlers.LIFE(all, quests, auction, mail, taxi, crafting)
-    A.state.life = { all = all == "1", quests = quests == "1", auction = auction == "1", mail = mail == "1",
-        taxi = taxi == "1", crafting = crafting == "1" }
 end
 
 function handlers.LEVELS(min, max)

@@ -26,7 +26,6 @@
 #include "SharedDefines.h"
 #include "StringFormat.h"
 #include "WorldPacket.h"
-#include <array>
 #include <charconv>
 #include <optional>
 #include <string>
@@ -36,9 +35,12 @@ namespace
 {
     /// Bumped when a reply changes shape; the addon shows what it expects.
     /// 3 (2026-10-25): recordings (record, note; RECORD, NOTE), settings (partyfill; SETTINGS), Prepare (specs,
-    /// prepare; SPEC, LEVELS), god; HELLO gained capture available, isGM and prepare allowed. LIFE (the life
-    /// switches, in HELLO and after `life`) was added within 3: an addon that does not know it ignores the line.
-    constexpr uint32 PROTOCOL = 3;
+    /// prepare; SPEC, LEVELS), god.
+    /// 4 (2026-10-25, the follow runtime): the v1 companion is gone with its RACE, COMPANION, PET and PETTALENT lines
+    /// and the create/summon/rename/reroll/talent/pet/equip/rate requests; followers come in (`follow <n>`,
+    /// `dismiss`, `followers`; FOLLOW, FOLLOWER), Life and its LIFE line go, and HELLO tells whether this account may
+    /// summon and how many.
+    constexpr uint32 PROTOCOL = 4;
 
     /// The client drops a longer addon message. Replies put the one free-text field last, so it is what a cut
     /// takes.
@@ -55,14 +57,6 @@ namespace
                 return words;
             text.remove_prefix(end + 1);
         }
-    }
-
-    std::string Join(std::vector<std::string> const& words, char separator)
-    {
-        std::string joined;
-        for (std::string const& word : words)
-            joined += (joined.empty() ? "" : std::string(1, separator)) + word;
-        return joined;
     }
 
     /// One reply line, as an addon whisper from the player to themselves (what the addon listens for).
@@ -82,21 +76,6 @@ namespace
         Send(player, Acore::StringFormat("{}\t{}", ok ? "OK" : "ERR", message));
     }
 
-    /// COMPANION <exists> <name> <race> <class> <level> <spec> <out> <loading> <parked> <model name> <model state>:
-    /// the owner's one companion, or `COMPANION 0` when they have none.
-    void SendCompanion(Player* player)
-    {
-        Animus::AnimusMod::Companion const c = sAnimusMod->Describe(player);
-        if (!c.Exists)
-        {
-            Send(player, "COMPANION\t0");
-            return;
-        }
-
-        Send(player, Acore::StringFormat("COMPANION\t1\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}", c.Name, c.Race,
-            c.Class, c.Level, c.Spec, c.Out ? 1 : 0, c.Loading ? 1 : 0, c.Parked ? 1 : 0, c.ModelName, c.Model));
-    }
-
     /// A number the addon sent, if it is one.
     template <typename T>
     std::optional<T> Number(std::string_view word)
@@ -108,29 +87,14 @@ namespace
         return value;
     }
 
-    /// PET <companion> <pet name> <level> <free points> <talent count>, then a PETTALENT line per talent of its
-    /// tree: talent id, row, column, max rank, rank, the ranks' spells (comma-separated), prerequisite talent id
-    /// (0 for none) and the rank it needs. ERR for a companion without a hunter pet out.
-    void SendPet(Player* player, std::string_view name)
+    /// FOLLOW <count> <max>, then a FOLLOWER <text> line per follower (its name, level, class and spec, model and
+    /// episode clock, as `.animus follow` lists them).
+    void SendFollowers(Player* player)
     {
-        Animus::CompanionParty::PetView view;
-        std::string message;
-        if (!sAnimusMod->Pet(player, name, view, message))
-        {
-            SendResult(player, false, message);
-            return;
-        }
-
-        Send(player, Acore::StringFormat("PET\t{}\t{}\t{}\t{}\t{}", name, view.PetName, view.Level, view.FreePoints,
-            view.Talents.size()));
-        for (Animus::CompanionTalents::PetTalent const& talent : view.Talents)
-        {
-            std::string spells;
-            for (uint32 spell : talent.Spells)
-                spells += (spells.empty() ? "" : ",") + std::to_string(spell);
-            Send(player, Acore::StringFormat("PETTALENT\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}", name, talent.TalentId,
-                talent.Row, talent.Col, talent.MaxRank, talent.Rank, spells, talent.DependsOn, talent.DependsOnRank));
-        }
+        std::vector<std::string> const lines = sAnimusMod->List(player);
+        Send(player, Acore::StringFormat("FOLLOW\t{}\t{}", lines.size(), Animus::Follow::FollowParty::MAX_FOLLOWERS));
+        for (std::string const& line : lines)
+            Send(player, "FOLLOWER\t" + line);
     }
 
     bool IsGameMaster(Player* player)
@@ -167,28 +131,17 @@ namespace
         Send(player, Acore::StringFormat("LEVELS\t{}\t{}", minLevel, maxLevel));
     }
 
-    /// LIFE <all> <quests> <auction> <mail> <taxi> <crafting>: the realm's life switches (any player may read them).
-    void SendLife(Player* player)
-    {
-        std::array<bool, 6> const flags = sAnimusMod->LifeFlags();
-        Send(player, Acore::StringFormat("LIFE\t{}\t{}\t{}\t{}\t{}\t{}", flags[0] ? 1 : 0, flags[1] ? 1 : 0,
-            flags[2] ? 1 : 0, flags[3] ? 1 : 0, flags[4] ? 1 : 0, flags[5] ? 1 : 0));
-    }
-
     /// Everything the addon needs to open: HELLO <protocol> <enabled> <stage> <capture available> <is gm>
-    /// <prepare allowed>, a RACE line per race of the player's faction with the classes it can be, the companion,
-    /// the recording and the settings.
+    /// <prepare allowed> <may summon>, then the followers, the recording and the settings.
     void SendHello(Player* player)
     {
-        Send(player, Acore::StringFormat("HELLO\t{}\t{}\t{}\t{}\t{}\t{}", PROTOCOL, sAnimusMod->IsEnabled() ? 1 : 0,
-            sAnimusMod->CurrentStage(), Animus::Capture::Status(player).Available ? 1 : 0, IsGameMaster(player) ? 1 : 0,
-            Animus::Prepare::Allowed(player) ? 1 : 0));
-        for (Animus::AnimusMod::RaceChoice const& race : Animus::AnimusMod::RaceChoices(player))
-            Send(player, Acore::StringFormat("RACE\t{}\t{}", race.Race, Join(race.Classes, ',')));
-        SendCompanion(player);
+        Send(player, Acore::StringFormat("HELLO\t{}\t{}\t{}\t{}\t{}\t{}\t{}", PROTOCOL,
+            sAnimusMod->IsEnabled() ? 1 : 0, sAnimusMod->CurrentStage(),
+            Animus::Capture::Status(player).Available ? 1 : 0, IsGameMaster(player) ? 1 : 0,
+            Animus::Prepare::Allowed(player) ? 1 : 0, sAnimusMod->MaySummon(player) ? 1 : 0));
+        SendFollowers(player);
         SendRecord(player);
         SendSettings(player);
-        SendLife(player);
     }
 
     /// The addon's free text, last word of a request: tabs cannot reach here (the split), so the rest is taken
@@ -202,13 +155,6 @@ namespace
     }
 }
 
-void Animus::Addon::Push(Player* player, std::string const& message)
-{
-    if (!message.empty())
-        SendResult(player, true, message);
-    SendCompanion(player);
-}
-
 bool Animus::Addon::Handle(Player* player, std::string_view msg)
 {
     if (msg.size() <= PREFIX.size() || msg.substr(0, PREFIX.size()) != PREFIX || msg[PREFIX.size()] != '\t')
@@ -220,33 +166,30 @@ bool Animus::Addon::Handle(Player* player, std::string_view msg)
 
     if (request == "hello")
         SendHello(player);
-    else if (request == "list")
-        SendCompanion(player);
-    else if (request == "create")
+    else if (request == "followers")
+        SendFollowers(player);
+    else if (request == "follow")
     {
-        if (words.size() != 4)
-            SendResult(player, false, "Creating a companion needs a name, a race and a class.");
+        // follow <count>: followers into the player's party (Animus.Follow.Security).
+        std::optional<uint32> const count = words.size() == 2 ? Number<uint32>(words[1]) : std::nullopt;
+        if (!count)
+            SendResult(player, false, "follow <1-4>.");
+        else if (!sAnimusMod->MaySummon(player))
+            SendResult(player, false, "Followers are not for your account on this realm.");
         else
         {
-            SendResult(player, sAnimusMod->Create(player, std::string(words[1]), words[2], words[3], message),
-                message);
-            SendCompanion(player);
+            std::vector<std::string> warnings;
+            bool const ok = sAnimusMod->Summon(player, *count, message, warnings);
+            for (std::string const& warning : warnings)
+                SendResult(player, true, warning);
+            SendResult(player, ok, message);
+            SendFollowers(player);
         }
     }
-    else if (request == "life")
+    else if (request == "dismiss")
     {
-        // The realm's life switches: a game master's to flip (any player may read them). LIFE either way.
-        if (words.size() == 1)
-            SendLife(player);
-        else if (words.size() != 3)
-            SendResult(player, false, "A life switch names a feature and on or off.");
-        else if (!IsGameMaster(player))
-            SendResult(player, false, "The realm's life switches are a game master's to change.");
-        else
-        {
-            SendResult(player, sAnimusMod->LifeToggle(words[1], words[2], message), message);
-            SendLife(player);
-        }
+        SendResult(player, sAnimusMod->Dismiss(player, message), message);
+        SendFollowers(player);
     }
     else if (request == "record")
     {
@@ -335,76 +278,6 @@ bool Animus::Addon::Handle(Player* player, std::string_view msg)
             SendResult(player, Animus::Capture::God(player, words[1] == "on", message), message);
             SendRecord(player);
         }
-    }
-    else if (request == "summon")
-    {
-        SendResult(player, sAnimusMod->Summon(player, message), message);
-        SendCompanion(player);
-    }
-    else if (request == "dismiss")
-    {
-        SendResult(player, sAnimusMod->Dismiss(player, message), message);
-        SendCompanion(player);
-    }
-    else if (request == "rename")
-    {
-        if (words.size() != 2)
-            SendResult(player, false, "A rename needs the new name.");
-        else
-        {
-            SendResult(player, sAnimusMod->Rename(player, std::string(words[1]), message), message);
-            SendCompanion(player);
-        }
-    }
-    else if (request == "reroll")
-    {
-        if (words.size() != 3)
-            SendResult(player, false, "A new race and class need both words.");
-        else
-        {
-            SendResult(player, sAnimusMod->Reroll(player, words[1], words[2], message), message);
-            SendCompanion(player);
-        }
-    }
-    else if (request == "talent" || request == "pettalent")
-    {
-        // talent <companion> learn|unlearn <talent id>, and the same of its pet
-        std::optional<uint32> const talentId = words.size() == 4 ? Number<uint32>(words[3]) : std::nullopt;
-        if (!talentId || (words[2] != "learn" && words[2] != "unlearn"))
-            SendResult(player, false, "A talent edit names a companion, learn or unlearn, and a talent id.");
-        else if (request == "talent")
-            SendResult(player, sAnimusMod->Talent(player, words[1], *talentId, words[2] == "learn", message), message);
-        else if (sAnimusMod->PetTalent(player, words[1], *talentId, words[2] == "learn", message))
-            SendPet(player, words[1]);
-        else
-            SendResult(player, false, message);
-    }
-    else if (request == "pet")
-    {
-        if (words.size() != 2)
-            SendResult(player, false, "A pet request names a companion.");
-        else
-            SendPet(player, words[1]);
-    }
-    else if (request == "equip")
-    {
-        // equip <companion> <bag> <slot> <inventory slot>, in the client's numbering
-        std::optional<uint8> const bag = words.size() == 5 ? Number<uint8>(words[2]) : std::nullopt;
-        std::optional<uint8> const slot = words.size() == 5 ? Number<uint8>(words[3]) : std::nullopt;
-        std::optional<uint8> const equipSlot = words.size() == 5 ? Number<uint8>(words[4]) : std::nullopt;
-        if (!bag || !slot || !equipSlot)
-            SendResult(player, false, "An equip names a companion, a bag, a slot and an equipment slot.");
-        else
-            SendResult(player, sAnimusMod->Equip(player, words[1], *bag, *slot, *equipSlot, message), message);
-    }
-    else if (request == "rate")
-    {
-        // rate +|- [movement|combat|healing|tanking|stuck|other]
-        if (words.size() != 2 && words.size() != 3)
-            SendResult(player, false, "A rating is + or -, then optionally why.");
-        else
-            SendResult(player, sAnimusMod->Rate(player, words[1], words.size() == 3 ? words[2] : "", message),
-                message);
     }
     else
         SendResult(player, false, Acore::StringFormat("Unknown request {}.", request));

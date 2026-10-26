@@ -1,7 +1,6 @@
 -- Animus: the window and the minimap button. Draws Animus.state (Animus.lua) and sends its requests. Three tabs:
--- Companion (one per character: a create panel until there is one, then the companion with summon, dismiss, rename
--- and a new race and class), Record (recordings of your own play; the bar itself is AnimusRecord.lua) and Settings
--- (dungeon party fill, Prepare, god mode).
+-- Followers (bots played by the follow models: summon one to four, dismiss, who is with you), Record (recordings of
+-- your own play; the bar itself is AnimusRecord.lua) and Settings (dungeon party fill, Prepare, god mode).
 
 local A = Animus
 
@@ -55,7 +54,7 @@ message:SetJustifyH("CENTER")
 
 -- Tabs -----------------------------------------------------------------------------------------------------------
 
-local TABS = { "Companion", "Record", "Settings" }
+local TABS = { "Followers", "Record", "Settings" }
 local tabButtons = {}
 local tabPanels = {}       -- tab index -> { panel, ... } shown with it
 local currentTab = 1
@@ -103,251 +102,82 @@ local function InTab(index, panel)
     end
 end
 
--- Race and class pickers, shared by the create panel and the change panel ---------------------------------------
+-- Followers panel ------------------------------------------------------------------------------------------------
 
-local chosen = { race = nil, class = nil }
+local followPanel = CreateFrame("Frame", nil, frame)
+followPanel:SetPoint("TOPLEFT", frame, "TOPLEFT", 22, -62)
+followPanel:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -22, 40)
+InTab(1, followPanel)
 
-local function ClassesOf(race)
-    return (race and A.state.races[race]) or {}
+local followHeader = followPanel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+followHeader:SetPoint("TOPLEFT", followPanel, "TOPLEFT", 0, 0)
+followHeader:SetText("Followers")
+
+local followHelp = followPanel:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+followHelp:SetPoint("TOPLEFT", followHeader, "BOTTOMLEFT", 0, -6)
+followHelp:SetWidth(WIDTH - 60)
+followHelp:SetJustifyH("LEFT")
+followHelp:SetText(Color(GREY, "Bots of your level and faction, each played by its class's follow model as the forge "
+    .. "trained it: they see through a camera, keep a map in mind and follow you through dungeons and loading screens, "
+    .. "moving as a player would. They join your party (which you lead) and are never saved: dismissing them, logging "
+    .. "out or leaving the dungeon they filled sends them away."))
+
+local summonLabel = followPanel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+summonLabel:SetPoint("TOPLEFT", followHelp, "BOTTOMLEFT", 0, -12)
+summonLabel:SetText("Summon")
+
+local summonButtons = {}
+for n = 1, 4 do
+    local button = CreateFrame("Button", "AnimusSummonButton" .. n, followPanel, "UIPanelButtonTemplate")
+    button:SetWidth(40)
+    button:SetHeight(22)
+    if n == 1 then
+        button:SetPoint("LEFT", summonLabel, "RIGHT", 10, 0)
+    else
+        button:SetPoint("LEFT", summonButtons[n - 1], "RIGHT", 4, 0)
+    end
+    button:SetText(tostring(n))
+    button:SetScript("OnClick", function() A.Follow(n) end)
+    summonButtons[n] = button
 end
 
-local function Allowed(race, class)
-    for _, word in ipairs(ClassesOf(race)) do
-        if word == class then
-            return true
-        end
-    end
-    return false
-end
-
-local raceDrop, classDrop
-local pickersChanged = nil      -- the panel's refresh, called when a pick changes
-
-local function SetClass(class)
-    chosen.class = class
-    UIDropDownMenu_SetSelectedValue(classDrop, class)
-    UIDropDownMenu_SetText(classDrop, class and A.Display("classes", class) or "")
-    if pickersChanged then
-        pickersChanged()
-    end
-end
-
-local function SetRace(race)
-    chosen.race = race
-    UIDropDownMenu_SetSelectedValue(raceDrop, race)
-    UIDropDownMenu_SetText(raceDrop, race and A.Display("races", race) or "")
-    if not Allowed(race, chosen.class) then
-        SetClass(ClassesOf(race)[1])
-    elseif pickersChanged then
-        pickersChanged()
-    end
-end
-
-local raceLabel, classLabel
-
-local function BuildPickers()
-    raceDrop = CreateFrame("Frame", "AnimusRaceDropDown", frame, "UIDropDownMenuTemplate")
-    UIDropDownMenu_SetWidth(raceDrop, 140)
-    classDrop = CreateFrame("Frame", "AnimusClassDropDown", frame, "UIDropDownMenuTemplate")
-    classDrop:SetPoint("LEFT", raceDrop, "RIGHT", 0, 0)
-    UIDropDownMenu_SetWidth(classDrop, 140)
-
-    raceLabel = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    raceLabel:SetPoint("BOTTOMLEFT", raceDrop, "TOPLEFT", 16, 2)
-    raceLabel:SetText("Race")
-    classLabel = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    classLabel:SetPoint("BOTTOMLEFT", classDrop, "TOPLEFT", 16, 2)
-    classLabel:SetText("Class")
-
-    UIDropDownMenu_Initialize(raceDrop, function(self, level)
-        for _, race in ipairs(A.state.raceOrder) do
-            local info = UIDropDownMenu_CreateInfo()
-            info.text = A.Display("races", race)
-            info.value = race
-            info.checked = race == chosen.race
-            info.func = function() SetRace(race) end
-            UIDropDownMenu_AddButton(info, level)
-        end
-    end)
-
-    UIDropDownMenu_Initialize(classDrop, function(self, level)
-        for _, class in ipairs(ClassesOf(chosen.race)) do
-            local info = UIDropDownMenu_CreateInfo()
-            info.text = A.Display("classes", class)
-            info.value = class
-            info.checked = class == chosen.class
-            info.func = function() SetClass(class) end
-            UIDropDownMenu_AddButton(info, level)
-        end
-    end)
-end
-
--- The player's own race, in the module's words, as the first choice.
-local function OwnRace()
-    local _, file = UnitRace("player")
-    file = strlower(file or "")
-    if file == "scourge" then
-        file = "undead"
-    end
-    return file
-end
-
--- The pickers move between the two panels; both share one race and class choice.
-local pickerHost = nil
-local function HostPickers(panel, anchor, yOffset)
-    if not raceDrop then
-        BuildPickers()
-    end
-    if pickerHost == panel then
-        return
-    end
-    pickerHost = panel
-    raceDrop:ClearAllPoints()
-    raceDrop:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", -16, yOffset - 16)
-    for _, widget in ipairs({ raceDrop, classDrop, raceLabel, classLabel }) do
-        widget:SetParent(panel)
-    end
-end
-
--- Create panel ------------------------------------------------------------------------------------------------------
-
-local createPanel = CreateFrame("Frame", nil, frame)
-createPanel:SetPoint("TOPLEFT", frame, "TOPLEFT", 22, -62)
-createPanel:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -22, 40)
-InTab(1, createPanel)
-
-local createHeader = createPanel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-createHeader:SetPoint("TOPLEFT", createPanel, "TOPLEFT", 0, 0)
-createHeader:SetText("Create your companion")
-
-local createHelp = createPanel:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-createHelp:SetPoint("TOPLEFT", createHeader, "BOTTOMLEFT", 0, -6)
-createHelp:SetWidth(WIDTH - 60)
-createHelp:SetJustifyH("LEFT")
-createHelp:SetText(Color(GREY, "A character of its own, on an account made for it, that only you can summon. It " ..
-    "joins you at your level and levels up with you. You can rename it later, or give it a new race and class, " ..
-    "which makes it a new character with the same name."))
-
-local nameLabel = createPanel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-nameLabel:SetPoint("TOPLEFT", createHelp, "BOTTOMLEFT", 0, -12)
-nameLabel:SetText("Name")
-
-local nameBox = CreateFrame("EditBox", "AnimusNameBox", createPanel, "InputBoxTemplate")
-nameBox:SetPoint("TOPLEFT", nameLabel, "BOTTOMLEFT", 6, -4)
-nameBox:SetWidth(160)
-nameBox:SetHeight(20)
-nameBox:SetMaxLetters(12)
-nameBox:SetAutoFocus(false)
-
-local createButton = CreateFrame("Button", "AnimusCreateButton", createPanel, "UIPanelButtonTemplate")
-createButton:SetWidth(120)
-createButton:SetHeight(24)
-createButton:SetPoint("BOTTOM", createPanel, "BOTTOM", 0, 0)
-createButton:SetText("Create bot")
-createButton:SetScript("OnClick", function()
-    A.Create(strtrim(nameBox:GetText()), chosen.race, chosen.class)
-end)
-
--- Companion panel ---------------------------------------------------------------------------------------------------
-
-local companionPanel = CreateFrame("Frame", nil, frame)
-companionPanel:SetPoint("TOPLEFT", frame, "TOPLEFT", 22, -62)
-companionPanel:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -22, 40)
-InTab(1, companionPanel)
-
-local companionName = companionPanel:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-companionName:SetPoint("TOPLEFT", companionPanel, "TOPLEFT", 0, 0)
-
-local companionDetail = companionPanel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-companionDetail:SetPoint("TOPLEFT", companionName, "BOTTOMLEFT", 0, -4)
-companionDetail:SetWidth(WIDTH - 60)
-companionDetail:SetJustifyH("LEFT")
-
-local summonButton = CreateFrame("Button", "AnimusSummonButton", companionPanel, "UIPanelButtonTemplate")
-summonButton:SetWidth(110)
-summonButton:SetHeight(24)
-summonButton:SetPoint("TOPLEFT", companionDetail, "BOTTOMLEFT", 0, -10)
-summonButton:SetText("Summon")
-summonButton:SetScript("OnClick", A.Summon)
-
-local dismissButton = CreateFrame("Button", "AnimusDismissButton", companionPanel, "UIPanelButtonTemplate")
-dismissButton:SetWidth(110)
-dismissButton:SetHeight(24)
-dismissButton:SetPoint("LEFT", summonButton, "RIGHT", 8, 0)
+local dismissButton = CreateFrame("Button", "AnimusDismissButton", followPanel, "UIPanelButtonTemplate")
+dismissButton:SetWidth(90)
+dismissButton:SetHeight(22)
+dismissButton:SetPoint("LEFT", summonButtons[4], "RIGHT", 14, 0)
 dismissButton:SetText("Dismiss")
 dismissButton:SetScript("OnClick", A.Dismiss)
 
--- How it played: recorded for training (Animus.Capture), shown while it is out.
-local rateGoodButton = CreateFrame("Button", "AnimusRateGoodButton", companionPanel, "UIPanelButtonTemplate")
-rateGoodButton:SetWidth(60)
-rateGoodButton:SetHeight(24)
-rateGoodButton:SetPoint("LEFT", dismissButton, "RIGHT", 8, 0)
-rateGoodButton:SetText("Good")
-rateGoodButton:SetScript("OnClick", function() A.Rate("+") end)
+local followList = followPanel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+followList:SetPoint("TOPLEFT", summonLabel, "BOTTOMLEFT", 0, -14)
+followList:SetWidth(WIDTH - 60)
+followList:SetJustifyH("LEFT")
 
-local rateBadButton = CreateFrame("Button", "AnimusRateBadButton", companionPanel, "UIPanelButtonTemplate")
-rateBadButton:SetWidth(60)
-rateBadButton:SetHeight(24)
-rateBadButton:SetPoint("LEFT", rateGoodButton, "RIGHT", 4, 0)
-rateBadButton:SetText("Bad")
-rateBadButton:SetScript("OnClick", function() A.Rate("-") end)
+local followNote = followPanel:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+followNote:SetPoint("BOTTOMLEFT", followPanel, "BOTTOMLEFT", 0, 0)
+followNote:SetWidth(WIDTH - 60)
+followNote:SetJustifyH("LEFT")
+followNote:SetText(Color(GREY, "Typed: .animus follow <1-4>, .animus dismiss. Followers can only be summoned on a "
+    .. "map the realm baked a camera scene for (the dungeons in Animus.Vision.Maps)."))
 
-local renameLabel = companionPanel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-renameLabel:SetPoint("TOPLEFT", summonButton, "BOTTOMLEFT", 0, -16)
-renameLabel:SetText("Rename")
-
-local renameBox = CreateFrame("EditBox", "AnimusRenameBox", companionPanel, "InputBoxTemplate")
-renameBox:SetPoint("TOPLEFT", renameLabel, "BOTTOMLEFT", 6, -4)
-renameBox:SetWidth(160)
-renameBox:SetHeight(20)
-renameBox:SetMaxLetters(12)
-renameBox:SetAutoFocus(false)
-
-local renameButton = CreateFrame("Button", "AnimusRenameButton", companionPanel, "UIPanelButtonTemplate")
-renameButton:SetWidth(90)
-renameButton:SetHeight(22)
-renameButton:SetPoint("LEFT", renameBox, "RIGHT", 8, 0)
-renameButton:SetText("Rename")
-renameButton:SetScript("OnClick", function()
-    A.Rename(strtrim(renameBox:GetText()))
-    renameBox:SetText("")
-end)
-
-local rerollLabel = companionPanel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-rerollLabel:SetPoint("TOPLEFT", renameBox, "BOTTOMLEFT", -6, -14)
-rerollLabel:SetText("New race and class")
-
-local rerollHelp = companionPanel:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-rerollHelp:SetPoint("TOPLEFT", rerollLabel, "BOTTOMLEFT", 0, -4)
-rerollHelp:SetWidth(WIDTH - 60)
-rerollHelp:SetJustifyH("LEFT")
-rerollHelp:SetText(Color(GREY, "Resets the companion: a new character of the same name, with default talents " ..
-    "and gear. Everything you changed on it is lost."))
-
-StaticPopupDialogs["ANIMUS_REROLL"] = {
-    text = "Make %s a new %s %s? The current character, its talents and its gear are lost.",
-    button1 = "Reset",
-    button2 = CANCEL,
-    OnAccept = function()
-        A.Reroll(chosen.race, chosen.class)
-    end,
-    timeout = 0,
-    whileDead = 1,
-    hideOnEscape = 1,
-}
-
-local rerollButton = CreateFrame("Button", "AnimusRerollButton", companionPanel, "UIPanelButtonTemplate")
-rerollButton:SetWidth(150)
-rerollButton:SetHeight(24)
-rerollButton:SetPoint("BOTTOM", companionPanel, "BOTTOM", 0, 0)
-rerollButton:SetText("Change race and class")
-rerollButton:SetScript("OnClick", function()
-    local companion = A.state.companion
-    if companion and chosen.race and chosen.class then
-        StaticPopup_Show("ANIMUS_REROLL", companion.name, A.Display("races", chosen.race),
-            A.Display("classes", chosen.class))
+local function RefreshFollowers(s)
+    local ready = s.connected and s.enabled
+    local have = #s.followers
+    local room = (s.maxFollowers or 4) - have
+    for n = 1, 4 do
+        SetEnabled(summonButtons[n], ready and s.maySummon and have == 0 and n <= (s.maxFollowers or 4))
     end
-end)
+    SetEnabled(dismissButton, ready and have > 0)
+    if not s.connected then
+        followList:SetText("")
+    elseif not s.maySummon then
+        followList:SetText(Color(RED, "Followers are not for your account on this realm (Animus.Follow.Security)."))
+    elseif have == 0 then
+        followList:SetText(Color(GREY, "No followers with you. Summon one to four; they come at your level."))
+    else
+        followList:SetText(Color(WHITE, table.concat(s.followers, "\n")))
+    end
+end
 
 local function SetEnabled(button, enabled)
     if enabled then
@@ -521,31 +351,6 @@ prepareButton:SetScript("OnClick", function()
     end
 end)
 
--- The realm's life switches (a game master's): what companions do outside the fight.
-local lifeHeader = settingsPanel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-lifeHeader:SetText("Companion life (realm, until the config is reloaded)")
-
-local lifeChecks = {}
-local LIFE_LABELS = { all = "Life on", quests = "Quests", auction = "Auction house", mail = "Mail", taxi = "Taxi",
-    crafting = "Crafting" }
-for i, feature in ipairs(A.LIFE_FEATURES) do
-    local check = CreateFrame("CheckButton", "AnimusLifeCheck" .. feature, settingsPanel, "UICheckButtonTemplate")
-    check:SetWidth(24)
-    check:SetHeight(24)
-    getglobal("AnimusLifeCheck" .. feature .. "Text"):SetText(LIFE_LABELS[feature])
-    if i == 1 then
-        check:SetPoint("TOPLEFT", lifeHeader, "BOTTOMLEFT", -4, -2)
-    elseif i == 4 then
-        check:SetPoint("TOPLEFT", lifeChecks[1], "BOTTOMLEFT", 0, 0)
-    else
-        check:SetPoint("LEFT", lifeChecks[i - 1], "RIGHT", 90, 0)
-    end
-    check:SetScript("OnClick", function(self)
-        A.Life(feature, self:GetChecked() and true or false)
-    end)
-    lifeChecks[i] = check
-end
-
 local godCheck = CreateFrame("CheckButton", "AnimusGodCheck", settingsPanel, "UICheckButtonTemplate")
 godCheck:SetPoint("TOPLEFT", prepareButton, "BOTTOMLEFT", -4, -10)
 godCheck:SetWidth(26)
@@ -601,24 +406,6 @@ local function RefreshSettings(s)
         end
     end
 
-    -- The life switches, under Prepare (or under the party fill text when Prepare is hidden), game masters only.
-    lifeHeader:ClearAllPoints()
-    lifeHeader:SetPoint("TOPLEFT", prep and godCheck or fillNote, "BOTTOMLEFT", prep and 4 or 0, prep and -6 or -14)
-    for i, feature in ipairs(A.LIFE_FEATURES) do
-        local check = lifeChecks[i]
-        if s.isGM and s.life then
-            check:Show()
-            check:SetChecked(s.life[feature])
-            SetEnabled(check, ready)
-        else
-            check:Hide()
-        end
-    end
-    if s.isGM and s.life then
-        lifeHeader:Show()
-    else
-        lifeHeader:Hide()
-    end
     if prep then
         if levelBox:GetText() == "" then
             levelBox:SetText(tostring(UnitLevel("player")))
@@ -659,54 +446,10 @@ local function Refresh(s)
     elseif not s.enabled then
         status:SetText(Color(RED, "Animus is disabled on this realm."))
     else
-        status:SetText(Color(GREY, format("Companions play the %s models.", s.stage or "?")))
+        status:SetText(Color(GREY, format("Followers play the %s models.", s.stage or "?")))
     end
 
-    if #s.raceOrder > 0 and not s.races[chosen.race] then
-        SetRace(s.races[OwnRace()] and OwnRace() or s.raceOrder[1])
-    end
-
-    local companion = s.companion
-    if currentTab ~= 1 then
-        createPanel:Hide()
-        companionPanel:Hide()
-    elseif companion then
-        createPanel:Hide()
-        companionPanel:Show()
-        HostPickers(companionPanel, rerollHelp, -8)
-
-        local state
-        if companion.loading then
-            state = Color(GREY, "on the way")
-        elseif companion.out then
-            state = Color(GREEN, "with you") .. (companion.parked and Color(GREY, " (waiting for you to land)") or "")
-        else
-            state = Color(GREY, "waiting to be summoned")
-        end
-        companionName:SetText(companion.name)
-        local model = ""
-        if companion.out and not companion.loading then
-            model = companion.model == "loaded" and Color(GREEN, "\nModel loaded.")
-                or Color(RED, "\nModel missing: it only follows you.")
-        end
-        companionDetail:SetText(format("Level %d %s %s%s, %s.%s", companion.level, A.Display("races", companion.race),
-            A.Display("classes", companion.class), companion.spec ~= "" and " (" .. companion.spec .. ")" or "",
-            state, model))
-
-        SetEnabled(summonButton, ready and not companion.out)
-        SetEnabled(dismissButton, ready and companion.out and not companion.loading)
-        SetEnabled(rateGoodButton, ready and companion.out and not companion.loading)
-        SetEnabled(rateBadButton, ready and companion.out and not companion.loading)
-        SetEnabled(renameButton, ready and not companion.loading)
-        SetEnabled(rerollButton, ready and not companion.loading and chosen.race ~= nil and chosen.class ~= nil)
-    elseif currentTab == 1 then
-        companionPanel:Hide()
-        createPanel:Show()
-        HostPickers(createPanel, nameBox, -10)
-        SetEnabled(createButton, ready and chosen.race ~= nil and chosen.class ~= nil
-            and strtrim(nameBox:GetText()) ~= "")
-    end
-
+    RefreshFollowers(s)
     RefreshRecord(s)
     RefreshSettings(s)
 
@@ -724,13 +467,6 @@ function A.RefreshWindow()
 end
 levelBox:SetScript("OnTextChanged", function() A.RefreshWindow() end)
 
-pickersChanged = function()
-    if frame:IsShown() then
-        Refresh(A.state)
-    end
-end
-nameBox:SetScript("OnTextChanged", pickersChanged)
-
 A.OnChange(function(s)
     if frame:IsShown() then
         Refresh(s)
@@ -741,7 +477,7 @@ frame:SetScript("OnShow", function()
     if not A.state.connected and not A.state.waitingSince then
         A.Hello()
     else
-        A.List()
+        A.RequestFollowers()
         A.RequestRecord()
         A.RequestSettings()
         if A.state.prepareAllowed and #A.state.specs == 0 then
@@ -829,9 +565,9 @@ end)
 minimap:SetScript("OnEnter", function(self)
     GameTooltip:SetOwner(self, "ANCHOR_LEFT")
     GameTooltip:AddLine("Animus")
-    local companion = A.state.companion
-    GameTooltip:AddLine(companion and format("%s, level %d, %s", companion.name, companion.level,
-        companion.out and "with you" or "waiting") or "No companion yet", 1, 1, 1)
+    local have = #A.state.followers
+    GameTooltip:AddLine(have > 0 and format("%d follower%s with you", have, have == 1 and "" or "s")
+        or "No followers", 1, 1, 1)
     if A.state.recording.on then
         local seconds = A.RecordingSeconds()
         GameTooltip:AddLine(format("Recording %d:%02d, %d notes", floor(seconds / 60), seconds % 60,

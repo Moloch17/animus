@@ -28,13 +28,16 @@ class Map;
 /// (Map::GetHeight's terrain + VMAP rules), liquids (Map::GetLiquidData), and both collision trees -- the static models
 /// and the dynamic one, which holds game objects, so a closed door is a wall and an open one is not -- for sweeps and
 /// ceilings. Read-only queries of the map the body is on, made from that map's own update (thread-safe as the rest of
-/// a map update's reads are). The layered-field fast path is C8.
+/// a map update's reads are).
 namespace Animus::Movement
 {
     class MapWorldQuery final : public WorldQuery
     {
     public:
-        MapWorldQuery(Map* map, uint32 phaseMask) : _map(map), _phaseMask(phaseMask) { }
+        /// `counted` false: the queries are not added to Rays and Heights (the camera's, which would swamp the
+        /// controller's cost line; VisionCost counts its own).
+        MapWorldQuery(Map* map, uint32 phaseMask, bool counted = true)
+            : _map(map), _phaseMask(phaseMask), _counted(counted) { }
 
         [[nodiscard]] float FloorBelow(float x, float y, float z, float search) const override;
         [[nodiscard]] float FloorNormalZ(float x, float y, float z) const override;
@@ -43,6 +46,7 @@ namespace Animus::Movement
             Body const& body) const override;
         [[nodiscard]] float Ceiling(float x, float y, float z, float up) const override;
         [[nodiscard]] bool InTerrain(float x, float y, float z) const override;
+        [[nodiscard]] float TerrainHeight(float x, float y) const override;
 
         /// Collision rays cast and height queries made (for the cost line, C8).
         static inline std::atomic<uint64> Rays{ 0 };
@@ -55,6 +59,7 @@ namespace Animus::Movement
 
         Map* _map;
         uint32 _phaseMask;
+        bool _counted = true;
     };
 
     /// The side offsets of a sweep: a body is a cylinder, swept as rays from its centre and its left and right edges

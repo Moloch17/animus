@@ -76,12 +76,11 @@ namespace
     }
 
     /// **The goal shapes what can be pressed** (Component H): a spell that works against the goal the seat holds is
-    /// not offered. Under Recover, Prepare, Rest and the life goals (TravelTo, Loot, Gather, Interact) the harmful
-    /// spells close -- a seat eating or buffing up does not start
-    /// a fight -- and under Fight, Control and Position the long buffs close in combat. The escape reopens the harmful
-    /// spells whenever the seat, its owner or a teammate is attacked, the seat is below 35% health, or it is
-    /// stealthed (the opener ends a Prepare), so it can always answer what happens to it and to them; the goal
-    /// then catches up on its own clock.
+    /// not offered. Under Recover, Prepare, Rest and TravelTo the harmful spells close -- a seat eating or buffing
+    /// up does not start a fight -- and under Fight, Control and Position the long buffs close in combat. The
+    /// escape reopens the harmful spells whenever the seat, its owner or a teammate is attacked, the seat is below
+    /// 35% health, or it is stealthed (the opener ends a Prepare), so it can always answer what happens to it and
+    /// to them; the goal then catches up on its own clock.
     bool OneGoalCloses(SeatView const& view, int32 goal, ActionCatalog::Action const& def)
     {
         if (goal < 0 || def.Type != ActionCatalog::Kind::Spell)
@@ -94,15 +93,10 @@ namespace
             case SeatGoal::Prepare:
             case SeatGoal::Rest:
             case SeatGoal::TravelTo:
-            case SeatGoal::Loot:
-            case SeatGoal::Gather:
-            case SeatGoal::Interact:
+            case SeatGoal::Search:
             {
                 if (bot->GetHealthPct() < GOAL_ESCAPE_HEALTH_PCT || !bot->getAttackers().empty()
                     || bot->HasStealthAura())
-                    return false;
-
-                if (view.Owner && view.Owner->IsInMap(bot) && !view.Owner->getAttackers().empty())
                     return false;
 
                 for (SeatView::Teammate const& teammate : view.Teammates)
@@ -166,7 +160,7 @@ void Animus::Curriculum::CoreBlock::DescribeRescaled(Layout const& layout, boost
         columns["count"] = count;
         out.emplace_back(std::move(columns));
     };
-    add(OBS_APTITUDE_FIRST + Aptitude::TREE_POINTS_FIRST, TalentBuilder::TREE_COUNT);
+    add(uint32(OBS_APTITUDE_FIRST) + uint32(Aptitude::TREE_POINTS_FIRST), TalentBuilder::TREE_COUNT);
     add(TreeObsFirst(layout) - first, TalentBuilder::TREE_COUNT);
 }
 
@@ -479,9 +473,7 @@ void Animus::Curriculum::CoreBlock::Apply(SeatView& view, uint32 local, SeatActi
             break;
     }
 
-    bool const started = Encoding::ApplySpellAction(view, view.Target, def, result);
-    if (started && def.From == ActionCatalog::Group::Sustain)
-        ++result.SustainCasts;
+    Encoding::ApplySpellAction(view, view.Target, def, result);
     // The keys the seat holds are its own (MoveBlock): a cast does not let go of them for it, as no client lets go of
     // a player's. Casting while moving is refused or cancelled by the core's own rules, read off the real movement
     // state (player-controller §5), and the seat learns to stop first.

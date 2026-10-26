@@ -1,6 +1,7 @@
 #
-# mod-animus -- companions and a stage viewer whose combat decisions come from models trained in
-# mod-animus-forge. Needs animus-lib (modules/mod-animus-lib).
+# mod-animus -- bots for a stock AzerothCore realm, played by models trained in Animus Forge: followers of
+# your level and faction that keep up with you as they did in training; dungeon party fill with them; the play
+# capture the forge trains on, with opt-in recordings; Prepare. The v1 class companion is not in this build.
 #
 [worldserver]
 
@@ -8,8 +9,8 @@
 # GENERAL
 #
 #    Animus.Enable
-#        Description: Enable the module. When disabled no companions can be summoned and no stage
-#                     started, existing ones are removed on the next update and no model is loaded.
+#        Description: Enable the module. When disabled no follower can be summoned, existing ones
+#                     are removed on the next update and no model is loaded.
 #        Default:     1 - (Enabled)
 #                     0 - (Disabled)
 
@@ -18,11 +19,11 @@ Animus.Enable = 1
 #
 #    Animus.PartyFill.Enable
 #        Description: A player entering a five-player dungeon (alone, or as its group's leader) gets
-#                     its group filled to five: a tank and a healer if nobody present is one, then
-#                     damage. Roles are read off each member's talents, the player's companion
-#                     counts as a member, and the new members are of the player's level and faction.
-#                     They are temporary: never saved, and gone when the player leaves the dungeon
-#                     alive (a released ghost running back in keeps them).
+#                     its group filled to five with followers (".animus follow": bots of the
+#                     player's level and faction played by the follow models), two seconds after
+#                     arriving. They are temporary: never saved, and gone when the player leaves the
+#                     dungeon alive (a released ghost running back in keeps them). Each follower
+#                     renders a camera every decision: four of them cost what four followers cost.
 #                     Each player can switch their own fill off (the addon's Settings tab,
 #                     ".animus partyfill off"; saved per character in animus_player_settings), and a
 #                     game master can switch the realm's off until the next ".reload config"
@@ -51,1165 +52,208 @@ Animus.Prepare.Security = 2
 
 Animus.Prepare.BagItem = 4500
 
+
 ###################################################################################################
 # MODELS
 #
 #    Animus.ModelDir
-#        Description: Directory holding the exported class models (<class>_<stage>.amdl,
-#                     each with its layout manifest <class>_<stage>.json beside it), written
-#                     by `forge export` in mod-animus-forge. A relative path is looked for under
-#                     DataDir (worldserver.conf) first, for models placed by hand, then where the
-#                     build installs the module's models/ with its configs:
-#                     <config dir>/modules/animus (Docker: the image's env/ref/etc/modules/animus,
-#                     then env/dist/etc/modules/animus). The startup log names the directory used.
-#                     An absolute path is used as is.
-#                     Models load when first needed, and again after ".reload config". A model
-#                     whose manifest differs from the layout this server builds is refused.
+#        Description: Directory holding the exported class models (<class>_follow.amdl, each
+#                     with its layout manifest <class>_follow.json beside it), written by the
+#                     forge's export. A relative path is looked for under DataDir (worldserver.conf)
+#                     first, for models placed by hand, then where the build installs the module's
+#                     models/ with its configs: <config dir>/modules/animus (Docker: the image's
+#                     env/ref/etc/modules/animus, then env/dist/etc/modules/animus). The startup
+#                     log names the directory used. An absolute path is used as is.
 #        Default:     "animus"
 
 Animus.ModelDir = "animus"
 
-###################################################################################################
-# CLASS COMPANIONS
 #
 #    Animus.Curriculum.Stage
-#        Description: Which curriculum stage's models class companions play. A companion summoned
-#                     before a ".reload config" keeps its stage. A name that is not a stage falls
-#                     back to the default.
-#        Default:     "stage9_deadmines" - the models this module ships (models/, one per class)
-#                     Any stage of ".animus stage list" (stage1_move ... stage21_ship), with that
-#                     stage's models in Animus.ModelDir
+#        Description: The curriculum stage whose models the followers play: its layout decides the
+#                     observation and the actions, and its suffix the model names (<class>_follow).
+#                     A name that is not a stage falls back to the default.
+#        Default:     "move4_follow"
 
-Animus.Curriculum.Stage = "stage9_deadmines"
+Animus.Curriculum.Stage = "move4_follow"
 
 #
 #    Animus.Curriculum.DecisionMs
-#        Description: Game time between a companion's model decisions, in milliseconds:
-#                     the decision interval its models were trained with (AnimusForge.DecisionMs).
+#        Description: Game time between a follower's model decisions, in milliseconds: the
+#                     decision interval its models were trained with (AnimusForge.DecisionMs).
 #        Default:     250
 
 Animus.Curriculum.DecisionMs = 250
 
 ###################################################################################################
-# GROUND PROBE
+# CAMERA AND MENTAL MAP
 #
-#    Animus.Probe.Source
-#        Description: Where a companion's ground probe (reach, step, shore and burns along sixteen
-#                     rays, and the room around it) and, in the air, its flight rays come from. It
-#                     must be what its models were trained with (AnimusForge.Probe.Source): a model's
-#                     manifest names its probe, and a model trained with another is refused.
-#                     geometry works them out from the forge's layered fields in Animus.Probe.Dir
-#                     (one file a map grid, <map>_<gridX>_<gridY>.field, about 0.3 MB; the forge's
-#                     `forge fieldworld` bakes every map). A companion on a grid with no field keeps
-#                     its last reading, and the grid is logged once: ship the fields of every map
-#                     your players go to.
-#                     baked reads the forge's probe tables (<map>_<gridX>_<gridY>.probe) in the same
-#                     directory, and the fields where a grid has no table.
-#                     live measures the probe against the live collision instead, with no files: a
-#                     different observation, for models trained with it.
-#        Default:     "geometry"
-#                     "baked"
-#                     "live"
+# The followers see through the forge's camera (a ray-cast third-person view), drawn from baked
+# scenes of each map's static world. The settings must be the ones the models were trained with
+# (stage.json blocks[vision] of the run; the defaults are move4_follow's): a different size or
+# field of view is a different picture. Changing any of them needs a restart.
+#
+#    Animus.DataDir
+#        Description: A writable directory for the module's own data: the baked camera scenes go in
+#                     its scenes/ (made when missing). A relative path is under the config directory.
+#        Default:     "" - <config dir>/modules/animus
 
-Animus.Probe.Source = "geometry"
+Animus.DataDir = ""
 
 #
-#    Animus.Probe.Dir
-#        Description: The directory the field (and table) files are in. A relative path is relative
-#                     to DataDir, beside the core's maps, vmaps and mmaps.
-#        Default:     "" - (<DataDir>/fields)
+#    Animus.Vision.Maps
+#        Description: The maps whose camera scenes are baked (when missing or stale) and loaded at
+#                     startup, comma separated. A follower can only be summoned on one of them; on any
+#                     other map its camera sees an empty world. Baking a dungeon takes seconds to a
+#                     minute, once; the startup log names each map's time.
+#        Default:     "389,36,43,34" - Ragefire Chasm, the Deadmines, Wailing Caverns, the Stockade
 
-Animus.Probe.Dir = ""
+Animus.Vision.Maps = "389,36,43,34"
 
 #
-#    Animus.Probe.CacheGrids
-#        Description: Most fields (or tables) held in memory at once; past it the one read longest
-#                     ago is let go, and read again if a companion comes back to it.
-#        Default:     64
+#    Animus.Vision.RenderSizes
+#        Description: The render sizes the models were trained with, "WxH, WxH:weight, ..." (the forge's
+#                     AnimusForge.Vision.RenderSizes). A model's layout manifest records them, so this must be
+#                     the training run's list or every model is refused.
+#        Default:     "32x16, 48x24, 64x32, 128x64:0.4"
 
-Animus.Probe.CacheGrids = 64
+Animus.Vision.RenderSizes = "32x16, 48x24, 64x32, 128x64:0.4"
+
+#
+#    Animus.Vision.RenderSize
+#        Description: The one of those sizes, WxH, every follower's frames are cast at, scaled up to
+#                     Width x Height. Smaller is cheaper on the world thread.
+#        Default:     "64x32"
+
+Animus.Vision.RenderSize = "64x32"
+
+#
+#    Animus.Vision.Width
+#    Animus.Vision.Height
+#        Description: The canonical image the model reads, in pixels (AnimusForge.Vision.Width/Height).
+#        Default:     128, 64
+
+Animus.Vision.Width = 128
+Animus.Vision.Height = 64
+
+#
+#    Animus.Vision.FovH
+#    Animus.Vision.FovV
+#        Description: The camera's fields of view, degrees.
+#        Default:     120, 60
+
+Animus.Vision.FovH = 120
+Animus.Vision.FovV = 60
+
+#
+#    Animus.Vision.Range
+#        Description: How far, in yards, the camera sees units.
+#        Default:     100
+
+Animus.Vision.Range = 100
+
+#
+#    Animus.Vision.Zoom
+#    Animus.Vision.ZoomMin
+#        Description: Where the camera's boom starts (and recentres to), and the nearest its zoom-in
+#                     reaches, yards. move4_follow trained with both locked at 12.
+#        Default:     12, 12
+
+Animus.Vision.Zoom = 12
+Animus.Vision.ZoomMin = 12
+
+#
+#    Animus.Vision.Pitch
+#        Description: The camera's starting pitch, degrees (+ up).
+#        Default:     -15
+
+Animus.Vision.Pitch = -15
+
+#
+#    Animus.Map.MaxTiles
+#    Animus.Map.CoarseTiles
+#        Description: The mental map's caps: fine tiles kept, and coarse tiles an evicted fine tile
+#                     folds into (0: an evicted tile is forgotten, as in training).
+#        Default:     4096, 0
+
+Animus.Map.MaxTiles = 4096
+Animus.Map.CoarseTiles = 0
+
+#
+#    Animus.Map.ClusterMinCells
+#    Animus.Map.PocketMinCells
+#        Description: The map block's coverage analysis (the forge's Seek.ClusterMinCells and
+#                     Seek.PocketMinCells).
+#        Default:     2, 6
+
+Animus.Map.ClusterMinCells = 2
+Animus.Map.PocketMinCells = 6
 
 ###################################################################################################
-# CURRICULUM TUNING
+# FOLLOW TUNING
 #
-# The keys and defaults are the forge's AnimusForge.Curriculum.* (worldserver.conf.dist) under this prefix: to play a
-# model as it was trained, copy the values of that run (its stage.json "tuning") here. Every key is
-# optional; a missing one keeps the default shown. Class companions use only the Actions.* keys
-# (pacing, and the movement and stance locks), so they play with the masks their models trained
-# with; the rest describe episodes this module no longer builds and are read but unused.
-
+# The forge's AnimusForge.Curriculum.* keys a follower plays by, under this prefix; the defaults are
+# move4_follow's. They change what the model may press, so they must match what it trained with.
 #
-#    Animus.Curriculum.Arena.<stage>.<arena>.Weight
-#        Description: A stage's share of episodes for one of its arenas (see stage.json "arenas"), e.g.
-#                     Animus.Curriculum.Arena.stage1_move.chain.Weight = 2 for as many chains as
-#                     single dives. Only matters for stages with several arenas.
-#        Default:     the stage definition's weight (1 for every arena of the current stages)
+#    Animus.Curriculum.Actions.RepeatMs
+#    Animus.Curriculum.Actions.MoveRepeatMs
+#    Animus.Curriculum.Actions.StopCastMinMs
+#    Animus.Curriculum.Actions.RecastAfterStopMs
+#    Animus.Curriculum.Actions.ModeLockMs
+#        Description: Action pacing: the same action again, the same movement order again, the
+#                     shortest cast it may stop, a stopped spell's lockout, a stance or form's lock.
+#        Default:     1000, 300, 500, 2000, 5000
 
-#
-#    Animus.Curriculum.Arena.<stage>.<arena>.MaxRung
-#        Description: Hold one arena's pack ladder at a rung instead of letting it climb, e.g.
-#                     Animus.Curriculum.Arena.stage5_pack.hazards.MaxRung = 0 for the bottom rung.
-#                     Binds training and evaluation alike. A drill uses it so the thing being drilled is
-#                     the only thing that varies; -1 lets the ladder climb to Pulls.MaxTier as usual.
-#        Default:     the stage definition's (-1 for every arena: the ladder climbs)
-
-#
-#    Animus.Curriculum.Characters.*
-#        The seat characters.
-
-#   levels at or above this are "high"
-Animus.Curriculum.Characters.HighLevelFirst = 61
-#   percent of characters drawn from the high levels
-Animus.Curriculum.Characters.HighLevelChance = 50
-#   levels at or below this are "low"
-Animus.Curriculum.Characters.LowLevelLast = 20
-#   percent of characters drawn from the low levels (when the class can be that low); the rest are any level
-Animus.Curriculum.Characters.LowLevelChance = 15
-#   percent of characters: the standard build with its last points moved (0 = never)
-Animus.Curriculum.Characters.NoisyTalentChance = 30
-#   percent of characters: every talent point spent at random (the rest get the spec's standard build)
-Animus.Curriculum.Characters.RandomTalentChance = 10
-#   a noisy build moves 1 to this many of its last points
-Animus.Curriculum.Characters.TalentNoisePoints = 5
-#   percent of pet-class characters (hunters, warlocks, death knights with Master of Ghouls, frost mages with Glyph
-#   of Eternal Water) that start with their pet out, as a player arrives with one
-Animus.Curriculum.Characters.PetOutChance = 50
-#   episodes a seat keeps its character for when the next episode draws the same class and build, before it is
-#   built afresh (race, level, talents, gear). A kept character is healed, cleared of buffs and cooldowns, restocked
-#   and moved to the new spawn, at a fraction of a build's cost; the level stays what it was. Evaluations always
-#   build. 0 = build every episode. `forge status` counts the characters reused per decision beside the rebuilt.
-Animus.Curriculum.Characters.ReuseEpisodes = 4
-#   1: in training a seat whose character can still be kept (ReuseEpisodes) keeps its class and build too, where
-#   no party makeup is drawn, instead of keeping the character only when the draw happens to repeat. Each env's
-#   classes then come in runs of up to ReuseEpisodes episodes; the mix across envs is the draw's. 0 = draw every
-#   episode.
-Animus.Curriculum.Characters.KeepCasting = 1
-
-#
-#    Animus.Curriculum.Party.*
-#        Which party seats have a character, and their roles.
-
-#   relative chance of 1, 2, 3 or 4 seats with a character
-Animus.Curriculum.Party.SizeWeight1 = 20
-Animus.Curriculum.Party.SizeWeight2 = 20
-Animus.Curriculum.Party.SizeWeight3 = 20
-Animus.Curriculum.Party.SizeWeight4 = 40
-#   percent: tank, healer, damage dealers instead of drawn roles
-Animus.Curriculum.Party.ClassicChance = 50
-#   drawn roles: percent tanks, healers, the rest damage dealers
-Animus.Curriculum.Party.RoleTankChance = 25
-Animus.Curriculum.Party.RoleHealerChance = 25
-#   damage dealers: a non-tank teammate's damage taken
-Animus.Curriculum.Party.TeammateDamageTakenDps = 0.5
-#   tanks and healers
-Animus.Curriculum.Party.TeammateDamageTakenProtector = 1.0
-#   healers: effective healing, fraction of its health
-Animus.Curriculum.Party.TeammateHealing = 2.0
-#   healers: what keeping the others up pays (TeammateHealing, Raid.KeepUp above half) while no Protect goal is
-#   held, as a share of the full; 1 pays it whatever the goal
-Animus.Curriculum.Party.HealOffGoal = 0.25
-#   a party's or raid's tank: its damage dealt, as a share of a damage dealer's pay for it (a healer's is never paid)
-Animus.Curriculum.Party.TankDamageShare = 0.25
-#   tanks: per enemy on a non-tank teammate, per decision
-Animus.Curriculum.Party.TankLoseTeammate = 0.02
-#   damage dealers and healers beside a living teammate that holds the pull: per enemy on the seat, per decision
-#   (training only)
-Animus.Curriculum.Party.PulledThreat = 0.004
-Animus.Curriculum.Party.TeammateDeath = 3.0
-
-#
-#    Animus.Curriculum.Raid.*
-#        Raids: synthetic pulls sized to the raid, and each role paid for its own part.
-
-#   a raid pull's health x (seats / 5) x HealthPerGroup, its melee damage x (1 + DamagePerGroup x (groups - 1))
-Animus.Curriculum.Raid.HealthPerGroup = 1.0
-Animus.Curriculum.Raid.DamagePerGroup = 0.15
-#   tanks (party and raid, where no owner encounter pays it): per enemy on the tank, per decision
-Animus.Curriculum.Raid.TankHold = 0.015
-#   the party's tank is charged per enemy on somebody else, per decision
-Animus.Curriculum.Raid.TankLoose = 0.006
-#   a party's damage dealers: their damage on the tank's target times TankTarget, and PulledOff per enemy they took
-#   off the tank, per decision; a drill's drilled seat has its role's terms times DrillWeight
-Animus.Curriculum.Raid.TankTarget = 0.3
-Animus.Curriculum.Raid.PulledOff = 0.004
-#   a party's damage dealers and healer: per enemy on them while the tank has not engaged, per decision (a cost)
-Animus.Curriculum.Raid.EarlyPull = 0.01
-Animus.Curriculum.Raid.DrillWeight = 3.0
-#   healers (party and raid): per group member above 50% health per decision, the same charged per member below 35%
-Animus.Curriculum.Raid.KeepUp = 0.0002
-#   healers, party and raid: healing cast that landed on nobody's missing health, as a share of the healer's health
-Animus.Curriculum.Raid.Overheal = 2.0
-#   tanks, party and raid: per decision in a fight in the spec's tanking stance, form or aura (Defensive Stance, Bear
-#   Form, Righteous Fury, Frost Presence)
-Animus.Curriculum.Raid.TankStance = 0.001
-#   raid damage dealers: own damage as a share of the level's damage scale, times this
-Animus.Curriculum.Raid.Output = 0.5
-#   party and raid: per decision in a fight with an enemy within IdleReach yards and nothing served, neutral,
-#   damaging or healing for IdleMs (ms)
-Animus.Curriculum.Raid.Idle = 0.001
-Animus.Curriculum.Raid.IdleMs = 4000
-Animus.Curriculum.Raid.IdleReach = 40.0
-
-#
-#    Animus.Curriculum.Duel.*
-#        One-on-one fights against a creature (the duel) or a player (PvP).
-
-#   fraction of the opponent's health: a kill is worth this in damage
-Animus.Curriculum.Duel.DamageDealt = 2.0
-#   fraction of the bot's health
-Animus.Curriculum.Duel.DamageTaken = 1.0
-#   shaping toward the spec's range, per 40 yd closed
-Animus.Curriculum.Duel.Approach = 0.5
-#   a harmful spell from stealth that breaks it (Ambush, Cheap Shot)
-Animus.Curriculum.Duel.StealthOpener = 0.5
-#   one that keeps it (Sap, Distract), once per target per stealth
-Animus.Curriculum.Duel.StealthUtility = 0.05
-#   per decision
-Animus.Curriculum.Duel.StepCost = 0.0002
-#   winning outweighs winning fast: at Kill 10, FastKill 1 and a loss (Death, Timeout) at 10, a risky fast opener
-#   only pays more than a sure slow win above ~97% odds
-Animus.Curriculum.Duel.Kill = 10.0
-#   times the fraction of the episode length left, from the engagement
-Animus.Curriculum.Duel.FastKill = 1.0
-#   times the fraction of the bot's health not lost; damage taken is already charged as it happens, so a large
-#   value pays twice for the same thing and reads as "survive" rather than "win"
-Animus.Curriculum.Duel.HealthKept = 0.5
-Animus.Curriculum.Duel.Death = 10.0
-#   a creature duel that runs out of time with neither side dead: a lost fight, ended as one, charged times the share
-#   of the opponent still standing -- a clock that runs out with the creature nearly dead is a near miss, one that
-#   runs out with it untouched is a refusal to fight. At the full charge it matches Death, so a seat that cannot be
-#   sure of the kill has nothing to gain by keeping its distance
-Animus.Curriculum.Duel.Timeout = 10.0
-#   the share of Timeout charged whatever the fight's progress; the rest goes with the opponent still standing, so a
-#   near miss costs about half a refusal and breaking off at half health is not cheaper than dying
-Animus.Curriculum.Duel.TimeoutFloor = 0.5
-#   creature duel: per second the fight has not started once StallGraceMs are gone; Timeout alone charges standing
-#   where it spawned only when the clock runs out, too far off for the policy to see, and keeping out of a fight has
-#   to cost more than holding a goal at range pays
-Animus.Curriculum.Duel.Stall = 0.08
-#   ... the time a seat has to summon, buff and sneak up before it (ms)
-Animus.Curriculum.Duel.StallGraceMs = 15000
-#   ... which grows by the time spent starting buffs, forms, stances, stealth and pet summons out of combat (each its
-#   cast time, at least a global cooldown), up to this much (ms): 30 s made a 45 s approach free
-Animus.Curriculum.Duel.PreparationRefundMaxMs = 15000
-#   duel: stopping the opponent's cast, priced by what was stopped as the pack's is (a heal undoes damage already
-#   dealt, an area spell would have hit everyone, a long cast was a large part of the caster's output). The duel
-#   meets casters now (Difficulty.CasterChance), and one enemy casting one spell is the cheapest place in the
-#   curriculum to learn what an interrupt is for
-Animus.Curriculum.Duel.Interrupt = 0.3
-Animus.Curriculum.Duel.InterruptHeal = 3.0
-Animus.Curriculum.Duel.InterruptArea = 2.0
-Animus.Curriculum.Duel.InterruptLong = 1.5
-#   creature duel, ranged specs: per second the opponent stands in melee range hitting the bot
-Animus.Curriculum.Duel.Spacing = 0.1
-#   duel and pack, a spec fighting with a ranged weapon (the hunter's): its shots landed while nothing hits it in
-#   melee reach, as a share of the fight's enemy health, on top of DamageDealt
-Animus.Curriculum.Duel.ShotAtRange = 1.0
-#   duel and pack: per second that spec moves with Auto Shot running while its target is alive and within 35 yd,
-#   nothing hits it in melee reach and nothing on the ground hurts it (moving stops the shots)
-Animus.Curriculum.Duel.ShotPaused = 0.05
-#   duel and pack, any class with a pet: the damage the pet takes, as a share of the seat's own health (a pet holding
-#   enemies off its owner)
-Animus.Curriculum.Duel.PetTank = 0.5
-#   ... at most this an episode (healing the pet while it soaks would farm it); never in a party's or raid's arena,
-#   where a pet holding enemies takes them off the tank
-Animus.Curriculum.Duel.PetTankMax = 1.5
-#   the range the approach shaping aims for, melee specs
-Animus.Curriculum.Duel.MeleeRange = 3.5
-#   ... ranged specs
-Animus.Curriculum.Duel.RangedRange = 25.0
-
-#
-#    Animus.Curriculum.Difficulty.*
-#        How hard the creature duel's opponents are, per class and role. Tier t below EliteTier is a normal
-#        creature t x LevelsPerTier levels above the seat; from EliteTier on an elite, (t - EliteTier) x
-#        LevelsPerTier levels above. Evaluations spread their seeds over every tier.
-
-#   the hardest tier
-Animus.Curriculum.Difficulty.MaxTier = 6
-#   the first elite tier (above MaxTier: no elites)
-Animus.Curriculum.Difficulty.EliteTier = 4
-Animus.Curriculum.Difficulty.LevelsPerTier = 1
-#   a class in a role moves up a tier when it wins (kills without dying) this share of Window fights at its tier ...
-Animus.Curriculum.Difficulty.RaiseAbove = 0.9
-#   ... and down below this share
-Animus.Curriculum.Difficulty.LowerBelow = 0.6
-Animus.Curriculum.Difficulty.Window = 200
-#   percent of training fights drawn from a lower tier, so none is forgotten
-Animus.Curriculum.Difficulty.ReviewChance = 25
-#   percent drawn one tier above that class and role's own, which do not count towards moving it: an evaluation scores
-#   every tier, so nothing should be met there for the first time
-Animus.Curriculum.Difficulty.StretchChance = 10
-#   duel: the share of fights against something that casts, and of those, the share against something that puts a
-#   hazard on the ground. The duel's own pool is default-AI creatures, which never cast at all, so at 0 the duel
-#   teaches nothing about interrupting, dispelling or stepping out of anything -- all of it waits for the pack
-#   stage, where it competes with learning to fight several enemies at once
-Animus.Curriculum.Difficulty.CasterChance = 40
-Animus.Curriculum.Difficulty.HazardChance = 30
-#   the outcome terms scale with the tier: a win (kill, clear, health kept) is multiplied by 1 + TierScale x tier and
-#   a loss (death, timeout, overtime) divided by it, in the duel, the packs, the raids and the endurance run's pulls.
-#   A tier-0 fight is unchanged; at tier 6 a kill pays 2.5x and a death costs 0.4x, so a hard fight is worth
-#   attempting and the score no longer falls as the ladder climbs. 0 keeps every tier flat
-Animus.Curriculum.Difficulty.TierScale = 0.25
-
-#
-#    Animus.Curriculum.Instance.*
-#        Real dungeons and raids (the dungeon and raid stages): the seats spawn at the instance's front door and are
-#        taken to the boss along the server's own path; the boss fights with the core's script.
-
-#   how far back up the path from the boss the seats start
-Animus.Curriculum.Instance.EngageYards = 35
-#   creatures this close to the boss that are not its adds (InstanceBosses.cpp, Keep) are cleared for the episode
-Animus.Curriculum.Instance.TrashRadius = 60
-#   the rung's tier scale (Difficulty.TierScale) is capped at this tier: a ladder of twenty bosses would otherwise pay
-#   a top kill 5.75x where the pool ladders stop at 2.5x
-Animus.Curriculum.Instance.MaxTierScale = 6
-#   paid on a wipe or an evade for the share of the boss's health the fight took off it, times the tier scale, so a
-#   forty-seat fight has a gradient before its first kill
-Animus.Curriculum.Instance.BossProgress = 5.0
-#   the clock running out with the boss alive, scaled by what is left of it (Duel.TimeoutFloor), divided by the tier
-Animus.Curriculum.Instance.Timeout = 10.0
-#   per second the boss is not engaged once StallGraceMs (ms) are gone
-Animus.Curriculum.Instance.Stall = 0.08
-Animus.Curriculum.Instance.StallGraceMs = 15000
-#   whole dungeon wings (the Wing ladder): each trash creature killed, each route waypoint reached and the wing's boss
-#   (x the rung), each seat's death and each wipe (/ the rung); WingWipes wipes end the episode (1: a wipe ends it,
-#   and the next run starts in a fresh instance with the dungeon reset); the route's points are WingWaypointYards apart along the door-to-boss path
-Animus.Curriculum.Instance.WingTrashKill = 1.0
-Animus.Curriculum.Instance.WingWaypoint = 0.5
-Animus.Curriculum.Instance.WingBoss = 25.0
-#   each dungeon boss killed on the way to the wing's last (times the tier scale)
-Animus.Curriculum.Instance.WingMidBoss = 8.0
-#   the whole route from the door to the last boss, paid as it is walked (x the tier scale)
-Animus.Curriculum.Instance.WingProgress = 60.0
-Animus.Curriculum.Instance.WingDeath = 3.0
-Animus.Curriculum.Instance.WingWipe = 5.0
-Animus.Curriculum.Instance.WingWipes = 1
-#   per second once WingStallGraceMs (ms) pass with no kill, no route step and nothing fighting the party; and the
-#   clock's cost for the share of the route left (over the tier scale)
-Animus.Curriculum.Instance.WingStall = 0.1
-Animus.Curriculum.Instance.WingStallGraceMs = 60000
-#   whole dungeons: the stall charge on every seat but the tank, as a share of the tank's (the tank decides when to
-#   move on)
-Animus.Curriculum.Instance.WingStallOthers = 0.2
-#   whole dungeons: paid to the tank for each fight started with every living seat at WingReadyShare of its health
-#   and mana
-Animus.Curriculum.Instance.WingEngage = 1.0
-Animus.Curriculum.Instance.WingReadyShare = 0.8
-Animus.Curriculum.Instance.WingTimeout = 30.0
-Animus.Curriculum.Instance.WingWaypointYards = 30
-#   the support ladder: each rung fixes the dungeon script's share of seats, the level lift, the wipes to spare and the
-#   hint weight; WingProbe of training runs are probes (no script, no hints) and only they measure the policy: once
-#   WingRungRuns probes have made WingRungTarget of the dungeon on average it steps down, and back up if the probes
-#   fall below WingRungFallback of what they made when the rung was stepped onto; a cluster's host decides for all
-Animus.Curriculum.Instance.WingProbe = 0.2
-Animus.Curriculum.Instance.WingRungRuns = 40
-Animus.Curriculum.Instance.WingRungTarget = 0.6
-#   the rung a run starts on (the ladder is not saved: a resumed run names the rung it had reached)
-Animus.Curriculum.Instance.WingRungStart = 0
-#   the dungeon script's seats and hints on the ladder's rungs: a support, off by default (0), switched on (1) when a
-#   rung has not stepped for a long stretch. Off, the rungs lift the level and spare wipes only
-Animus.Curriculum.Instance.WingSupport = 0
-#   food and drink each seat brings into a whole dungeon
-Animus.Curriculum.Instance.WingSupplies = 60
-Animus.Curriculum.Instance.WingRungFallback = 0.5
-Animus.Curriculum.Instance.WingInstructHeal = 70.0
-#   log a line for each wipe in a whole dungeon: where, what was fighting the party, who died in what order
-Animus.Curriculum.Instance.WingTrace = 1
-#   per second for each hostile creature on the party beyond WingCrowdFree (a pack): a pull run into the next
-Animus.Curriculum.Instance.WingCrowd = 0.15
-Animus.Curriculum.Instance.WingCrowdFree = 4
-#   1: the route visits every pack in the instance, side bosses and all, before the last boss; per second a seat
-#   other than the tank is further than WingStrayYards from it, WingStray
-Animus.Curriculum.Instance.WingFullClear = 1
-#   a dead seat nobody has raised WingRiseMs (ms) after the fight ends rises at the door and walks back to the group
-Animus.Curriculum.Instance.WingRiseMs = 30000
-#   1: a closed door opens by itself when a seat reaches it out of a fight; 0: the seats open the way with the crowd
-#   block's use action (levers, buttons, the cannon, doors)
-Animus.Curriculum.Instance.WingAutoDoors = 0
-Animus.Curriculum.Instance.WingStray = 0.02
-Animus.Curriculum.Instance.WingStrayYards = 25.0
-#   the pull drill: one pack a run, the party PullStartYards back along the route from it with the packs before it
-#   cleared; a clean pull pays PullClean, a second pack joining ends the run at PullExtra, the clock running out with
-#   the pack alive costs PullTimeout (the tank in full, the others PullOthers of each); standing about costs WingStall
-#   after PullGraceMs (ms); the seats are at most PullLift levels above the dungeon's range; the ladder opens packs by
-#   the gap to the nearest other pack (30, 22, 14 yd, then any) once PullRungRuns drills pull clean PullRungTarget of
-#   the time, starting at PullRungStart (each machine climbs its own)
-Animus.Curriculum.Instance.PullClean = 5.0
-Animus.Curriculum.Instance.PullExtra = 5.0
-Animus.Curriculum.Instance.PullTimeout = 2.0
-Animus.Curriculum.Instance.PullOthers = 0.5
-Animus.Curriculum.Instance.PullGraceMs = 20000
-Animus.Curriculum.Instance.PullLift = 2
-Animus.Curriculum.Instance.PullStartYards = 35.0
-Animus.Curriculum.Instance.PullRungStart = 0
-Animus.Curriculum.Instance.PullRungRuns = 100
-Animus.Curriculum.Instance.PullRungTarget = 0.7
-
-#
-#    Animus.Curriculum.Life.*
-#        Life outside the fight (the quest, gather and town stages): the seat alone in a copy of the world's own
-#        zone -- its quest givers, creatures, nodes and traders summoned into the env's phase from the spawn tables
-#        -- with what it does kept on the character in memory. The outcome terms scale with the band's tier.
-
-#   per decision
-Animus.Curriculum.Life.StepCost = 0.0002
-#   potential shaping on the distance to where the episode wants the seat next, paid once over an approach
-Animus.Curriculum.Life.Progress = 2.0
-#   a press that did nothing in the world (an interact with nothing in reach, a buy that bought nothing)
-Animus.Curriculum.Life.Wasted = 0.1
-#   divided by the tier scale
-Animus.Curriculum.Life.Death = 5.0
-#   the quest: taking it, its objective counts as they land (times the tier scale), the turn-in (times the tier
-#   scale), and the clock running out without it (less what was done, over the tier scale)
-Animus.Curriculum.Life.QuestAccepted = 1.0
-Animus.Curriculum.Life.QuestCredit = 3.0
-Animus.Curriculum.Life.QuestTurnIn = 10.0
-Animus.Curriculum.Life.QuestTimeout = 3.0
-#   per decision a complete quest is not handed in
-Animus.Curriculum.Life.CompleteHeld = 0.0003
-#   training only: a quest item's source that dies without it rolls its loot again, up to this many times (0: off)
-Animus.Curriculum.Life.DropRerolls = 50
-#   quest credit taken in a place another group holds, per share of the quest (training only)
-Animus.Curriculum.Life.Poach = 0.25
-#   how long a companion party holds a place it works (ms), and how near counts as working it (yards)
-Animus.Curriculum.Life.ClaimHoldMs = 30000
-Animus.Curriculum.Life.ClaimRadius = 25
-#   gathering: per node looted (times the tier scale), per skill point gained
-Animus.Curriculum.Life.GatherNode = 2.0
-Animus.Curriculum.Life.GatherSkillUp = 0.5
-#   the town: the starting junk's vendor value realised (pro rata), the gear repaired, food and drink restocked, each
-#   upgrade put on, and all of it done before the clock
-Animus.Curriculum.Life.TownSold = 2.0
-Animus.Curriculum.Life.TownRepaired = 2.0
-Animus.Curriculum.Life.TownStocked = 2.0
-Animus.Curriculum.Life.TownEquipped = 3.0
-Animus.Curriculum.Life.TownDone = 5.0
-#   yards the seat's world features reach
-Animus.Curriculum.Life.SenseRange = 100.0
-#   the world's creatures this close to a quest objective's place (or a gather ground) are summoned, up to this many
-Animus.Curriculum.Life.ObjectiveRadius = 60.0
-Animus.Curriculum.Life.ObjectiveSpawns = 24
-#   the nodes this close to the gather ground are the field, up to this many
-Animus.Curriculum.Life.NodeRadius = 150.0
-Animus.Curriculum.Life.NodeSpawns = 24
-#   the traders this close to the inn are the town
-Animus.Curriculum.Life.TownRadius = 80.0
-#   the seat's purse in a town episode: level squared times this, in copper (level 20: 1 gold)
-Animus.Curriculum.Life.TownCopperPerLevelSquared = 25
-
-#
-#    Animus.Curriculum.Casting.*
-#        Cast-time spells, from the duel stage on.
-
-#   per second spent on a cast that did not finish
-Animus.Curriculum.Casting.TimeWasted = 0.03
-#   per second of cast time of a cast that finished, in combat
-Animus.Curriculum.Casting.TimeCompleted = 0.03
-#   per cast the bot cut short itself, whatever it had spent on it; TimeWasted alone charges by the second, so
-#   stopping a cast the decision after starting it is nearly free and a deterministic policy can loop on it
-Animus.Curriculum.Casting.Cancel = 0.05
-#   every stage, per decision: the bot's effective healing on itself plus what its own absorbs soaked and damage-taken
-#   reductions prevented on itself, as a fraction of its health; below every DamageTaken so it never pays to be hit
-#   paid once for each goal the seat holds, on the first decision its actions match the goal the learner is pursuing
-#   (fight, control, recover, protect, position, prepare) -- a goal is there to be reached, and paying per decision
-#   spent in one made standing at range the stage's second largest earner. Small on purpose: it keeps the goals apart
-#   so a goal head cannot collapse into one goal, rather than paying for play the stage's own terms already price
-Animus.Curriculum.Goals.Reached = 0.05
-#   per change of a seat's goal (training only): Match is paid once per goal held, so without this churn was paid
-Animus.Curriculum.Goals.Switch = 0.15
-#   closing on the goal held, potential-based (Progress x (gamma x phi' - phi), phi in [-1, 0]): yards to its place
-#   over 60, the named enemy's health, the seat's own health and mana, the friend's health. Gamma is the learner's
-Animus.Curriculum.Goals.Progress = 0.5
-Animus.Curriculum.Goals.ProgressGamma = 0.999
-#   what reaching a goal is worth, by what it achieved (Reached stays for the kinds with no value of their own):
-#   a named enemy dead, one held in crowd control, Recover/Rest by the share of health and mana restored since the
-#   choice, a friend brought back up, a place reached, a corpse, node or objective done
-Animus.Curriculum.Goals.FightValue = 0.3
-Animus.Curriculum.Goals.ControlValue = 0.2
-Animus.Curriculum.Goals.RecoverValue = 1.0
-Animus.Curriculum.Goals.ProtectValue = 1.0
-#   Protect is also reached by keeping its friend above half health while it is attacked for this long (ms), as
-#   well as by healing it back above 70%
-Animus.Curriculum.Goals.ProtectHoldMs = 5000
-Animus.Curriculum.Goals.TravelValue = 0.1
-Animus.Curriculum.Goals.WorldValue = 0.2
-#   the secondary goal held beside the primary: paid this share of what the primary would be (reaching it, closing
-#   on it), and charged Secondary every decision it is held
-Animus.Curriculum.Goals.SecondaryShare = 0.5
-Animus.Curriculum.Goals.Secondary = 0.002
-#   every arena with a director, per decision a seat spends fighting the enemy its director called, while one is
-#   called and alive. Compliance shaping: an order is meant to be followed because following it wins fights, but a
-#   channel that correlates with nothing cannot bootstrap into that. stage15_arena ran 30M steps with the order
-#   paying nothing and order_focus_kept sat at chance the whole way, so the director's calls changed nothing in the
-#   world and it never left exploration. The same job Goals.Reached does for the goal head; anneal towards 0 once
-#   order_focus_kept holds up without it. The director itself never earns this -- it is taken back out of its own
-#   reward, or it would learn to call whoever its seats were already fighting.
-#   Small because a per-decision term adds up over a fight: at 0.01 it earned 5.01 an episode, 23.7% of gross and
-#   level with the kill and the death, which would buy tunnel vision on the called target. At 0.001 full compliance
-#   is worth about 0.5, a tenth of the kill
-Animus.Curriculum.Order.Focus = 0.001
-#   every arena whose director may name a place: paid once to a seat that arrives where it was sent, and not
-#   again for PlaceCooldownMs. Never per decision -- a per-decision payment for standing in the right spot is
-#   the shape that made the focus nudge 23.7% of gross before it was cut, and it could be farmed by stepping
-#   over the edge of the radius and back
-Animus.Curriculum.Order.PlaceMatch = 0.02
-#   yards: close enough to the called place to count as having arrived
-Animus.Curriculum.Order.PlaceRadius = 8
-#   milliseconds before the same seat can be paid for arriving again
-Animus.Curriculum.Order.PlaceCooldownMs = 10000
-#   how far a called place sits off its anchor, at each ring. These two numbers are all that changes between
-#   an arena and a continent: the director's thirteen place actions mean the same thing at any scale
-Animus.Curriculum.Director.PlaceNearYards = 20
-Animus.Curriculum.Director.PlaceFarYards = 60
-#   how often the director's clock gives it a turn to speak (decisions); events give it one at once
-Animus.Curriculum.Director.ClockDecisions = 10
-#   below this share of its health a member counts as badly hurt, for the director's event
-Animus.Curriculum.Director.LowHealth = 0.25
-#   a member order stands this many decisions before the same source can replace it for free; one replaced sooner costs
-#   the director OrderChurn, and any live order it replaces costs OrderChange. Nothing stops the call: it learns to
-#   let orders stand
-Animus.Curriculum.Director.OrderHoldDecisions = 8
-Animus.Curriculum.Director.OrderChange = 0.01
-Animus.Curriculum.Director.OrderChurn = 0.03
-Animus.Curriculum.Support.SelfHealing = 0.5
-#   per fraction of the mana pool spent on healing. Healing is worth what it restores for what it costs, and the cost
-#   was never priced: an effective heal of 3% of a health bar cost the same as one of 20%, so choosing a cheaper rank
-#   bought nothing and a heal over time could be stacked on a full bar for free. With it the objective is healing per
-#   mana. Kept well below SelfHealing -- the failure to avoid is a seat that heals too little and dies
-Animus.Curriculum.Support.HealingMana = 0.1
-#   the same charge in the schedules that pay readiness (the gauntlet, a planned run), where mana spent healing
-#   already costs the seat what it brings to the next pull. 0 leaves that accounting to do the work: the charge is a
-#   stand-in for an opportunity cost and is only needed where there is no later fight to have one
-Animus.Curriculum.Support.HealingManaWithReadiness = 0.0
-#   gauntlets: engaging a pull pays this times the share of the class's buff groups up on the bot (and the owner)
-Animus.Curriculum.Support.BuffCoverage = 0.3
-#   a class that keeps a pet (hunter, warlock, death knight, mage) with it out when a fight starts, paid once at the
-#   engagement: part of being ready, which the kill alone did not teach
-Animus.Curriculum.Support.PetReady = 0.3
-
-#
-#    Animus.Curriculum.Actions.*
-#        How often a seat may press the same button, as a player would. A paced action is masked until it may be
-#        pressed again, so a policy cannot sit re-issuing an order every decision (a pet sent in 125 times an
-#        episode, a cast started and stopped over and over). Spells keep their own cooldowns as well. 0 = no pace.
-
-#   the same action again: spells, orders, consumables, targeting (ms)
 Animus.Curriculum.Actions.RepeatMs = 1000
-#   the same movement order again (ms)
 Animus.Curriculum.Actions.MoveRepeatMs = 300
-#   a cast the bot is in cannot be stopped before it has run this long (ms)
 Animus.Curriculum.Actions.StopCastMinMs = 500
-#   a spell the bot stopped itself cannot be started again for this long (ms)
 Animus.Curriculum.Actions.RecastAfterStopMs = 2000
-#   per press of the same action past the free ones within RepeatWindowMs: pressing one button over and over,
-#   however far apart the presses are paced (how often the seat acts overall is not charged; movement orders are
-#   always free)
-Animus.Curriculum.Actions.Repeat = 0.03
-#   the window the presses of one action are counted in (ms)
-Animus.Curriculum.Actions.RepeatWindowMs = 10000
-#   presses of one action within the window that cost nothing
-Animus.Curriculum.Actions.RepeatFree = 3
-#   per quarter turn a turn, a pitch or a climb takes back of the one before it, weighed by how recent that was
-#   (e^(-dt / Options.JitterDecayMs)) (training only: steering that does not commit)
-Animus.Curriculum.Actions.Jitter = 0.05
-#   presses with intent: every spell and step is judged against the goal the seat holds, and one that works against
-#   it is charged this (training only: nothing is charged in play)
-Animus.Curriculum.Actions.Aimless = 0.02
-#   aimless presses by cause, each its own price (StageScenario::JudgePress): harm on an enemy the goal does not
-#   name, an area spell missing it, casting under Position once in range, harm under a goal that is not fighting
-#   with nothing attacking, help on someone else while fighting, a step away from where the goal wants the seat,
-#   selecting or sending the pet at an enemy the goal does not name when it is hurting nobody, eating or drinking
-#   with that resource nearly full, a trap with nothing near, an aspect/stance/form changed with nothing changed (and
-#   back within ten seconds), a ranged seat moving about a fight it could stand and shoot in
-Animus.Curriculum.Actions.Aimless.OffFocus = 0.02
-Animus.Curriculum.Actions.Aimless.AoeMissed = 0.02
-Animus.Curriculum.Actions.Aimless.InRangeCast = 0.02
-Animus.Curriculum.Actions.Aimless.UnprovokedHarm = 0.02
-Animus.Curriculum.Actions.Aimless.HelpOffGoal = 0.02
-Animus.Curriculum.Actions.Aimless.StepAway = 0.02
-Animus.Curriculum.Actions.Aimless.TargetSwitch = 0.04
-Animus.Curriculum.Actions.Aimless.PetOffGoal = 0.04
-Animus.Curriculum.Actions.Aimless.ConsumeNotNeeded = 0.03
-Animus.Curriculum.Actions.Aimless.TrapNoEnemy = 0.03
-Animus.Curriculum.Actions.Aimless.ModeFlip = 0.03
-Animus.Curriculum.Actions.Aimless.ModeReverse = 0.06
-Animus.Curriculum.Actions.Aimless.NeedlessMove = 0.02
-#   a taunt from a healer or damage dealer beside a living tank
-Animus.Curriculum.Actions.Aimless.TauntOffRole = 0.15
-#   a tank's stance, form, aura or presence from a healer or damage dealer beside a living tank
-Animus.Curriculum.Actions.Aimless.TankModeOffRole = 0.04
-#   a press that failed for something the seat controls: facing, range, sight, a cast on the move, power
-Animus.Curriculum.Actions.Aimless.CastFailed = 0.02
-#   every aspect, stance, form or presence changed; every food or drink consumed
-Animus.Curriculum.Actions.ModeSwitch = 0.01
-Animus.Curriculum.Actions.SupplySpent = 0.02
-#   health (eating) or mana (drinking) at or above which consuming is ConsumeNotNeeded
-Animus.Curriculum.Actions.ConsumeFullPct = 85
-#   every press but the no-op costs this in training
-Animus.Curriculum.Actions.Effort = 0.004
-#   per second moving in a fight while already at range, in training
-Animus.Curriculum.Actions.Fidget = 0.01
-#   how long Fidget's and the needless-move charge's conditions must hold before they are charged (ms), in training
-Animus.Curriculum.Actions.SettleGraceMs = 500
-#   how much a step must close or open the gap to the wanted range to be judged (yards)
-Animus.Curriculum.Actions.IntentSlackYards = 0.5
-#   a stance, form, presence, aspect, aura, seal, armor or pet stance holds this long before another change of its
-#   kind (ms)
 Animus.Curriculum.Actions.ModeLockMs = 5000
 
 #
-#    Animus.Curriculum.Pulls.*
-#        Packs and the gauntlet's pull after pull.
+#    Animus.Curriculum.Options.RestMaxMs
+#    Animus.Curriculum.Options.HoldInterruptMs
+#    Animus.Curriculum.Options.JitterDecayMs
+#        Description: How long durative actions may run, and the movement jitter's decay.
+#        Default:     30000, 10000, 2500
 
-#   percent of pulls whose members aggro together
-Animus.Curriculum.Pulls.LinkedChance = 70
-#   gauntlet: a single elite instead of a pack
-Animus.Curriculum.Pulls.EliteChance = 15
-#   gauntlet: a pack 1-3 levels above the bot (at most 1 below level 20, 2 below 30)
-Animus.Curriculum.Pulls.HigherLevelChance = 25
-#   party: per pack member
-Animus.Curriculum.Pulls.PartyEliteChance = 50
-#   gauntlet: the break between pulls
-Animus.Curriculum.Pulls.NextPullMinMs = 8000
-Animus.Curriculum.Pulls.NextPullMaxMs = 20000
-#   with an owner: when it walks over to a new pull
-Animus.Curriculum.Pulls.OwnerEngageMinMs = 1500
-Animus.Curriculum.Pulls.OwnerEngageMaxMs = 5000
-#   ... in a party, after the tank has had time to pull
-Animus.Curriculum.Pulls.PartyOwnerEngageMinMs = 4000
-Animus.Curriculum.Pulls.PartyOwnerEngageMaxMs = 7000
-#   ... when the owner starts the pull itself
-Animus.Curriculum.Pulls.OwnerPullsMinMs = 500
-Animus.Curriculum.Pulls.OwnerPullsMaxMs = 1500
-#   percent of pulls a damage dealer or healer owner starts (tanks: all)
-Animus.Curriculum.Pulls.OwnerPullsChance = 30
-#   owner stages: health and mana the dead stand up with after a pull
-Animus.Curriculum.Pulls.RecoverFraction = 0.5
-#   fraction of the pull's total health
-Animus.Curriculum.Pulls.DamageDealt = 2.0
-#   pack: fraction of the bot's health
-Animus.Curriculum.Pulls.DamageTaken = 1.0
-#   gauntlet on: surviving many pulls matters more than any one
-Animus.Curriculum.Pulls.GauntletDamageTaken = 1.5
-Animus.Curriculum.Pulls.Approach = 0.5
-Animus.Curriculum.Pulls.StealthOpener = 0.5
-Animus.Curriculum.Pulls.StealthUtility = 0.05
-Animus.Curriculum.Pulls.Interrupt = 0.3
-#   an interrupt is paid Interrupt times what it stopped, from the spell's own properties: a heal undoes damage
-#   already dealt, an area spell would have hit everyone, a long cast was a large part of the caster's output. Never
-#   below 1 -- the flat term is how a class finds interrupting at all, and if only heals paid the behaviour might
-#   never appear to be shaped
-Animus.Curriculum.Pulls.InterruptHeal = 3.0
-Animus.Curriculum.Pulls.InterruptArea = 2.0
-Animus.Curriculum.Pulls.InterruptLong = 1.5
-Animus.Curriculum.Pulls.Kill = 0.5
-#   per decision
-Animus.Curriculum.Pulls.StepCost = 0.0002
-#   owner stages (the solo gauntlet has SoloGauntlet*), win-first: each pull cleared, and FastPull times
-#   1 - its time since engaged / 60 s, both x OwnerClearScale; HealthKept times the seat's own health kept through it;
-#   GauntletDeath per seat death (the owner's is Owner.Death)
-Animus.Curriculum.Pulls.Clear = 2.5
-Animus.Curriculum.Pulls.FastPull = 0.5
-Animus.Curriculum.Pulls.HealthKept = 0.5
-Animus.Curriculum.Pulls.GauntletDeath = 10.0
-#   A single pack (stage5_pack) is won or lost, as the duel is: the clear outweighs finishing it untouched,
-#   and dying or running out of time costs as much as the clear pays. With the gauntlet's Clear and HealthKept
-#   the pack was worth 2 + 2, so keeping health paid as much as winning, and a death cost only 3.
-Animus.Curriculum.Pulls.PackClear = 10.0
-#   pack: times the episode fraction left after engaging
-Animus.Curriculum.Pulls.FastClear = 1.0
-#   pack: times the fraction of the bot's health not lost
-Animus.Curriculum.Pulls.PackHealthKept = 0.5
-Animus.Curriculum.Pulls.PackDeath = 10.0
-#   pack: the clock ran out with the pack and the seat both alive; the episode ends as a lost fight
-#   pack: the single pack's top ladder rung (0-5: 2, 3, 4 creatures with a caster, two casters, an elite, an elite a
-#   level above), climbed per class and role at the Difficulty.* rates; 0 keeps every pack on the first rung
-Animus.Curriculum.Pulls.MaxTier = 5
-#   pack: the clock running out, charged times the share of the pull still standing, as the duel's is
-Animus.Curriculum.Pulls.Timeout = 10.0
-#   pack: the share of it charged whatever the pull's progress
-Animus.Curriculum.Pulls.TimeoutFloor = 0.5
-#   pack: per second a fight goes on past OvertimeGraceMs after it was engaged, and a death in overtime is charged the
-#   overtime left; a timeout alone, 150 s away, is too discounted to stop kiting out the clock
-Animus.Curriculum.Pulls.Overtime = 0.1
-Animus.Curriculum.Pulls.OvertimeGraceMs = 60000
-#   pack: crowd control paid as the damage it prevents, not as time held. Each add kept out of the fight is credited
-#   its own measured damage rate over the decision, divided by the seat's health now (floored at ControlHealthFloor of
-#   its maximum), so a prevented hit is worth more the less health there is to lose -- the same currency DamageTaken is
-#   charged in, which is why the two weights are comparable and control no longer loses to the overtime clock.
-#   Half DamageTaken: what a held add would have dealt is estimated, not observed, and the health floor can multiply
-#   it fivefold, so control is paid less than the damage it is credited with preventing. Measured at 0 until
-#   2026-09-18 (stage9_pack at 30M: control_prevented 0.03 healths a fight, reward_control 0.00 -- nothing was
-#   controlled because nothing paid for it).
-Animus.Curriculum.Pulls.SinglePackControl = 0.5
-#   ... at most this much a pull, a guard against a sim quirk rather than a shaping knob
-Animus.Curriculum.Pulls.SinglePackControlMax = 1.0
-#   the health divisor's floor, as a fraction of maximum health, so control's value cannot run away near death
-Animus.Curriculum.Pulls.ControlHealthFloor = 0.2
-#   what an add that never got to act is assumed to have prevented, in maximum healths per second: a pack sapped
-#   before it swings has no measured rate of its own, and pre-pull control is the most valuable kind
-Animus.Curriculum.Pulls.ControlFallbackDps = 0.02
-#   how long an add must be loose before its own measured rate is trusted over the pull's mean (ms)
-Animus.Curriculum.Pulls.ControlRateMinMs = 3000
-#   pack: the overtime grace grows by the wall time at least one add was held, up to this much (ms), so holding an add
-#   is not charged as dragging the fight out: with the grace alone, the overtime charge took back what the control
-#   paid. 0 leaves the grace alone. Bounded on purpose -- Overtime is what stops kiting the clock, and an unbounded
-#   pause would hand that back
-Animus.Curriculum.Pulls.ControlGraceMaxMs = 15000
-#   pack: per second the pack has not been engaged once StallGraceMs of the episode are gone
-Animus.Curriculum.Pulls.Stall = 0.08
-Animus.Curriculum.Pulls.StallGraceMs = 15000
-#   pack: the grace grows by the time spent starting buffs, forms, stances, stealth and pet summons out of combat (each
-#   its cast time, at least a global cooldown), up to this much (ms). Counted per pull, not per episode: a gauntlet
-#   seat that prepared once used to earn the full refund on every pull after it
-Animus.Curriculum.Pulls.PreparationRefundMaxMs = 15000
-#   pack: per second a ranged spec is hit by a pack member in melee reach
-Animus.Curriculum.Pulls.Spacing = 0.1
-#   camp (the pull drill: two to four packs standing apart): per second, for each pack fighting beyond the first
-Animus.Curriculum.Pulls.CampExtraPack = 0.15
-#   camp: each pack killed with no other pack in its fight (times the rung's scale)
-Animus.Curriculum.Pulls.CampCleanPack = 2.0
-#   camp: between packs, from the last fight, before standing about is charged as Stall (ms; not while eating or
-#   drinking)
-Animus.Curriculum.Pulls.CampRestMs = 25000
-#   solo gauntlet (pull after pull, no owner; won by lasting to the end with SoloGauntletWinPulls cleared): each pull
-#   cleared, instead of Clear ...
-Animus.Curriculum.Pulls.SoloGauntletClear = 5.0
-#   ... plus this times 1 - the pull's time since engaged / 60 s, instead of FastPull ...
-Animus.Curriculum.Pulls.SoloGauntletFastPull = 1.0
-#   ... and this times the health kept through the pull, instead of HealthKept
-Animus.Curriculum.Pulls.SoloGauntletHealthKept = 0.5
-#   solo gauntlet: a death, instead of GauntletDeath (it also forfeits every pull left)
-Animus.Curriculum.Pulls.SoloGauntletDeath = 10.0
-#   solo gauntlet: engaging a pull pays this times the health fraction (the lower of health and mana for mana users)
-#   the decision before: entering a fight ready is what resting between pulls is for
-Animus.Curriculum.Pulls.SoloGauntletReadiness = 0.5
-#   solo gauntlet: lasting to the end is a win only with this many pulls cleared (fewer is a timeout)
-Animus.Curriculum.Pulls.SoloGauntletWinPulls = 5
-#   solo gauntlet: food and drink stocked, each
-Animus.Curriculum.Pulls.GauntletSupplies = 7
-#   solo gauntlet: per second per pack member kept out of the engaged fight by crowd control (stunned, incapacitated,
-#   asleep, polymorphed, feared, or rooted out of melee reach and not casting), other than the seat's target, while
-#   another member is alive ...
-Animus.Curriculum.Pulls.SoloGauntletControl = 0.02
-#   ... up to this much per pull
-Animus.Curriculum.Pulls.SoloGauntletControlMax = 1.5
-#   solo gauntlet: a pull nobody engaged comes to the seat this long after it spawned (ms) ...
-Animus.Curriculum.Pulls.ArriveMinMs = 20000
-Animus.Curriculum.Pulls.ArriveMaxMs = 40000
-#   ... less this per pull cleared, down to ArriveFloorMs
-Animus.Curriculum.Pulls.ArriveShrinkMs = 1500
-Animus.Curriculum.Pulls.ArriveFloorMs = 10000
-#   solo gauntlet: the break before the next pull shrinks by this per pull cleared, down to NextPullFloorMs (ms)
-Animus.Curriculum.Pulls.NextPullShrinkMs = 1000
-Animus.Curriculum.Pulls.NextPullFloorMs = 4000
-#   gauntlets: what the per-hit terms (damage dealt and taken, kills, approach) are multiplied by there. A plan pays
-#   at the end of a pull or an episode -- the clear, surviving, readiness, control -- and dense terms paid every
-#   decision drown those out. 1 leaves the single pack's balance alone
-Animus.Curriculum.Pulls.GauntletDenseScale = 0.5
-#   owner stages: kills and clears count this many times
-Animus.Curriculum.Pulls.OwnerClearScale = 2.0
-#   owner stages keep the solo gauntlet's lessons: readiness paid when a pull is engaged (times the lower of health and
-#   mana), crowd control per enemy-second an add is kept out of the fight (up to OwnerControlMax a pull), and a win --
-#   the episode lasted with the owner never dead, no wipe and OwnerWinPulls pulls cleared -- counted as the kill
-Animus.Curriculum.Pulls.OwnerReadiness = 1.0
-Animus.Curriculum.Pulls.OwnerControl = 0.02
-Animus.Curriculum.Pulls.OwnerControlMax = 1.5
-Animus.Curriculum.Pulls.OwnerWinPulls = 5
-
-#
-#    Animus.Curriculum.Options.*
-#        Description: How long a durative action may run before the seat has to choose again (ms). One press of
-#                     one stands for many decisions: resting until health and mana are back, or holding an
-#                     interrupt for the target's next cast. They also end on their own conditions, and any other
-#                     action the policy takes cancels them. (The move block's keys are held, not options.)
-#        Default:     30000 / 10000 / 2500
-#
 Animus.Curriculum.Options.RestMaxMs = 30000
 Animus.Curriculum.Options.HoldInterruptMs = 10000
-#   how fast a turn or pitch rate, a climb or the feet stop weighing on a press that reverses them (ms;
-#   Actions.Jitter): its weight is e^(-dt / this). The forge charges it in training; nothing is charged in play
 Animus.Curriculum.Options.JitterDecayMs = 2500
 
-
-#   Ground effects: damage from something standing on the ground rather than aimed at the seat (a fire pool, a poison
-#   cloud, a consecration), charged per fraction of maximum health ON TOP of DamageTaken, which already charges it
-#   once as damage. This is the damage a seat could have walked out of, and the only term that pays for moving its
-#   feet -- without it, standing in fire costs exactly what standing anywhere else costs. Reads zero wherever nothing
-#   puts anything on the ground, which is most of the curriculum today and none of a dungeon.
-Animus.Curriculum.Hazards.Damage = 0.5
-#   per second standing in one, whether or not it has ticked yet. The damage alone is small, late and noisy (it
-#   arrives after the decision that put the seat there); the seconds are immediate and describe the behaviour, as
-#   Spacing does for a ranged spec caught in melee
-Animus.Curriculum.Hazards.Standing = 0.15
-#   at most this much an episode, both hazard terms together. Melee have to stand in melee: a hazard under the enemy
-#   is a real trade, and an uncapped charge teaches a seat to leave the fight, which is worse than standing in fire
-Animus.Curriculum.Hazards.Max = 3.0
 #
-#    Animus.Curriculum.Dummy.*
-#        The rotation drill (stage3_rotation, DummyEncounter): the kit against the duel pool's creatures with their
-#        health scaled to outlive the episode. Output is paid against the dummy's own health (Damage per kill's
-#        worth), mana kept at the end per share of the bar (Resource). The hitting dummy (HittingHealthScale) can be
-#        killed (Kill); the bleeding drill takes Bleed of the seat's health a second, on average, and charges Hurt
-#        per second per share of the seat's health missing.
-Animus.Curriculum.Dummy.HealthScale = 20.0
-Animus.Curriculum.Dummy.HittingHealthScale = 4.0
-Animus.Curriculum.Dummy.Damage = 1.0
-Animus.Curriculum.Dummy.Kill = 2.0
-Animus.Curriculum.Dummy.Death = 3.0
-Animus.Curriculum.Dummy.Bleed = 0.012
-Animus.Curriculum.Dummy.Hurt = 0.3
-Animus.Curriculum.Dummy.Resource = 0.5
-#   the moving drill: another dummy to switch to about every AddEveryMs, up to MaxAdds
-Animus.Curriculum.Dummy.AddEveryMs = 15000
-Animus.Curriculum.Dummy.MaxAdds = 2
+#    Animus.Curriculum.PartyFollow.MinimapYards
+#        Description: The minimap's radius: party members within it show as dots.
+#        Default:     60
+
+Animus.Curriculum.PartyFollow.MinimapYards = 60
 
 #
-#    Animus.Curriculum.Owner.*
-#        The scripted owner of the companion and party stages.
+#    Animus.Curriculum.Respawn.DelayMs
+#        Description: A follower that died stands up again this long after, beside its caller, at
+#                     full health and power (training rises at the episode's start point).
+#        Default:     10000
 
-#   its level: the bot's plus or minus this
-Animus.Curriculum.Owner.LevelSpread = 2
-#   percent tanks, healers, the rest damage dealers
-Animus.Curriculum.Owner.TankChance = 25
-Animus.Curriculum.Owner.HealerChance = 25
-#   in a stage whose owner is played by a frozen checkpoint (the learner's cast), the percent of training episodes
-#   that keep the scripted owner instead -- it wanders and engages on a timer, the shape the follow lesson was built
-#   on; evaluations always script it
-Animus.Curriculum.Owner.CastScriptedShare = 30
-#   damage dealers: the owner's damage taken, fraction of its health
-Animus.Curriculum.Owner.DamageTakenDps = 1.0
-#   tanks and healers exist to prevent it
-Animus.Curriculum.Owner.DamageTakenProtector = 2.0
-#   a tank owner is hit by design: its damage taken counts this much
-Animus.Curriculum.Owner.TankOwnerDamageShare = 0.25
-#   any role: effective healing on the owner, plus what the bot's absorbs soaked and its damage reductions
-#   prevented there, as a fraction of the owner's health
-Animus.Curriculum.Owner.Healing = 3.0
-#   tanks: soften the pulls' damage taken
-Animus.Curriculum.Owner.TankDamageRefund = 0.5
-#   tanks: per enemy on the tank, per decision
-Animus.Curriculum.Owner.TankHold = 0.006
-#   tanks: per enemy on the owner, per decision
-Animus.Curriculum.Owner.TankLose = 0.02
-#   damage dealers and healers, and only beside a tank owner: per enemy on the bot, per decision. Beside an owner
-#   that does not tank, holding the enemies is the bot's job and is not charged
-Animus.Curriculum.Owner.PulledThreat = 0.004
-#   per decision in combat while the owner is not
-Animus.Curriculum.Owner.SoloFight = 0.01
-#   per decision out of combat beyond FollowFarDistance
-Animus.Curriculum.Owner.FollowFar = 0.004
-#   per decision out of combat within FollowNearDistance
-Animus.Curriculum.Owner.FollowNear = 0.002
-Animus.Curriculum.Owner.FollowFarDistance = 15.0
-Animus.Curriculum.Owner.FollowNearDistance = 6.0
-#   per decision and yard the companion trails a moving owner past FollowNearDistance (up to 20)
-Animus.Curriculum.Owner.FollowTrail = 0.001
-Animus.Curriculum.Owner.Death = 15.0
+Animus.Curriculum.Respawn.DelayMs = 10000
 
 #
-#    Animus.Curriculum.Resurrection.*
-#        Resurrecting: a seat's own Soulstone or Reincarnation, and revives on allies (companion
-#        and party stages). Nobody is revived automatically while a resurrection is possible.
+#    Animus.Follow.EpisodeSeconds
+#        Description: The synthetic episode the followers play in: it starts at the summon, and
+#                     every this long it rolls over (a full reset with the mental map kept). The
+#                     model's episode clock ramps from 0 to 1 over 300 s whatever this is (training's
+#                     episodes were 300 s). A new map or instance starts a new episode with the
+#                     mental map cleared.
+#        Default:     300
 
-#   the dead wait this long (ms) for a resurrection they can get before solo stages end and
-#   owner stages stand them up (the next pull waits too)
-Animus.Curriculum.Resurrection.GraceMs = 20000
-#   a dead ally the seat resurrected stood up
-Animus.Curriculum.Resurrection.ReviveAlly = 1.5
-
-#
-#    Animus.Curriculum.Output.*
-#        How fast the enemies die: every second an engaged enemy lives costs every seat of the side
-#        (dead ones too), in every arena but a raid's.
-
-Animus.Curriculum.Output.Clock = 0.03
+Animus.Follow.EpisodeSeconds = 300
 
 #
-#    Animus.Curriculum.Death.*
-#        Where death runs on (open-world quest arenas): a dead seat releases, runs back to its
-#        corpse and rises there, takes the spirit healer, or accepts a friend's resurrection.
+#    Animus.Follow.Security
+#        Description: The account security ".animus follow" and the addon's Summon need. 0 player,
+#                     1 moderator, 2 game master, 3 administrator. Party fill does not need it.
+#        Default:     0 - (Every player)
 
-#   per decision dead or a ghost
-Animus.Curriculum.Death.TimeDead = 0.002
-#   died again within DiedAgainMs (ms) of rising
-Animus.Curriculum.Death.DiedAgain = 3.0
-Animus.Curriculum.Death.DiedAgainMs = 30000
-#   rose with no hostile creature within its aggro radius + 5 yd
-Animus.Curriculum.Death.SafeRise = 0.5
-#   took the spirit healer's resurrection and its sickness
-Animus.Curriculum.Death.SpiritHealer = 1.0
-
-#
-#    Animus.Curriculum.Opponent.*
-#        The scripted enemy player of the PvP stage.
-
-Animus.Curriculum.Opponent.LevelSpread = 1
-#   it starts fighting up to this long into the episode
-Animus.Curriculum.Opponent.EngageMaxMs = 3000
-Animus.Curriculum.Opponent.HealerChance = 20
-Animus.Curriculum.Opponent.TankChance = 20
-
-#
-#    Animus.Curriculum.Evade.*
-#        Getting away from a fight that cannot be won (stage13_escape's evade and hide arenas). Time spent unseen is
-#        counted and never paid -- paid seconds out of sight are earned by standing in the far corner. What is
-#        paid is the transition out of contact, once a break, with a cooldown.
-
-#   paid once when a seat that was visible to a living enemy stops being visible
-Animus.Curriculum.Evade.BrokeContact = 0.3
-#   no second break pays within this long of the last, in ms
-Animus.Curriculum.Evade.BreakCooldownMs = 5000
-#   an unbroken stretch out of sight at least this long, in ms, counts as an escape (metric only)
-Animus.Curriculum.Evade.EscapeMs = 8000
-
-#
-#    Animus.Curriculum.Stealth.*
-#        Stalking (stage14_stealth): closing on someone while stealthed and unseen, and holding there. The one
-#        reward in the curriculum paid per decision rather than on a transition, and capped for it. Time unseen
-#        is still never paid -- the distance condition is what makes this a skill, since detection is a check
-#        the seat is losing the whole time it stands inside the band.
-
-#   paid each decision the seat is stealthed, unseen and within StalkYards of a living opponent
-Animus.Curriculum.Stealth.Stalk = 0.02
-#   how close counts as stalking, in yards
-Animus.Curriculum.Stealth.StalkYards = 10.0
-#   the most the stalk nudge may pay in one episode, so the opener it sets up stays the larger prize
-Animus.Curriculum.Stealth.StalkMax = 1.0
-#   paid Stealth.OpenerWindowMs after a stealth opener lands, per share of the opponent's health gone by then (all of
-#   it if the opener's burst killed it; training only): an opener is worth what it does, not only that it landed
-Animus.Curriculum.Stealth.OpenerDamage = 2.0
-Animus.Curriculum.Stealth.OpenerWindowMs = 6000
-
-#
-#    Animus.Curriculum.Ambush.*
-#        Scripted enemy players who ambush the owner (stage21_ship's ambush arena, and stage20_world_shared's ganks).
-#        Their class, role and level follow the Opponent.* chances and spread.
-
-#   beside pulls: they arrive at a random time between these, in ms (at most 3/4 into the episode)
-Animus.Curriculum.Ambush.MinMs = 20000
-Animus.Curriculum.Ambush.MaxMs = 120000
-#   they start fighting up to this long after arriving, in ms
-Animus.Curriculum.Ambush.EngageMaxMs = 3000
-#   beside pulls: every seat is paid this per ambusher killed (alone, the duel's rewards apply)
-Animus.Curriculum.Ambush.Kill = 3.0
-
-#
-#    Animus.Curriculum.ScriptedPlayers.*
-#        How the scripted players (owner, PvP opponent, ambushers) play.
-
-#   time between damage spells
-Animus.Curriculum.ScriptedPlayers.SpellMinMs = 2000
-Animus.Curriculum.ScriptedPlayers.SpellMaxMs = 4000
-#   time between heals
-Animus.Curriculum.ScriptedPlayers.HealMinMs = 1500
-Animus.Curriculum.ScriptedPlayers.HealMaxMs = 2500
-#   between pulls: time between wander steps
-Animus.Curriculum.ScriptedPlayers.WanderMinMs = 6000
-Animus.Curriculum.ScriptedPlayers.WanderMaxMs = 12000
-#   ... and the percent of an owner's steps that are a run instead: a leg at a run to a spot RunMinYards-RunMaxYards
-#   from the spawn point (never nearer than RunMinYards to where it stands) with a real route there, so the seats
-#   beside it have an owner that goes somewhere to follow. The wander's leash brings it back: another leg.
-Animus.Curriculum.ScriptedPlayers.RunChance = 35
-Animus.Curriculum.ScriptedPlayers.RunMinYards = 40.0
-Animus.Curriculum.ScriptedPlayers.RunMaxYards = 60.0
-#   of max health and mana per second, out of combat
-Animus.Curriculum.ScriptedPlayers.RegenFraction = 0.04
-#   healers heal party members under this health fraction
-Animus.Curriculum.ScriptedPlayers.HealBelow = 0.85
-#   PvP healers heal themselves under this
-Animus.Curriculum.ScriptedPlayers.SelfHealBelow = 0.6
-#   healers stay this close to the tank
-Animus.Curriculum.ScriptedPlayers.HealerRange = 30.0
-Animus.Curriculum.ScriptedPlayers.TauntRange = 25.0
-#   PvP: a ranged spec backs off inside half this ...
-Animus.Curriculum.ScriptedPlayers.RangedMin = 20.0
-#   ... and closes in beyond this
-Animus.Curriculum.ScriptedPlayers.RangedMax = 30.0
-#   PvP: percent of engagements a rogue sneaks up in stealth
-Animus.Curriculum.ScriptedPlayers.StealthChance = 50
-#   PvP: percent of engagements it plays its kit: interrupts, crowd control, snares, defensives, breaks
-Animus.Curriculum.ScriptedPlayers.TacticsChance = 75
-#   ... time between crowd control attempts
-Animus.Curriculum.ScriptedPlayers.ControlMinMs = 8000
-Animus.Curriculum.ScriptedPlayers.ControlMaxMs = 15000
-#   ... a defensive when its health is under this
-Animus.Curriculum.ScriptedPlayers.DefensiveBelow = 0.35
-#   ... breaks crowd control when its health is under this
-Animus.Curriculum.ScriptedPlayers.BreakBelow = 0.6
-
-#   Travel arenas. Ground: a place this many yards away by path
-Animus.Curriculum.Travel.ObjectiveMin = 60.0
-Animus.Curriculum.Travel.ObjectiveMax = 320.0
-#   travel arenas made on foot (stage1_move): yards from the start, by path. Shorter than the mounted range because
-#   the lesson is how well the seat covers ground with what it has -- Sprint, Dash, Travel Form, Aspect of the
-#   Cheetah, and not stopping -- rather than whether a ride is worth summoning. Long enough that a speed cooldown
-#   pays for itself, short enough that the trip is not simply a wait
-Animus.Curriculum.Travel.FootMin = 40
-Animus.Curriculum.Travel.FootMax = 160
-#   flying arenas: yards from the start
-Animus.Curriculum.Travel.FlyingMin = 350.0
-Animus.Curriculum.Travel.FlyingMax = 700.0
-#   which trips the ground arenas ask for, by how much longer the walking way round is than the straight line:
-#   each episode draws a band first -- DetourEasyShare of them under DetourEasy, DetourMidShare between DetourEasy
-#   and DetourHard, the rest from DetourHard up to the generator's ceiling of 1.8 -- and looks for an objective in
-#   it. Drawn uniformly, real detours were the tail (51% of stage1_move's trips and 82% of stage2_travel's had a
-#   dry detour under 1.15), and a policy taught on straight lines learns to hold forward. Water, indoor and flying
-#   arenas draw no band
-Animus.Curriculum.Travel.DetourEasy = 1.15
-Animus.Curriculum.Travel.DetourHard = 1.4
-Animus.Curriculum.Travel.DetourEasyShare = 0.4
-Animus.Curriculum.Travel.DetourMidShare = 0.35
-#   air-only arenas (stage2_travel's flight_air): a place is accepted only when the ground route to it is missing
-#   or longer than AirDetour times the straight line, so the wings are the way and not a slower option; and
-#   arriving there means standing within AirArriveRise yards of the objective's own height, or the foot of the
-#   cliff six yards under a plateau's edge would count
-Animus.Curriculum.Travel.AirDetour = 2.5
-Animus.Curriculum.Travel.AirArriveRise = 10.0
-#   ledge arenas (stage1_move): the objective is LedgeMin to LedgeMax yards away and LedgeDropMin to
-#   LedgeDropMax yards below the seat, its way round on foot complete but at least LedgeDetour times the straight
-#   line, and the straight line crosses one edge the seat can drop off. LedgeDropMax runs past the lethal fall on
-#   purpose: with Slow Fall or Levitate the drop is free, without them the seat learns what it costs
-Animus.Curriculum.Travel.LedgeMin = 20.0
-Animus.Curriculum.Travel.LedgeMax = 120.0
-Animus.Curriculum.Travel.LedgeDetour = 2.0
-Animus.Curriculum.Travel.LedgeDropMin = 5.0
-Animus.Curriculum.Travel.LedgeDropMax = 80.0
-#   dive arenas (stage1_move): the objective is DiveMin to DiveMax yards away on a lakebed under
-#   DiveDepthMin to DiveDepthMax yards of water. DiveDepthMax runs past what one breath reaches on purpose: with
-#   Unending Breath or Water Breathing the dive is free, without them the seat learns to come up for air
-Animus.Curriculum.Travel.DiveMin = 20.0
-Animus.Curriculum.Travel.DiveMax = 120.0
-Animus.Curriculum.Travel.DiveDepthMin = 6.0
-Animus.Curriculum.Travel.DiveDepthMax = 40.0
-#   chain arenas (stage1_move's chain): reaching an objective draws the next one ChainMin to ChainMax yards on from
-#   where the seat stands, of the arena's own kind, until the clock runs out
-Animus.Curriculum.Travel.ChainMin = 30.0
-Animus.Curriculum.Travel.ChainMax = 60.0
-#   indoor arenas (stage1_move): yards from the start, by path. Shorter than anything outdoors because it is
-#   a trip across a room -- the far end of an inn is nearer than the first march range of an open-country probe
-Animus.Curriculum.Travel.IndoorMin = 8.0
-Animus.Curriculum.Travel.IndoorMax = 40.0
-#   potential shaping: what closing the whole trip pays, spread over its length -- per 100 yd on a trip shorter
-#   than that -- and taken back for leaving. Per 100 yd whatever the trip, a 700 yd flight paid more for progress
-#   than for arriving
-Animus.Curriculum.Travel.Progress = 1.0
-Animus.Curriculum.Travel.Arrive = 3.0
-#   times the fraction of the walk the trip saved: 0 on foot, ~0.3 mounted over
-#   a few hundred yards. This is what pays for a mount, so it has to be worth
-#   more than the cast time costs
-Animus.Curriculum.Travel.FastArrive = 6.0
-#   fraction of the bot's health (falls, what it rode past)
-Animus.Curriculum.Travel.DamageTaken = 1.0
-Animus.Curriculum.Travel.Death = 3.0
-#   per decision
-Animus.Curriculum.Travel.StepCost = 0.0002
-#   room to move, charged by the second while the seat is inside ClearanceMargin yards of the nearest edge of
-#   walkable space, and capped per episode by ClearanceMax. Never a mask: a doorway is narrower than any margin
-#   worth keeping in the open, so forbidding closeness would forbid doorways
-Animus.Curriculum.Travel.Clearance = 0.08
-Animus.Curriculum.Travel.ClearanceMargin = 1.5
-Animus.Curriculum.Travel.ClearanceMax = 0.6
-#   routing. The way to the objective is re-planned when the seat has strayed RouteStray yards from the corner it
-#   was walking to, or after RouteRefresh seconds -- movement first, because at seven yards a second a clock alone
-#   goes stale inside the first corner. RouteCorner is how near counts as having reached one, and wants to be
-#   wider than a decision's travel (1.75 yd at run speed) so a corner cannot be stepped over and walked back to
-Animus.Curriculum.Travel.RouteStray = 25.0
-Animus.Curriculum.Travel.RouteRefresh = 5.0
-Animus.Curriculum.Travel.RouteCorner = 5.0
-
-#   Flag match (Warsong Gulch's rules). Yards between the bases, by path
-Animus.Curriculum.Flag.BaseMin = 100.0
-Animus.Curriculum.Flag.BaseMax = 180.0
-Animus.Curriculum.Flag.CapturesToWin = 3
-#   the dead stand up at their base after this (a graveyard wave)
-Animus.Curriculum.Flag.RespawnMs = 15000
-#   a dropped flag goes home on its own after this
-Animus.Curriculum.Flag.DroppedReturnMs = 10000
-#   yards to pick up, return or capture
-Animus.Curriculum.Flag.TouchDistance = 4.0
-Animus.Curriculum.Flag.Capture = 5.0
-Animus.Curriculum.Flag.Pickup = 1.0
-Animus.Curriculum.Flag.Return = 1.0
-#   killing the one carrying the seat's flag
-Animus.Curriculum.Flag.CarrierKill = 1.5
-#   the other side captured the seat's flag
-Animus.Curriculum.Flag.Lost = 3.0
-#   potential shaping toward the seat's current objective, per 100 yd
-Animus.Curriculum.Flag.Progress = 0.5
-Animus.Curriculum.Flag.Death = 1.0
-#   per decision
-Animus.Curriculum.Flag.StepCost = 0.0002
-
-###################################################################################################
-
-###################################################################################################
-# LIFE OUTSIDE THE FIGHT
-#
-# For companions whose model carries the world block (the forge's stages 20-22 and the crossroads): the
-# model itself loots, takes and hands in quests, gathers, puts on the better item, sells the greys,
-# repairs and restocks (WorldBlock, the same features and presses it trained with). What is listed here
-# is the scripted rest -- lookups, and what no sim could teach -- each with a switch. A companion whose
-# model has no world block is untouched by all of it. `.animus life` shows the switches;
-# `.animus life <feature> on|off` flips one until the next config reload.
-#
-#    Animus.Life.Enable
-#        Description: The whole of it.
-#        Default:     1
-
-Animus.Life.Enable = 1
-
-#
-#    Animus.Life.Quests
-#        Description: The owner's quests are the companion's too: taken when the owner takes one it can
-#                     take, dropped when the owner drops it. The model does the objectives, the looting
-#                     and the turn-in (choosing the reward that rates highest for its build).
-#        Default:     1
-
-Animus.Life.Quests = 1
-
-#
-#    Animus.Life.Auction, Animus.Life.AuctionBudgetGold
-#        Description: Idle beside an auctioneer, the companion lists its unbound greens and better that
-#                     are no upgrade for it (at the house's median price for the item, else four times
-#                     the vendor's), and buys one upgrade for its build at buyout under the budget.
-#        Default:     1, 50
-
-Animus.Life.Auction = 1
-Animus.Life.AuctionBudgetGold = 50
-
-#
-#    Animus.Life.Mail
-#        Description: The house's mail (sales, purchases, returns) is collected when idle. Companions
-#                     receive no other mail.
-#        Default:     1
-
-Animus.Life.Mail = 1
-
-#
-#    Animus.Life.Taxi, Animus.Life.TaxiBeyondYards
-#        Description: When the owner is further than this on the same map and a flight path between the
-#                     nearest flight points would close most of it, the companion takes it (and pays).
-#        Default:     1, 1500
-
-Animus.Life.Taxi = 1
-Animus.Life.TaxiBeyondYards = 1500
-
-#
-#    Animus.Life.Crafting
-#        Description: Idle, the companion makes what it knows a recipe for from what it carries.
-#        Default:     1
-
-Animus.Life.Crafting = 1
-
-#
-#    Animus.Life.IdleSeconds
-#        Description: Out of combat this long, with nothing to fight, before the mail, the house or a
-#                     recipe.
-#        Default:     20
-
-Animus.Life.IdleSeconds = 20
+Animus.Follow.Security = 0
 
 ###################################################################################################
 # PLAY CAPTURE

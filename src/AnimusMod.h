@@ -20,120 +20,70 @@
 #define ANIMUS_MOD_H
 
 #include "AnimusConfig.h"
-#include "CompanionParty.h"
-#include "CompanionRegistry.h"
+#include "FollowParty.h"
 #include "Layout.h"
+#include "ClassProfile.h"
 #include "ModelLibrary.h"
 #include "ObjectGuid.h"
 #include "Unit.h"
 #include <memory>
-#include <array>
-#include <string>
-#include <string_view>
 #include <optional>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
 class Player;
-class Quest;
-class Unit;
 
 namespace Animus
 {
-    /// Module root: settings, the models, the registry of every player's companion and the parties of those out.
+    /// **Module root.** The settings, the model library, the camera scenes baked at startup, and the follow parties:
+    /// bots of the caller's level and faction played by the `<class>_follow` models (Follow::FollowParty), summoned
+    /// with `.animus follow <n>` or the addon's Summon, and summoned by themselves to fill a player's five-player
+    /// dungeon group (Animus.PartyFill.Enable, the player's own setting, a game master's realm override). Beside them:
+    /// the play capture with its recordings (Capture), Prepare (Prepare::Prepare) and each player's settings
+    /// (PlayerSettings).
     ///
-    /// Core Responsibilities:
-    /// - Manages AI-controlled companions that join player parties
-    /// - Controls party filling for dungeons using trained AI models
-    /// - Provides game commands and addon interface for companion management
-    /// - Handles companion lifecycle (creation, summoning, saving, removal)
-    /// - Tracks damage records for AI training feedback
+    /// The v1 class companion -- a character saved with yours, its director, life outside the fight -- is not in
+    /// this build: it cannot run on the current runtime (the forge's Runtime cut of 2026-10-08 dropped its blocks)
+    /// and no model of its format exists any more; its code is in attic/ (outside src/, never built), for reference.
     ///
-    /// Thread Safety:
-    /// - Everything except RecordDamage runs on the world thread (config load, commands, world update, shutdown)
-    /// - RecordDamage runs on map threads and only reads bot index and party pulls
-    /// - All pull changes happen on the world thread, never while maps are updating
-    ///
-    /// Component Architecture:
-    /// - AnimusConfig: Module settings from config files
-    /// - ModelLibrary: Loaded AI model files (.amdl format)
-    /// - CompanionRegistry: Database tracking of companion characters
-    /// - CompanionParty: Party management with AI companions
-    ///
-    /// Companion System:
-    /// - Each player can have one AI companion character
-    /// - Companions follow, fight alongside, and level with players
-    /// - Companions use AI models trained by Animus Forge
-    /// - Companions are persisted in database (characters table)
-    /// - Companions get no mail, achievements, or quests
-    ///
-    /// Party Filling System:
-    /// - Dungeon parties can be filled to 5 members
-    /// - AI fills roles (tank, healer, damage) based on talents
-    /// - Temporary members are created and saved only while in dungeon
-    /// - Companions count as party members for filling
-    ///
+    /// Threads: everything runs on the world thread (config load, startup, commands, the world update after the maps,
+    /// shutdown), apart from RecordDamage and IsBot, which map threads call and which only read the bot index (changed
+    /// on the world thread alone, never while maps update).
     class AnimusMod
     {
     public:
         static AnimusMod* Instance();
 
         void LoadConfig();
-        /// The world is up: the companions on record are read (the character cache exists by then).
+        /// The world is up: the camera scenes of Animus.Vision.Maps are baked when missing or stale, and loaded.
         void OnStartup();
         void OnUpdate(uint32 diff);
         void OnShutdown();
 
-        /// Everything a player does with their one companion, from the addon or the commands. Each returns false
-        /// with `message` set when refused; on success `message` says what happened.
+        /// `.animus follow <n>`: n (1-4) followers of the caller's level and faction join the caller's party, which
+        /// the caller leads (made when there is none), each of a class with a loaded `<class>_follow` model. False with
+        /// `message` set when refused; on success `message` says who came. `warnings` are said either way.
+        bool Summon(Player* caller, uint32 count, std::string& message, std::vector<std::string>& warnings);
+        /// `.animus dismiss`: the caller's followers leave, unsaved.
+        bool Dismiss(Player* caller, std::string& message);
+        /// `.animus follow` with no count: the caller's followers.
+        [[nodiscard]] std::vector<std::string> List(Player* caller) const;
+        /// `.animus models`: every class's model for Animus.Curriculum.Stage and whether it loads, and the camera
+        /// scenes loaded.
+        [[nodiscard]] std::vector<std::string> ModelStatus();
 
-        /// Creates a new AI companion character for the player.
-        ///
-        /// Parameters:
-        /// - owner: The player who will own this companion
-        /// - name: Desired name for the companion character
-        /// - race: Character race (human, nightelf, orc, etc.) - case-insensitive
-        /// - playerClass: Character class (warrior, priest, deathknight, etc.) - case-insensitive
-        /// - message: Returns error messages if creation fails
-        ///
-        /// Companion Details:
-        /// - Created on a dedicated ANIMUS<N> account (hidden from players)
-        /// - Level matches owner's level or class starting level (death knight = 55)
-        /// - Uses AI models from configured stage (Animus.Curriculum.Stage)
-        /// - Saved to database, persists across sessions
-        /// - Cannot have mail, achievements, or receive quests
-        ///
-        /// Restrictions:
-        /// - One companion per player
-        /// - Race must be valid for the chosen class
-        /// - Cannot be of opposing faction
-        /// - Name must be unique and game-acceptable
-        ///
-        /// Returns: true on success, false on failure with message
-        bool Create(Player* owner, std::string name, std::string_view race, std::string_view playerClass,
-            std::string& message);
-        /// The saved companion comes back beside the owner. Its rows load on the database thread; `message` says
-        /// it is on its way, and the addon is told again (Addon::Push) once it stands there.
-        bool Summon(Player* owner, std::string& message);
-        /// Saved and out of the world; the character stays.
-        bool Dismiss(Player* owner, std::string& message);
-        /// A new name for the companion character, nothing else changed. Out, it is dismissed and summoned again
-        /// under the new name (the client shows a name it has seen).
-        bool Rename(Player* owner, std::string name, std::string& message);
-        /// A new race and class: the companion character is deleted and a new one of the same name created.
-        bool Reroll(Player* owner, std::string_view race, std::string_view playerClass, std::string& message);
-        /// The owner character was deleted: their companion character and its account go too.
-        void OnOwnerDeleted(ObjectGuid owner);
-        /// A player arrived on a map (Animus.PartyFill): a group's leader entering a five-man dungeon has the group
-        /// topped up by role; leaving it, the temporary members go.
-        void OnPlayerMapChanged(Player* player);
+        /// A player logged out: a leader's followers go with it, and their settings are forgotten.
+        void OnPlayerLogout(Player* player);
         /// A player logged in: their own settings are read (PlayerSettings).
         void OnPlayerLogin(Player* player);
+        /// A player arrived on a map (Animus.PartyFill): entering a five-player dungeon alone or as its group's leader,
+        /// the group is filled with followers two seconds later; leaving it alive, they go.
+        void OnPlayerMapChanged(Player* player);
 
         /// **Dungeon party fill, per player and for the realm** (2026-10-25). Whether `player`'s group is filled on
         /// entering a dungeon: the module on, the realm's switch (Animus.PartyFill.Enable, or the GM override that
-        /// lasts until the next config reload), and the player's own setting (the group leader's decides: only a
-        /// leader's group is filled).
+        /// lasts until the next config reload), and the player's own setting.
         [[nodiscard]] bool PartyFillFor(Player const* player) const;
         /// The player's own setting (`.animus partyfill on|off`, the addon's checkbox), kept per character.
         bool SetPartyFill(Player* player, bool on, std::string& message);
@@ -150,139 +100,53 @@ namespace Animus
         };
         [[nodiscard]] PartyFillStatus PartyFillState(Player const* player) const;
 
-        /// Every account and character the module ever made, gone: companions out of the world unsaved, every
-        /// `ANIMUS<guid>` account deleted with its characters (orphans of older runs included), the module's table
-        /// dropped. Returns what it did, one line per account.
-        [[nodiscard]] std::vector<std::string> PurgeAll();
-
-        /// The addon's inspect-window edits of the companion (CompanionParty::Talent, PetTalent, Equip, Pet).
-        bool Talent(Player* owner, std::string_view name, uint32 talentId, bool learn, std::string& message);
-        bool PetTalent(Player* owner, std::string_view name, uint32 talentId, bool learn, std::string& message);
-        bool Equip(Player* owner, std::string_view name, uint8 bag, uint8 slot, uint8 equipSlot,
-            std::string& message);
-        bool Pet(Player* owner, std::string_view name, CompanionParty::PetView& view, std::string& message);
-
-        /// What the owner has, for the window: nothing, or a character (its name, race and class words, level and
-        /// spec), out beside them or waiting in the database.
-        struct Companion
-        {
-            bool Exists = false;
-            std::string Name;
-            std::string Race;
-            std::string Class;
-            uint8 Level = 0;
-            std::string Spec;
-            bool Out = false;                   // in the world (or loading)
-            bool Loading = false;
-            bool Parked = false;
-            std::string ModelName;
-            std::string Model;                  // "loaded", or why not, when out
-        };
-        [[nodiscard]] Companion Describe(Player* owner);
-
-        /// One line per fact of Describe, for `.animus list`.
-        [[nodiscard]] std::vector<std::string> List(Player* owner);
-        /// `.animus models`: every class's model for Animus.Curriculum.Stage, and whether it loads -- the check to run
-        /// after copying models in, before anyone summons a companion.
-        [[nodiscard]] std::vector<std::string> ModelStatus();
-
-        /// Whether `guid` is a companion character (of anyone): it gets no mail and no achievements.
-        [[nodiscard]] bool IsCompanion(ObjectGuid guid) const { return _registry.IsCompanion(guid); }
-        /// Whether `guid` is any bot the module runs: a companion or a temporary party member. Safe on map threads
-        /// (both indexes change only on the world thread, never while maps update).
-        [[nodiscard]] bool IsBot(ObjectGuid guid) const { return IsCompanion(guid) || _partyByBot.contains(guid); }
-
-        /// `.animus rate` and the addon's rate request: the owner's verdict on its companion, for the capture
-        /// (Capture::CompanionRating). False with `message` set when refused.
-        bool Rate(Player* owner, std::string_view sign, std::string_view reason, std::string& message);
-
-        /// A race a companion may be, with the classes it can be, in the words Create accepts.
-        struct RaceChoice
-        {
-            std::string Race;
-            std::vector<std::string> Classes;
-        };
-
-        /// The races of `owner`'s faction, each with the classes it can be: everything Create takes after the name.
-        [[nodiscard]] static std::vector<RaceChoice> RaceChoices(Player const* owner);
-
-        /// The stage whose models companions play (Animus.Curriculum.Stage).
+        /// Whether `player`'s account may summon followers (Animus.Follow.Security).
+        [[nodiscard]] bool MaySummon(Player const* player) const;
+        /// The stage whose models the followers play (Animus.Curriculum.Stage).
         [[nodiscard]] std::string const& CurrentStage() const { return _config.CurriculumStage; }
-        /// The configured stage's layout of a class profile, built on first use (Prepare builds a player character
-        /// with it as a companion is built).
+        /// The layout Prepare builds a character with: the class's at the configured stage (its gear, talents and
+        /// spells are the stage's seats').
         [[nodiscard]] Curriculum::Layout const& PrepareLayout(Curriculum::ClassProfile const& profile)
         {
             return LayoutFor(profile);
         }
-        [[nodiscard]] AnimusConfig const& Config() const { return _config; }
 
-        /// Every curriculum stage with its arenas: the names Animus.Curriculum.Stage accepts, and so which models a
-        /// companion will look for.
-        [[nodiscard]] std::vector<std::string> StageList() const;
+        /// Whether `guid` is a follower (the capture marks its records a companion's). Safe on map threads.
+        [[nodiscard]] bool IsBot(ObjectGuid guid) const { return _partyByBot.contains(guid); }
 
-        /// Life outside the fight (LifeService): the owner's quests reach its companions; `.animus life`.
-        void OnOwnerQuestAccept(Player* owner, Quest const* quest);
-        void OnOwnerQuestAbandon(Player* owner, uint32 questId);
-        [[nodiscard]] std::vector<std::string> LifeStatus() const;
-        /// The life switches as flags, in the order all, quests, auction, mail, taxi, crafting (the addon's LIFE).
-        [[nodiscard]] std::array<bool, 6> LifeFlags() const;
-        bool LifeToggle(std::string_view feature, std::string_view state, std::string& message);
-
-        /// A player logged out: their companion is saved and removed.
-        void OnPlayerLogout(Player* player);
-
+        /// Damage a follower took, for its next observation (UnitScript::DealDamage, map threads).
         void RecordDamage(Unit const* attacker, Unit const* victim, uint32 damage, DamageEffectType type);
 
         [[nodiscard]] bool IsEnabled() const { return _config.Enable; }
+        [[nodiscard]] AnimusConfig const& Config() const { return _config; }
+        /// Where the models are (Animus.ModelDir, resolved), and the library that reads them.
+        [[nodiscard]] std::string const& ModelDir() const { return _config.ModelDir; }
+        [[nodiscard]] ModelLibrary& Models() { return _models; }
 
     private:
         AnimusMod() = default;
 
-        /// The party of `owner` with its companion out, else null with `message` set.
-        CompanionParty* PartyOf(Player* owner, std::string& message);
-
-        /// A companion character that exists (created or loaded) joins the owner's party under `record`; false with
-        /// `message` when it could not, the record left as it was.
-        bool Adopt(Player* owner, Player* bot, CompanionRegistry::Record& record, std::string& message);
-        /// Whether `layout`'s model is one this server can play; else false with `message` saying why. No model, no
-        /// companion: nothing is made, summoned or filled without one.
-        bool HasModel(Curriculum::Layout const& layout, std::string& message);
-        /// Save the party's companion and the registry's record of it, then take it out of the world.
-        void SaveParty(ObjectGuid owner);
-        /// What the owner told its companion to do, for the capture (Capture::CompanionCommand).
-        void RecordCommand(Player* owner, uint8 command, uint32 arg = 0) const;
-        /// The words of a race and class, checked against each other and the owner's faction.
-        bool ResolveRaceClass(Player const* owner, std::string_view race, std::string_view playerClass,
-            uint8& raceId, uint8& classId, std::string& message) const;
-
-        void RemoveParty(ObjectGuid owner);
-        /// The owner's own companion out of the world -- saved first when `save` -- keeping any temporary members.
-        void PutAway(ObjectGuid owner, bool save);
-        /// Top the owner's group up to five in the roles it lacks, for the dungeon instance it is in.
-        void FillParty(Player* owner);
-        /// A name no character has, for a temporary member.
-        [[nodiscard]] static std::string FillerName();
+        /// The layout of a class at the configured stage, built on first use and kept (followers point at it).
+        Curriculum::Layout const& LayoutFor(Curriculum::ClassProfile const& profile);
+        void RemoveParty(ObjectGuid leader);
         void RemoveAll();
 
-        /// The layout of a profile at the configured stage, built on first use and kept (companions point at it).
-        Curriculum::Layout const& LayoutFor(Curriculum::ClassProfile const& profile);
-        /// The configured stage's director layout, or null when its arenas are not directed.
-        Curriculum::Layout const* DirectorLayout();
-
         AnimusConfig _config;
+        bool _visionConfigured = false;
         ModelLibrary _models;
-        CompanionRegistry _registry;
         std::unordered_map<std::string, Curriculum::Layout> _layouts;       // by model name
-        std::optional<Curriculum::Layout> _directorLayout;
 
-        std::unordered_map<ObjectGuid, std::unique_ptr<CompanionParty>> _parties;   // by owner
-        std::unordered_map<ObjectGuid, CompanionParty*> _partyByBot;
-        std::unordered_map<ObjectGuid, uint32> _filledInstance;     // owner -> the dungeon instance filled for
-        /// Owners who entered a dungeon, and the milliseconds before their group is filled: not while the teleport
-        /// that brought them is still finishing, and after the group's other members have had a moment to arrive.
+        std::unordered_map<ObjectGuid, std::unique_ptr<Follow::FollowParty>> _parties;     // by leader
+        std::unordered_map<ObjectGuid, Follow::FollowParty*> _partyByBot;
+        /// Party fill: the instance each leader's group was filled for, the leaders whose fill is due (a short delay
+        /// after the map change, so the group and the map are settled), and the realm-wide GM override (cleared by
+        /// LoadConfig).
+        std::unordered_map<ObjectGuid, uint32> _filledInstance;
         std::unordered_map<ObjectGuid, int32> _pendingFill;
-        uint32 _nextFillerAccount = 0;
-        std::optional<bool> _partyFillOverride;     // the realm-wide GM override, cleared by LoadConfig
+        std::optional<bool> _partyFillOverride;
+        /// Summon `count` followers for `leader` as the party fill would (no security, no scene message to the chat).
+        void FillParty(Player* leader);
+        uint32 _nextAccount = 0;
     };
 }
 

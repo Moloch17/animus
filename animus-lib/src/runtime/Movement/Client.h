@@ -98,22 +98,33 @@ namespace Animus::Movement
         {
             uint64_t Reports = 0;           // packets sent, accepted or not
             uint64_t Refused = 0;           // ... refused by the server
-            uint64_t Heartbeats = 0;
-            uint64_t Facings = 0;           // SET_FACING and SET_PITCH
             uint64_t Changes = 0;           // change opcodes (start, stop, jump, land, swim, ...)
             uint64_t Acks = 0;              // answers to the server's orders
             uint64_t YieldTicks = 0;        // ticks the server imposed and the client yielded
             uint64_t Resyncs = 0;           // starts again from a position the server set on its own
+            uint64_t Unburied = 0;          // ... and found it inside the ground, and stood it on the terrain
+            uint64_t OverVoid = 0;          // steps refused over nothing at all (PlayerController's OverVoid)
         };
 
         /// The body as the client knows it: the truth, which self observations read (§5A.1 point 1).
         BodyState Body;
         Counters Counts;
+        /// The last of the server's orders the client took, and when (episode ms): what a diagnostic names.
+        uint8_t LastOrder = UINT8_MAX;
+        uint32_t LastOrderMs = 0;
+        /// The server's height when the client last found the body inside the ground (Counts.Unburied).
+        float UnburiedFromZ = 0.0f;
+        /// Where the body last refused to step over nothing at all (Counts.OverVoid).
+        float VoidX = 0.0f;
+        float VoidY = 0.0f;
+        float VoidZ = 0.0f;
         /// The last tick, over its sub-steps: yards moved, yards the held controls asked for, whether it met a wall;
         /// jumps taken and landings, and the highest fall landed.
         float TickMoved = 0.0f;
         float TickCommanded = 0.0f;
         bool TickWall = false;
+        bool TickSteep = false;         // a rise refused for its slope this tick (BodyState::SteepSlope)
+        bool TickVoid = false;          // a step refused over nothing at all this tick (BodyState::OverVoid)
         uint32_t TickJumps = 0;
         uint32_t TickLandings = 0;
         float TickFallHeight = 0.0f;
@@ -133,14 +144,44 @@ namespace Animus::Movement
         /// stretch is credited (§5A.1 point 4).
         void Finish(ServerLink& link, uint32_t nowMs);
 
+        /// A new episode: the body is the server's again before it is stepped, reported or read -- the next Start (the
+        /// episode's, or the first tick's) takes it from wherever the episode put the seat. A build that failed after
+        /// the seats were placed never reached its Start, and a client still started stepped and reported the last
+        /// episode's body there: another map's coordinates (the M1 dry check read Nagrand's held-out point on map 1).
+        void Stop() { _started = false; }
         [[nodiscard]] bool Started() const { return _started; }
         [[nodiscard]] bool Rooted() const { return _rooted; }
         [[nodiscard]] uint32_t Granted() const { return _granted; }
-        [[nodiscard]] uint32_t LastReportMs() const { return _lastSendMs; }
         /// The flags the client reports for the body under `control` now.
         [[nodiscard]] uint32_t FlagsOf(ControlState const& control, Speeds const& speeds) const;
 
     private:
+        /// The shape and world a call was handed, for as long as that call runs: callers build them per tick (a
+        /// MapWorldQuery on the stack), so between calls the client keeps none -- a later Finish never reaches a
+        /// stale one. Nested (Tick calling Start), the outer call's are restored.
+        class WorldScope
+        {
+        public:
+            WorldScope(Client& client, Movement::Body const& shape, WorldQuery const& world)
+                : _client(client), _shape(client._shape), _world(client._world)
+            {
+                client._shape = &shape;
+                client._world = &world;
+            }
+            ~WorldScope()
+            {
+                _client._shape = _shape;
+                _client._world = _world;
+            }
+            WorldScope(WorldScope const&) = delete;
+            WorldScope& operator=(WorldScope const&) = delete;
+
+        private:
+            Client& _client;
+            Movement::Body const* _shape;
+            WorldQuery const* _world;
+        };
+
         [[nodiscard]] Report Snapshot(uint16_t opcode, uint32_t timeMs, uint32_t flags) const;
         bool Send(Report const& report, ServerLink& link);
         void TakeFromServer(ServerState const& state);

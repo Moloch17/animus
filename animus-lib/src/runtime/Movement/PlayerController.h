@@ -103,6 +103,15 @@ namespace Animus::Movement
         /// Turning by the keyboard (the turn keys), which the client slows while moving; the policy's turn rates are
         /// the mouse's and are not slowed. Set by replays of a human's TURN_LEFT/RIGHT flags (C6).
         bool KeyboardTurn = false;
+        /// One-shot, like `jump`: turn the facing by this much (radians, + left) at the next step's start -- the
+        /// camera's "turn to camera" snap (Vision::FreeLook's face choice, a right-click in the client) -- reported
+        /// as one SET_FACING there (Client::Tick). Cleared by the tick that takes it, or drops it while the server
+        /// imposes. 0 is none.
+        float FaceTurn = 0.0f;
+        /// What the client actually turned the body by for FaceTurn (Client::Tick adds it as it turns), until the
+        /// camera takes it off its yaw offset at the next observation and clears it (FreeLook::Advance). A dropped
+        /// turn adds nothing, so the camera stays where it was.
+        float FaceTurnApplied = 0.0f;
     };
 
     /// The unit's own speeds in force (mount, form, snare and buffs included), yd/s and rad/s.
@@ -150,8 +159,15 @@ namespace Animus::Movement
         bool LandedInWater = false;
         bool Jumped = false;        // a jump (or a swim jump) was taken this step
         float FallHeight = 0.0f;    // apex to landing, when Landed
+        bool Unburied = false;      // the last Resync lifted it out of the ground onto the terrain (its last rung)
+        bool OverVoid = false;      // a step was refused for nothing at all below it: no floor, no terrain, no water
         float Moved = 0.0f;         // yards actually travelled this step (3D)
         float Commanded = 0.0f;     // yards the held controls asked for this step
+        /// What the last blocked move found (movement pacing M1, decision 0027): which side's slide was clear
+        /// (+1 left, -1 right, 0 none or no block this step) and how much of the straight move the wall took
+        /// (1 - the free share; 0 with no block). Reset by each Step, like AgainstWall.
+        int8_t ContactSide = 0;
+        float BlockedShare = 0.0f;
     };
 
     struct Liquid
@@ -180,6 +196,9 @@ namespace Animus::Movement
         /// Whether (x, y, z) is inside the terrain (below its surface). The terrain is in no collision tree, so a
         /// hillside's face is seen only this way; models are walls through Sweep.
         [[nodiscard]] virtual bool InTerrain(float x, float y, float z) const = 0;
+        /// The terrain heightfield's height at (x, y) alone (no models), or INVALID_FLOOR where it is not known (the
+        /// default: a world with no terrain apart from its floors). Resync's last rung reads it.
+        [[nodiscard]] virtual float TerrainHeight(float /*x*/, float /*y*/) const { return -200000.0f; }
     };
 
     constexpr float INVALID_FLOOR = -200000.0f;

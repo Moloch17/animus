@@ -25,7 +25,9 @@
 #include "MoveControls.h"
 #include "ObjectGuid.h"
 #include <array>
+#include <chrono>
 #include <memory>
+#include <mutex>
 #include <vector>
 
 class Player;
@@ -97,6 +99,27 @@ namespace Animus::Client
         /// has the companion the first time, and again after anything put it somewhere else.
         void Tick(Player* bot, uint32 diff);
 
+        /// Stop the controller and start it again at once from where the server has the companion now (an episode's
+        /// start, a rise): the forge's StageScenario::StartMover. World thread, while maps are idle.
+        void Restart(Player* bot);
+
+        /// **The controller's decision window** (the forge's StageScenario::TrackController, which training evaluates
+        /// once per 250 ms tick at TicksPerDecision 1): what the body moved and what the held keys asked of it, summed
+        /// over the realm's map ticks since the last Take, and the milliseconds they cover. Written on the map thread
+        /// by Tick, taken on the world thread by the follow driver's decision (never while maps update).
+        struct Window
+        {
+            float Moved = 0.0f;
+            float Commanded = 0.0f;
+            uint32 Ms = 0;
+        };
+        [[nodiscard]] Window TakeWindow()
+        {
+            Window const taken = _window;
+            _window = Window();
+            return taken;
+        }
+
         /// Reports kept, and refused by cause, since the client was made (for the status line).
         [[nodiscard]] uint64 Applied() const { return _applied; }
         [[nodiscard]] uint64 Refused(Refusal cause) const { return _refused[std::size_t(cause)]; }
@@ -104,14 +127,27 @@ namespace Animus::Client
     private:
         friend class RealmLink;
 
-        void AnswerTimeSync(Player* bot, Order const& order);
+        /// A time-sync request as it arrived: its counter, when, and the client's clock then. Kept apart from the
+        /// runtime's Inbox, whose Order no longer carries the arrival (the forge's sim answers syncs itself).
+        struct TimeSyncAsk
+        {
+            uint32 Counter = 0;
+            std::chrono::steady_clock::time_point ArrivedAt;
+            uint32 ClientMs = 0;
+        };
+
+        void AnswerTimeSync(Player* bot, TimeSyncAsk const& ask);
         void CountRefusal(Player* bot, Refusal cause, uint16 opcode, float x, float y, float z);
 
         ObjectGuid _bot;
         Clock _clock;
         Inbox _inbox;
         std::vector<Order> _taken;
+        std::mutex _syncLock;
+        std::vector<TimeSyncAsk> _syncs;
+        std::vector<TimeSyncAsk> _syncsTaken;
         Movement::Client _mover;
+        Window _window;
         uint64 _applied = 0;
         std::array<uint64, std::size_t(Refusal::Count)> _refused{};
         std::array<bool, std::size_t(Refusal::Count)> _logged{};

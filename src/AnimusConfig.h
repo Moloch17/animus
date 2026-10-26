@@ -19,16 +19,16 @@
 #ifndef ANIMUS_CONFIG_H
 #define ANIMUS_CONFIG_H
 
+#include "Camera.h"
 #include "Define.h"
-#include "Position.h"
-#include "CurriculumTuning.h"
-#include "LifeService.h"
+#include "FollowParty.h"
+#include "MentalMap.h"
 #include <string>
 #include <vector>
 
 namespace Animus
 {
-    /// Module settings, read at startup and on config reload (mod_animus.conf.dist documents every key).
+    /// Module settings, read at startup and on config reload (conf/mod_animus.conf.dist documents every key).
     struct AnimusConfig
     {
         bool Enable = true;
@@ -36,37 +36,40 @@ namespace Animus
         /// Animus.ModelDir; a relative one is looked for where the build installs models (see Load).
         std::string ModelDir;
 
-        /// Animus.Curriculum.Stage and DecisionMs: the stage whose models companions play (always one that exists:
-        /// Load falls back to the default, then to the first stage), and their decision interval.
-        std::string CurriculumStage = "stage9_deadmines";
-        uint32 CurriculumDecisionMs = 250;
-        /// Action pacing for companions (Animus.Curriculum.Actions.*), as the forge paces its seats.
-        Curriculum::CurriculumTuning::ActionTuning CurriculumActions;
-        /// Animus.Curriculum.Options.*: how long a companion's durative actions (rest, hold an interrupt, keep range)
-        /// may run, as the forge's seats have them.
-        Curriculum::CurriculumTuning::OptionTuning CurriculumOptions;
-        /// Animus.Curriculum.Director.*: when a party's director gets a turn to speak (its clock, what counts as badly
-        /// hurt), as the forge's directors have them.
-        Curriculum::CurriculumTuning::DirectorTuning CurriculumDirector;
-        /// Animus.Life.*: life outside the fight for companions whose model carries the world block.
-        Life::Settings Life;
+        /// Animus.Curriculum.Stage: the stage whose models the followers play (always one that exists: Load falls back
+        /// to move4_follow, then to the first stage).
+        std::string CurriculumStage = "move4_follow";
 
-        /// Animus.Probe.*: where a companion's ground probe and flight rays come from -- the forge's layered fields
-        /// ("geometry"), its probe tables ("baked", fields where a grid has none) or live collision ("live") -- and
-        /// the directory the field and table files are in. Load configures the stores from these, ahead of any
-        /// layout: a model's manifest names its probe, so a model trained on the fields is refused under "live".
-        /// Animus.PartyFill.Enable: when a group's leader (or a player alone) enters a five-man dungeon, the group is
-        /// topped up to five with temporary members in the roles it lacks -- one to hold the pull, one to keep the
-        /// others up, the rest damage -- read off every member's talents, the owner's companion included.
+        /// Animus.DataDir: a writable directory for the module's data; the camera scenes go in its scenes/.
+        std::string DataDir;
+        [[nodiscard]] std::string SceneDir() const;
+
+        /// Animus.Vision.Maps: the maps whose camera scenes are baked and loaded at startup.
+        std::vector<uint32> VisionMaps;
+        /// The camera the models trained with (Animus.Vision.*), with the one render size the realm casts at as its
+        /// only RenderSizes entry; and the mental map's caps (Animus.Map.*, KeepShare 0: the realm's keep rule is the
+        /// follow driver's).
+        Vision::Settings Camera;
+        /// Animus.Vision.RenderSize: the one of Camera.RenderSizes every follower casts its frames at.
+        Vision::Resolution Render;
+        Vision::MapRunSettings MapRun;
+        uint32 ClusterMinCells = 2;
+        uint32 PocketMinCells = 6;
+
+        /// The follow driver's decision clock and tuning (Animus.Curriculum.*, Animus.Follow.*).
+        Follow::FollowSettings FollowTuning;
+        /// Animus.Follow.Security: the account security `.animus follow` and the addon's Summon need (0: every
+        /// player; 2: game masters, as the live follow test had it).
+        uint32 FollowSecurity = 0;
+
+        /// Animus.PartyFill.Enable: a player entering a five-player dungeon alone, or as its group's leader, gets
+        /// followers summoned to fill the group (the player's own setting and a game master's realm override apply:
+        /// AnimusMod::PartyFillFor).
         bool PartyFill = true;
         /// Animus.Prepare.*: the account security the addon's Prepare needs (SEC_GAMEMASTER = 2 by default; 0 lets
-        /// every player use it) and the bag given four of after it (4500: a 16-slot Traveler's Backpack).
+        /// every player), and the bag it puts in each empty bag slot afterwards (0 for none).
         uint32 PrepareSecurity = 2;
         uint32 PrepareBagItem = 4500;
-
-        std::string ProbeSource = "geometry";
-        std::string ProbeDir;
-        uint32 ProbeCacheGrids = 64;
 
         void Load();
     };

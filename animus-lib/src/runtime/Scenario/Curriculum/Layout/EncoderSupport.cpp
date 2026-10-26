@@ -17,8 +17,8 @@
  */
 
 #include "EncoderSupport.h"
+#include "EntityActions.h"
 #include <atomic>
-#include "Forge.h"
 #include "ObjectAccessor.h"
 #include "CharmInfo.h"
 #include "Cell.h"
@@ -87,14 +87,6 @@ namespace
 
 namespace Animus::Curriculum::Encoding
 {
-    /// How far below a seat the ground is looked for when it may be falling, and how high above it a seat has to
-    /// be before it is: the same two the travel block uses (MAX_GROUND_SEARCH, AIRBORNE_ABOVE).
-    constexpr float FALL_GROUND_SEARCH = 200.0f;
-    constexpr float FALL_ABOVE = 2.0f;
-    /// How far under the surface a seat is put back when it has come up out of the water: enough to be in it
-    /// (LIQUID_MAP_IN_WATER wants the feet below the level), not enough to put the head under.
-    constexpr float SURFACE_SINK = 0.5f;
-
     using SpellChecks::CheckCast;
     using SpellChecks::CooldownFraction;
 
@@ -127,21 +119,35 @@ namespace Animus::Curriculum::Encoding
         Player* other = nullptr;
         if (slot == FRIEND_SELF)
             return bot;
-        if (slot == FRIEND_OWNER)
-            other = view.Owner;
-        else if (slot >= FRIEND_TEAMMATE_FIRST && slot < FRIEND_SLOTS)
+        // FRIEND_OWNER names nobody: no stage has an owner.
+        if (slot >= FRIEND_TEAMMATE_FIRST && slot < FRIEND_SLOTS)
             other = view.Teammates[slot - FRIEND_TEAMMATE_FIRST].Bot;
 
         return other && other != bot && other->IsInMap(bot) ? other : nullptr;
     }
 
+    Unit* BeneficialTarget(Player* bot, Unit* focus, Unit* selection)
+    {
+        auto const friendly = [bot](Unit* unit)
+        {
+            return unit && unit->IsInWorld() && unit->GetMap() == bot->GetMap() && unit->IsAlive()
+                && bot->IsFriendlyTo(unit);
+        };
+        if (friendly(focus))
+            return focus;
+        if (friendly(selection))
+            return selection;
+        return bot;
+    }
+
     Unit* SupportTarget(SeatView const& view)
     {
-        if (!view.L || !view.L->Has(BlockId::Support))
-            return view.Bot;
+        // A sight stage's friend is the client's own (dungeon-curriculum I1): the focus when it is a living friend,
+        // else the selection when it is one, else the seat itself -- the client's self-cast.
+        if (view.L && view.L->Has(BlockId::Sight))
+            return BeneficialTarget(view.Bot, view.Focus ? UnitThrough(*view.Bot, *view.Focus) : nullptr, view.Target);
 
-        Unit* selected = FriendUnit(view, view.FriendSlot);
-        return selected && selected->IsAlive() ? selected : nullptr;
+        return view.Bot;
     }
 
     bool AimsAtFriend(SpellInfo const* info)
@@ -178,11 +184,6 @@ namespace Animus::Curriculum::Encoding
         return bot->IsNonMeleeSpellCast(false, true, true);
     }
 
-    bool CastHoldsFeet(Player const* bot)
-    {
-        return bot && bot->IsNonMeleeSpellCast(false, false, true);
-    }
-
     /// A spell the mask offered that did not start, and why: the engine's cast result, or the press's own refusal
     /// (1000 not known, 1001 a cast in progress, 1002 no friend to take it). Capped per process. Stage7's healers
     /// pressed four to seven heals for each that started, and stage5's casters five to seven spells (2026-10-04);
@@ -201,43 +202,6 @@ namespace Animus::Curriculum::Encoding
             unit ? bot->HasInArc(float(M_PI), unit) : false, bot->isMoving(), !bot->movespline->Finalized(),
             bot->IsNonMeleeSpellCast(false, true, true),
             info ? bot->GetGlobalCooldownMgr().HasGlobalCooldown(info) : false, bot->IsInCombat());
-    }
-
-    /// Where a heal goes: the selected friend when it can take it, else the most hurt living friend the heal reaches
-    /// (range and line of sight), else the selected friend as before. Heals went only to the selected friend, which
-    /// starts as the seat itself, and a heal on a friend at full health is masked: a healer that kept an enemy
-    /// selected and seldom picked a friend was seldom offered a heal at all (2026-10-03, stage6: holy paladins had
-    /// Holy Light open 13 decisions a fight against a priest's 60-90 for its heals, and cast two heals a fight).
-    Unit* HealTarget(SeatView const& view, ActionCatalog::Action const& def, SpellInfo const* info)
-    {
-        Unit* selected = SupportTarget(view);
-        Player* bot = view.Bot;
-        if (!def.Healing || !view.L || !view.L->Has(BlockId::Support))
-            return selected;
-
-        float const range = info->GetMaxRange(true, bot);
-        auto const takes = [&](Unit* unit)
-        {
-            return unit && unit->IsAlive() && (!def.DirectHeal || !unit->IsFullHealth())
-                && (!def.KeepsAura || !OwnAuraHasPlentyLeft(unit, info, bot->GetGUID()))
-                && (unit == bot || (bot->IsWithinDistInMap(unit, range) && bot->IsWithinLOSInMap(unit)));
-        };
-        if (takes(selected))
-            return selected;
-
-        Unit* best = nullptr;
-        for (uint32 slot = 0; slot < FRIEND_SLOTS; ++slot)
-            if (Unit* unit = FriendUnit(view, slot); unit && unit != selected && !unit->IsFullHealth() && takes(unit)
-                && (!best || unit->GetHealthPct() < best->GetHealthPct()))
-                best = unit;
-        return best ? best : selected;
-    }
-
-    bool MountCastInProgress(Player const* bot)
-    {
-        Spell const* spell = bot->GetCurrentSpell(CURRENT_GENERIC_SPELL);
-        SpellInfo const* info = spell ? spell->GetSpellInfo() : nullptr;
-        return info && info->HasAura(SPELL_AURA_MOUNTED);
     }
 
     bool CanCast(Player* bot, SpellInfo const* info, Unit* target, Item* castItem, Unit* friendUnit)
@@ -266,21 +230,6 @@ namespace Animus::Curriculum::Encoding
             default:
                 return Situational::None;
         }
-    }
-
-    bool CanHeal(Player* bot, ActionCatalog::Action const& heal, Unit* ally)
-    {
-        SpellInfo const* info = ActionCatalog::KnownRank(bot, heal.FirstRank);
-        if (!info || !bot->HasActiveSpell(info->Id) || bot->HasSpellCooldown(info->Id)
-            || bot->GetGlobalCooldownMgr().HasGlobalCooldown(info) || CastInProgress(bot))
-            return false;
-
-        if (!bot->movespline->Finalized() && (info->CalcCastTime(bot) || info->IsChanneled()))
-            return false;
-
-        SpellCastTargets targets;
-        targets.SetUnitTarget(ally);
-        return CheckCast(bot, info, targets, nullptr);
     }
 
     SpellInfo const* KnownRank(SeatView const& view, ActionCatalog::Action const& def)
@@ -363,7 +312,7 @@ namespace Animus::Curriculum::Encoding
         Unit* friendUnit = nullptr;
         if (info->IsPositive())
         {
-            friendUnit = AimsAtFriend(info) ? HealTarget(view, def, info) : bot;
+            friendUnit = AimsAtFriend(info) ? SupportTarget(view) : bot;
             if (!friendUnit)
                 return false;
 
@@ -409,7 +358,7 @@ namespace Animus::Curriculum::Encoding
 
         // Same path as CMSG_CAST_SPELL. prepare() runs the full cast validation again, so a masked action
         // from a misbehaving client simply fails. The spell owns and frees itself.
-        Unit* friendUnit = info->IsPositive() && AimsAtFriend(info) ? HealTarget(view, def, info) : bot;
+        Unit* friendUnit = info->IsPositive() && AimsAtFriend(info) ? SupportTarget(view) : bot;
         if (info->IsPositive() && !friendUnit)
         {
             NotePressRefused(bot, info, nullptr, 1002);
@@ -425,12 +374,29 @@ namespace Animus::Curriculum::Encoding
         // player, then cast. A cast the core then refuses has cost the form, which is what it costs a player too.
         if (SpellInfo const* current = FormToDropFor(bot, info))
             bot->RemoveAurasDueToSpell(current->Id);
-        Spell* spell = new Spell(bot, info, TRIGGERED_NONE);
-        if (SpellCastResult const cast = spell->prepare(&targets); cast != SPELL_CAST_OK)
+        if (view.L && view.L->Has(BlockId::Sight))
         {
-            NotePressRefused(bot, info, info->IsPositive() ? friendUnit : target, uint32(cast));
-            result.RefusedCast = uint32(cast);
-            return false;
+            // A sight stage casts as the client does (dungeon-curriculum I1): CMSG_CAST_SPELL through the session's
+            // handler, which runs every check the client's cast meets; its refusal is read back.
+            EntityActions::CastOutcome const sent = EntityActions::CastThroughClient(bot, info, targets,
+                view.Port ? *view.Port : EntityActions::SessionPort());
+            if (!sent.Sent)
+            {
+                uint32 const cast = sent.Failed ? sent.Failed - 1 : uint32(SPELL_FAILED_UNKNOWN);
+                NotePressRefused(bot, info, info->IsPositive() ? friendUnit : target, cast);
+                result.RefusedCast = cast;
+                return false;
+            }
+        }
+        else
+        {
+            Spell* spell = new Spell(bot, info, TRIGGERED_NONE);
+            if (SpellCastResult const cast = spell->prepare(&targets); cast != SPELL_CAST_OK)
+            {
+                NotePressRefused(bot, info, info->IsPositive() ? friendUnit : target, uint32(cast));
+                result.RefusedCast = uint32(cast);
+                return false;
+            }
         }
 
         ++result.SpellCasts;
@@ -441,7 +407,6 @@ namespace Animus::Curriculum::Encoding
         uint32 const chain = info->GetFirstRankSpell() ? info->GetFirstRankSpell()->Id : info->Id;
         result.CastTankMode = chain == 71 || chain == 25780 || chain == 5487 || chain == 9634 || chain == 48263;
         result.CastTrap = IsTrapSpell(info);
-        result.CastDispel = def.Dispel;
         // A harmful spell names a unit only when it needs one; an area spell is judged by whether the focus was
         // inside its radius, measured from where it lands (the target's spot for a ground spell, else the caster).
         if (info->IsPositive())
@@ -551,67 +516,6 @@ namespace Animus::Curriculum::Encoding
         return info ? CooldownFraction(bot, info) : 0.0f;
     }
 
-    bool CanRevive(SeatView const& view, ActionCatalog::Action const& revive, Player* ally)
-    {
-        Player* bot = view.Bot;
-        if (!ally || !bot->IsAlive() || !ally->IsInMap(bot))
-            return false;
-
-        if (revive.Type == ActionCatalog::Kind::Soulstone)
-        {
-            SpellInfo const* info = view.Supplies.Soulstone ? UseSpell(view.Supplies.Soulstone) : nullptr;
-            return info && ally->IsAlive() && !ally->HasAura(info->Id)
-                && CanUseItemOn(bot, view.Supplies.Soulstone, ally);
-        }
-
-        return !ally->IsAlive() && !ally->isResurrectRequested() && CanHeal(bot, revive, ally);
-    }
-
-    void Revive(SeatView const& view, ActionCatalog::Action const& revive, Player* ally, SeatActionResult& result)
-    {
-        if (!CanRevive(view, revive, ally))
-            return;
-
-        if (revive.Type == ActionCatalog::Kind::Soulstone)
-        {
-            if (UseItemOn(view.Bot, view.Supplies.Soulstone, ally))
-                ++result.ConsumablesUsed;
-            return;
-        }
-
-        SpellInfo const* info = ActionCatalog::KnownRank(view.Bot, revive.FirstRank);
-        SpellCastTargets targets;
-        targets.SetUnitTarget(ally);
-        Spell* spell = new Spell(view.Bot, info, TRIGGERED_NONE);
-        if (spell->prepare(&targets) == SPELL_CAST_OK)
-        {
-            ++result.SpellCasts;
-            ++result.Revives;
-        }
-    }
-
-    void WriteRevives(SeatView const& view, float* out)
-    {
-        Player* bot = view.Bot;
-        std::vector<ActionCatalog::Action> const& revives = view.L->AllyRevives;
-        for (uint32 i = 0; i < revives.size(); ++i)
-        {
-            if (revives[i].Type == ActionCatalog::Kind::Soulstone)
-            {
-                if (view.Supplies.Soulstone && bot->GetItemCount(view.Supplies.Soulstone))
-                {
-                    out[i * 2] = 1.0f;
-                    out[i * 2 + 1] = ItemCooldownFraction(bot, view.Supplies.Soulstone);
-                }
-            }
-            else if (SpellInfo const* info = ActionCatalog::KnownRank(bot, revives[i].FirstRank))
-            {
-                out[i * 2] = 1.0f;
-                out[i * 2 + 1] = CooldownFraction(bot, info);
-            }
-        }
-    }
-
     Unit* FirstPet(Player* bot)
     {
         if (Pet* pet = bot->GetPet())
@@ -635,6 +539,21 @@ namespace Animus::Curriculum::Encoding
         }
 
         return nullptr;
+    }
+
+    void TrackNearestHazard(Unit const* unit, Position const& self, float facing, uint64 nowMs, Hazard& nearest,
+        uint64& searchedMs)
+    {
+        if (!searchedMs || nowMs >= searchedMs + HAZARD_SEARCH_MS)
+        {
+            searchedMs = std::max<uint64>(1, nowMs);
+            nearest = Hazard();
+            nearest.Present = unit && FindNearestHazard(unit, HAZARD_SEARCH_RANGE, nearest);
+        }
+        if (!nearest.Present)
+            return;
+        nearest.Distance = self.GetExactDist2d(nearest.Centre.GetPositionX(), nearest.Centre.GetPositionY());
+        nearest.Bearing = self.GetAngle(nearest.Centre.GetPositionX(), nearest.Centre.GetPositionY()) - facing;
     }
 
     bool FindNearestHazard(Unit const* unit, float range, Hazard& out)
@@ -851,28 +770,6 @@ namespace Animus::Curriculum::Encoding
         return immune.count(mechanic) > 0 || (mechanic == MECHANIC_FEAR && immune.count(MECHANIC_HORROR) > 0);
     }
 
-    int32 SlotOf(SeatView const& view, Unit const* unit)
-    {
-        if (!unit)
-            return -1;
-
-        for (uint32 slot = 0; slot < view.EnemyCount; ++slot)
-            if (view.Enemies[slot] == unit)
-                return int32(slot);
-
-        return -1;
-    }
-
-    int32 SlotAttacking(SeatView const& view, Unit const* victim, uint32 except)
-    {
-        for (uint32 slot = 0; slot < view.EnemyCount; ++slot)
-            if (Unit* enemy = view.Enemies[slot]; enemy && enemy->IsAlive() && enemy->GetVictim() == victim
-                && slot != except)
-                return int32(slot);
-
-        return -1;
-    }
-
     void SelectEnemy(SeatView& view, uint32 slot)
     {
         Unit* enemy = view.Enemies[slot];
@@ -881,25 +778,6 @@ namespace Animus::Curriculum::Encoding
 
         if (view.Bot->GetVictim())
             view.Bot->Attack(enemy, view.Bot->HasUnitState(UNIT_STATE_MELEE_ATTACKING));
-    }
-
-    bool SnapToGround(Map const* map, uint32 phaseMask, Position& at, float fromZ, float maxStep)
-    {
-        if (!map)
-            return false;
-
-        float const z = map->GetHeight(phaseMask, at.GetPositionX(), at.GetPositionY(), fromZ + maxStep, true,
-            maxStep * 2.0f);
-        if (z <= INVALID_HEIGHT || std::fabs(z - fromZ) > maxStep)
-            return false;
-
-        at.Relocate(at.GetPositionX(), at.GetPositionY(), z);
-        return true;
-    }
-
-    bool CanSee(WorldObject const* watcher, WorldObject const* target)
-    {
-        return watcher && target && watcher->CanSeeOrDetect(target) && watcher->IsWithinLOSInMap(target);
     }
 
     bool PetAttack(Player* bot, Unit* target)
@@ -946,10 +824,4 @@ Unit* Animus::Curriculum::Encoding::UnitThrough(WorldObject const& from, ObjectG
 Creature* Animus::Curriculum::Encoding::CreatureThrough(WorldObject const& from, ObjectGuid guid)
 {
     return !guid.IsEmpty() && from.IsInWorld() && from.FindMap() ? ObjectAccessor::GetCreature(from, guid) : nullptr;
-}
-
-GameObject* Animus::Curriculum::Encoding::GameObjectThrough(WorldObject const& from, ObjectGuid guid)
-{
-    return !guid.IsEmpty() && from.IsInWorld() && from.FindMap() ? ObjectAccessor::GetGameObject(from, guid)
-        : nullptr;
 }

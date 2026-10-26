@@ -17,127 +17,46 @@
  */
 
 #include "AnimusMod.h"
-#include "LifeService.h"
-#include "AccountMgr.h"
-#include "AnimusAddon.h"
+#include "AnimusPlayerSettings.h"
 #include "BotAccounts.h"
 #include "BotFactory.h"
-#include "Capture.h"
-#include "CharacterCache.h"
 #include "Chat.h"
-#include "CompanionLoader.h"
-#include "DatabaseEnv.h"
-#include "Group.h"
 #include "ClassAssets.h"
+#include "ClassKit.h"
 #include "ClassProfile.h"
+#include "FollowPolicy.h"
+#include "Group.h"
 #include "Log.h"
 #include "Map.h"
-#include "ObjectMgr.h"
+#include "MapBlock.h"
 #include "ObjectAccessor.h"
 #include "Player.h"
-#include "AnimusPlayerSettings.h"
+#include "Random.h"
+#include "SceneRegistry.h"
 #include "StageDefinition.h"
 #include "StringFormat.h"
+#include "World.h"
 #include <algorithm>
-#include <array>
-#include <cctype>
-#include <optional>
-#include <vector>
+#include <chrono>
 
 namespace
 {
-    struct NamedId
+    /// The levels move4_follow trained its characters at; a caller outside them is warned, not refused.
+    constexpr uint8 TRAINED_LEVEL_MIN = 13;
+    constexpr uint8 TRAINED_LEVEL_MAX = 25;
+
+    /// The follower accounts: the bot range's top, clear of the forge's seats (BotAccounts::BASE onwards).
+    constexpr uint32 FOLLOWER_ACCOUNT_FIRST = Animus::BotAccounts::BASE + 800000;
+    constexpr uint32 FOLLOWER_ACCOUNTS = 100000;
+
+    void SayNotInThisBuild()
     {
-        std::string_view Name;
-        uint8 Id;
-    };
-
-    /// What a companion may be, first name of each id shown in messages. Matched case-insensitively, ignoring
-    /// spaces, underscores, hyphens and apostrophes (night_elf, Night-Elf and nightelf are the same).
-    constexpr std::array<NamedId, 12> RACE_NAMES =
-    { {
-        { "human", RACE_HUMAN }, { "dwarf", RACE_DWARF }, { "nightelf", RACE_NIGHTELF }, { "gnome", RACE_GNOME },
-        { "draenei", RACE_DRAENEI }, { "orc", RACE_ORC }, { "undead", RACE_UNDEAD_PLAYER },
-        { "forsaken", RACE_UNDEAD_PLAYER }, { "tauren", RACE_TAUREN }, { "troll", RACE_TROLL },
-        { "bloodelf", RACE_BLOODELF }, { "scourge", RACE_UNDEAD_PLAYER },
-    } };
-
-    constexpr std::array<NamedId, 11> CLASS_NAMES =
-    { {
-        { "warrior", CLASS_WARRIOR }, { "paladin", CLASS_PALADIN }, { "hunter", CLASS_HUNTER }, { "rogue", CLASS_ROGUE },
-        { "priest", CLASS_PRIEST }, { "deathknight", CLASS_DEATH_KNIGHT }, { "shaman", CLASS_SHAMAN },
-        { "mage", CLASS_MAGE }, { "warlock", CLASS_WARLOCK }, { "druid", CLASS_DRUID }, { "dk", CLASS_DEATH_KNIGHT },
-    } };
-
-    std::string Normalize(std::string_view text)
-    {
-        std::string normal;
-        for (char c : text)
-            if (c != ' ' && c != '_' && c != '-' && c != '\'')
-                normal.push_back(char(std::tolower(static_cast<unsigned char>(c))));
-        return normal;
+        LOG_INFO("module.animus", "mod-animus: bots are followers played by the <class>_follow models (`.animus follow "
+            "<n>`, the addon, dungeon party fill). The v1 class companion and Life are not in this build (attic/).");
     }
 
-    template <std::size_t N>
-    std::optional<uint8> FindNamed(std::array<NamedId, N> const& names, std::string_view text)
-    {
-        std::string const wanted = Normalize(text);
-        for (NamedId const& entry : names)
-            if (entry.Name == wanted)
-                return entry.Id;
-        return std::nullopt;
-    }
-
-    template <std::size_t N>
-    std::string NameOf(std::array<NamedId, N> const& names, uint8 id)
-    {
-        for (NamedId const& entry : names)
-            if (entry.Id == id)
-                return std::string(entry.Name);
-        return "?";
-    }
-
-    /// Every id once, under its first name, in the order of the table.
-    template <std::size_t N>
-    std::vector<NamedId> Unique(std::array<NamedId, N> const& names)
-    {
-        std::vector<NamedId> unique;
-        for (NamedId const& entry : names)
-            if (std::none_of(unique.begin(), unique.end(), [&](NamedId const& seen) { return seen.Id == entry.Id; }))
-                unique.push_back(entry);
-        return unique;
-    }
-
-    /// Every id's first name, for messages.
-    template <std::size_t N>
-    std::string Names(std::array<NamedId, N> const& names)
-    {
-        std::string list;
-        for (NamedId const& entry : Unique(names))
-            list += (list.empty() ? "" : ", ") + std::string(entry.Name);
-        return list;
-    }
-
-    /// The companion character's cache entry. A character that left the cache but not the database (a companion
-    /// put away by a build that still forgot it) is read back from its row and cached again; null only when the
-    /// character is really gone.
-    CharacterCacheEntry const* CharacterOf(ObjectGuid bot)
-    {
-        if (CharacterCacheEntry const* character = sCharacterCache->GetCharacterCacheByGuid(bot))
-            return character;
-
-        QueryResult const result = CharacterDatabase.Query(
-            "SELECT name, account, race, gender, class, level FROM characters WHERE guid = {}", bot.GetCounter());
-        if (!result)
-            return nullptr;
-
-        Field const* fields = result->Fetch();
-        sCharacterCache->AddCharacterCacheEntry(bot, fields[1].Get<uint32>(), fields[0].Get<std::string>(),
-            fields[3].Get<uint8>(), fields[2].Get<uint8>(), fields[4].Get<uint8>(), fields[5].Get<uint8>());
-        LOG_INFO("module.animus", "Companion {} ({}) was missing from the character cache; read back from the "
-            "database", fields[0].Get<std::string>(), bot.ToString());
-        return sCharacterCache->GetCharacterCacheByGuid(bot);
-    }
+    /// How long after a map change a leader's group is filled (the group and the map settled by then).
+    constexpr int32 FILL_DELAY_MS = 2000;
 }
 
 Animus::AnimusMod* Animus::AnimusMod::Instance()
@@ -149,11 +68,29 @@ Animus::AnimusMod* Animus::AnimusMod::Instance()
 void Animus::AnimusMod::LoadConfig()
 {
     _config.Load();
-    sLife->Configure(_config.Life);
-    // A GM's realm-wide party-fill override lasts until this: the config's own value is back.
     _partyFillOverride.reset();
+    SayNotInThisBuild();
 
-    // Models load when a companion or a stage seat first needs them, from the (new) model directory.
+    // The camera and the mental map are the process's, set once before any layout is built (the vision block's size
+    // comes from the camera's): a reload keeps the ones the server started with.
+    if (!_visionConfigured)
+    {
+        Vision::Configure(_config.Camera);
+        Vision::ConfigureMap(_config.MapRun);
+        Curriculum::MapBlock::ConfigureCoverage(_config.ClusterMinCells, _config.PocketMinCells);
+        _visionConfigured = true;
+        Vision::Resolution const render = _config.Render;
+        LOG_INFO("module.animus", "Animus camera: {}x{} (cast at {}x{}), fov {}x{}, range {}, zoom {} (min {}), pitch "
+            "{}; mental map {} tiles, {} coarse", _config.Camera.Width, _config.Camera.Height, render.Width,
+            render.Height, _config.Camera.FovH, _config.Camera.FovV, _config.Camera.Range, _config.Camera.Zoom,
+            _config.Camera.ZoomMin, _config.Camera.Pitch, _config.MapRun.Caps.MaxTiles,
+            _config.MapRun.Caps.CoarseTiles);
+    }
+    else
+        LOG_INFO("module.animus", "Animus: the camera and mental map settings (Animus.Vision.*, Animus.Map.*) take "
+            "effect at the next restart");
+
+    // Models load when a follower or `.animus models` first needs them, from the (new) model directory.
     _models.Reset(_config.Enable ? _config.ModelDir : "");
 
     if (!_config.Enable)
@@ -162,74 +99,67 @@ void Animus::AnimusMod::LoadConfig()
 
 void Animus::AnimusMod::OnStartup()
 {
-    // After the character cache (World::SetInitialWorldSettings loads it long after the config): a record whose
-    // character is gone is recognised as such, not every record.
-    _registry.Load();
+    SayNotInThisBuild();
+    if (!_config.Enable)
+        return;
+
+    // The camera's static world: each configured map's scene loaded, or baked from the server's data first when it is
+    // missing or was built from other data (SceneRegistry::Ensure), on the world thread before any map thread reads.
+    std::string const dataDir = sWorld->GetDataPath();
+    std::string const sceneDir = _config.SceneDir();
+    for (uint32 mapId : _config.VisionMaps)
+    {
+        auto const start = std::chrono::steady_clock::now();
+        Vision::SceneEnsure report;
+        std::string error;
+        if (!Vision::SceneRegistry::Instance().Ensure(dataDir, sceneDir, mapId, report, error))
+        {
+            LOG_ERROR("module.animus", "Animus camera scene for map {}: {} (no follower can be summoned there)", mapId,
+                error);
+            continue;
+        }
+        double const seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+        LOG_INFO("module.animus", "Animus camera scene for map {}: {} in {:.1f} s ({} triangles, {} terrain tiles, {})",
+            mapId, report.Baked ? "baked (" + report.Reason + ")" : "loaded", seconds, report.Triangles,
+            report.TerrainTiles, report.Path);
+    }
 }
 
 void Animus::AnimusMod::OnUpdate(uint32 diff)
 {
-    CompanionLoader::Update();
-    Capture::UpdateRecordings();
-
-    if (!_pendingFill.empty())
+    if (!_config.Enable)
     {
-        std::vector<ObjectGuid> due;
-        for (auto& [owner, ms] : _pendingFill)
-            if ((ms -= int32(diff)) <= 0)
-                due.push_back(owner);
-        for (ObjectGuid const& owner : due)
+        RemoveAll();
+        _pendingFill.clear();
+        return;
+    }
+
+    // The party fills that fell due.
+    for (auto itr = _pendingFill.begin(); itr != _pendingFill.end();)
+    {
+        itr->second -= int32(diff);
+        if (itr->second > 0)
         {
-            _pendingFill.erase(owner);
-            Player* player = ObjectAccessor::FindPlayer(owner);
-            if (player && player->IsInWorld() && !player->IsBeingTeleported() && PartyFillFor(player))
-                FillParty(player);
+            ++itr;
+            continue;
         }
+        ObjectGuid const leader = itr->first;
+        itr = _pendingFill.erase(itr);
+        if (Player* player = ObjectAccessor::FindConnectedPlayer(leader))
+            FillParty(player);
     }
 
     if (_parties.empty())
         return;
 
-    if (!_config.Enable)
-    {
-        RemoveAll();
-        return;
-    }
-
-    CompanionParty::Settings const settings{ _config.CurriculumDecisionMs, _config.CurriculumActions,
-        _config.CurriculumOptions, _config.CurriculumDirector, DirectorLayout() };
     std::vector<ObjectGuid> gone;
-    for (auto const& [owner, party] : _parties)
-    {
-        // No model, no companion: one whose model is gone (a reload that refuses it) is saved and despawned.
-        for (CompanionParty::Modelless const& lost : party->WithoutModel(_models))
-        {
-            LOG_ERROR("module.animus", "Companion {} despawned: its model is not available ({})", lost.Name,
-                lost.Error);
-            if (!lost.Temporary)
-                if (CompanionRegistry::Record* record = _registry.Find(owner))
-                {
-                    party->Save(*record);
-                    _registry.Update(*record);
-                }
-            std::string message;
-            party->Remove(lost.Name, message);
-            if (Player* player = ObjectAccessor::FindPlayer(owner))
-            {
-                std::string const told = Acore::StringFormat("{} left: there is no model this server can play for it "
-                    "({}).", lost.Name, lost.Error);
-                ChatHandler(player->GetSession()).SendSysMessage(told);
-                Addon::Push(player, told);
-            }
-        }
-        if (!party->Size() || party->Update(diff, settings, _models) == CompanionParty::Status::Dismiss)
-            gone.push_back(owner);
-    }
+    for (auto const& [leader, party] : _parties)
+        if (party->Update(diff, _config.FollowTuning) == Follow::FollowParty::Status::Dismiss)
+            gone.push_back(leader);
+    for (ObjectGuid const& leader : gone)
+        RemoveParty(leader);
 
-    for (ObjectGuid const& owner : gone)
-        RemoveParty(owner);
-
-    // A companion a party lost on its own (not dismissed) no longer counts damage.
+    // A follower a party lost on its own no longer counts.
     std::erase_if(_partyByBot, [](auto const& entry) { return !entry.second->HasBot(entry.first); });
 }
 
@@ -238,503 +168,183 @@ void Animus::AnimusMod::OnShutdown()
     RemoveAll();
 }
 
-Animus::CompanionParty* Animus::AnimusMod::PartyOf(Player* owner, std::string& message)
-{
-    auto const party = _parties.find(owner->GetGUID());
-    if (party == _parties.end() || !party->second->Companions())
-    {
-        message = _registry.Find(owner->GetGUID()) ? "Your companion is not summoned." : "You have no companion.";
-        return nullptr;
-    }
-    return party->second.get();
-}
-
-bool Animus::AnimusMod::ResolveRaceClass(Player const* owner, std::string_view race, std::string_view playerClass,
-    uint8& raceId, uint8& classId, std::string& message) const
-{
-    std::optional<uint8> const raceFound = FindNamed(RACE_NAMES, race);
-    if (!raceFound)
-    {
-        message = Acore::StringFormat("Unknown race {}. Races: {}.", race, Names(RACE_NAMES));
-        return false;
-    }
-
-    std::optional<uint8> const classFound = FindNamed(CLASS_NAMES, playerClass);
-    if (!classFound)
-    {
-        message = Acore::StringFormat("Unknown class {}. Classes: {}.", playerClass, Names(CLASS_NAMES));
-        return false;
-    }
-
-    if (!Curriculum::ClassAssets::FindProfile(*classFound))
-    {
-        message = Acore::StringFormat("There is no class profile for {}.", NameOf(CLASS_NAMES, *classFound));
-        return false;
-    }
-
-    if (!sObjectMgr->GetPlayerInfo(*raceFound, *classFound))
-    {
-        message = Acore::StringFormat("A {} cannot be a {}.", NameOf(RACE_NAMES, *raceFound),
-            NameOf(CLASS_NAMES, *classFound));
-        return false;
-    }
-
-    if (Player::TeamIdForRace(*raceFound) != owner->GetTeamId())
-    {
-        message = Acore::StringFormat("A {} is not of your faction.", NameOf(RACE_NAMES, *raceFound));
-        return false;
-    }
-
-    raceId = *raceFound;
-    classId = *classFound;
-    return true;
-}
-
-bool Animus::AnimusMod::Create(Player* owner, std::string name, std::string_view race, std::string_view playerClass,
-    std::string& message)
+bool Animus::AnimusMod::Summon(Player* caller, uint32 count, std::string& message, std::vector<std::string>& warnings)
 {
     if (!_config.Enable)
     {
         message = "Animus is disabled.";
         return false;
     }
-
-    if (_registry.Find(owner->GetGUID()))
+    if (count < 1 || count > Follow::FollowParty::MAX_FOLLOWERS)
     {
-        message = "You already have a companion. Change its race and class, or its name, instead.";
+        message = Acore::StringFormat("Summon 1 to {} followers.", Follow::FollowParty::MAX_FOLLOWERS);
+        return false;
+    }
+    if (_parties.contains(caller->GetGUID()))
+    {
+        message = "You already have followers; `.animus dismiss` them first.";
+        return false;
+    }
+    if (BotFactory::IsAway(caller))
+    {
+        message = "Followers cannot be summoned on a flight path or a vehicle.";
+        return false;
+    }
+    if (!BotFactory::CanJoin(caller))
+    {
+        message = "Followers cannot join you in a battleground or arena, or while you are changing maps.";
         return false;
     }
 
-    uint8 raceId = 0;
-    uint8 classId = 0;
-    if (!CompanionRegistry::CheckName(name, message) || !ResolveRaceClass(owner, race, playerClass, raceId, classId,
-        message))
-        return false;
-
-    // No companion can ride a flight path or a vehicle with you, and no bot can be placed while you are between
-    // maps; a battleground takes only queued players.
-    if (BotFactory::IsAway(owner))
+    // The caller's party, which it leads: never a raid (training's party frames are a five-player party's).
+    uint32 freeSlots = MAXGROUPSIZE - 1;
+    if (Group* group = caller->GetGroup())
     {
-        message = "A companion cannot be created on a flight path or a vehicle; wait until you are off it.";
-        return false;
-    }
-
-    if (!BotFactory::CanJoin(owner))
-    {
-        message = "A companion cannot join you in a battleground or arena, or while you are changing maps.";
-        return false;
-    }
-
-    Curriculum::ClassProfile const& profile = *Curriculum::ClassAssets::FindProfile(classId);
-    Curriculum::Layout const& layout = LayoutFor(profile);
-    if (!HasModel(layout, message))
-        return false;
-
-    uint32 const account = _registry.AccountFor(owner);
-    if (!account)
-    {
-        message = "The companion's account could not be created; see the server log.";
-        return false;
-    }
-
-    std::unique_ptr<CompanionParty>& party = _parties[owner->GetGUID()];
-    if (!party)
-        party = std::make_unique<CompanionParty>(owner->GetGUID());
-
-    if (!party->Add(owner, layout, raceId, name, account, message))
-    {
-        if (!party->Size())
-            _parties.erase(owner->GetGUID());
-        return false;
-    }
-
-    // Written as a login's character is. The save's statements exist on the asynchronous connection only, so the
-    // transaction goes through the worker; a load that follows queues behind it there.
-    // The member just added: the last, after any temporary ones the owner's dungeon already has.
-    Player* bot = ObjectAccessor::FindConnectedPlayer(party->GetBotGUIDs().back());
-    CharacterDatabaseTransaction trans = CharacterDatabase.BeginTransaction();
-    bot->SaveToDB(trans, true, false);
-    CharacterDatabase.CommitTransaction(trans);
-
-    CompanionRegistry::Record& record = _registry.Insert(owner->GetGUID(), account, bot->GetGUID(), 0);
-    party->Save(record);
-    _registry.Update(record);
-    for (ObjectGuid const& guid : party->GetBotGUIDs())
-        _partyByBot[guid] = party.get();
-
-    RecordCommand(owner, uint8(Capture::Command::Other), uint32(Capture::OtherCommand::Create));
-
-    return true;
-}
-
-bool Animus::AnimusMod::Adopt(Player* owner, Player* bot, CompanionRegistry::Record& record, std::string& message)
-{
-    Curriculum::ClassProfile const* profile = Curriculum::ClassAssets::FindProfile(bot->getClass());
-    if (!profile)
-    {
-        message = "The companion's class has no profile any more.";
-        return false;
-    }
-
-    Curriculum::Layout const& layout = LayoutFor(*profile);
-    if (!HasModel(layout, message))
-        return false;
-
-    std::unique_ptr<CompanionParty>& party = _parties[owner->GetGUID()];
-    if (!party)
-        party = std::make_unique<CompanionParty>(owner->GetGUID());
-
-    if (!party->Attach(owner, bot, layout, record, message))
-    {
-        if (!party->Size())
-            _parties.erase(owner->GetGUID());
-        return false;
-    }
-
-    for (ObjectGuid const& guid : party->GetBotGUIDs())
-        _partyByBot[guid] = party.get();
-    return true;
-}
-
-bool Animus::AnimusMod::HasModel(Curriculum::Layout const& layout, std::string& message)
-{
-    // No model, no companion: there is no fallback movement and no scripted play, so a companion whose class model
-    // is missing, or was trained on another layout (an older move block among them), is not made, summoned or kept.
-    std::string error;
-    if (_models.Find(layout, error))
-        return true;
-    message = Acore::StringFormat("There is no {} model this server can play ({}), so no companion of that class can "
-        "join you.", layout.ModelName(), error);
-    return false;
-}
-
-bool Animus::AnimusMod::Summon(Player* owner, std::string& message)
-{
-    if (!_config.Enable)
-    {
-        message = "Animus is disabled.";
-        return false;
-    }
-
-    CompanionRegistry::Record* record = _registry.Find(owner->GetGUID());
-    if (!record)
-    {
-        message = "You have no companion. Create one first.";
-        return false;
-    }
-
-    if (record->Loading)
-    {
-        message = "Your companion is on its way.";
-        return false;
-    }
-
-    if (auto const party = _parties.find(owner->GetGUID()); party != _parties.end() && party->second->Companions())
-    {
-        message = "Your companion is already with you.";
-        return false;
-    }
-
-    if (BotFactory::IsAway(owner))
-    {
-        message = "A companion cannot be summoned on a flight path or a vehicle; wait until you are off it.";
-        return false;
-    }
-
-    if (!BotFactory::CanJoin(owner))
-    {
-        message = "A companion cannot join you in a battleground or arena, or while you are changing maps.";
-        return false;
-    }
-
-    CharacterCacheEntry const* character = CharacterOf(record->Bot);
-    if (!character)
-    {
-        message = "Your companion's character is gone; create a new one.";
-        _registry.Erase(owner->GetGUID(), false);
-        return false;
-    }
-
-    // No model, no companion: refused before its character is loaded (Adopt asks again once it is).
-    if (Curriculum::ClassProfile const* profile = Curriculum::ClassAssets::FindProfile(character->Class))
-        if (!HasModel(LayoutFor(*profile), message))
+        if (group->isRaidGroup() || group->isBGGroup())
+        {
+            message = "Followers do not join a raid or battleground group.";
             return false;
-
-    // Neither reaches a companion: whatever arrived while it was away goes before it loads.
-    CompanionRegistry::Purge(record->Bot);
-
-    record->Loading = true;
-    ObjectGuid const ownerGuid = owner->GetGUID();
-    CompanionLoader::Begin(record->Bot, record->Account, character->Name, [this, ownerGuid](Player* bot)
-    {
-        CompanionRegistry::Record* record = _registry.Find(ownerGuid);
-        if (record)
-            record->Loading = false;
-
-        Player* owner = ObjectAccessor::FindPlayer(ownerGuid);
-        std::string message;
-        if (!bot)
-            message = "Your companion could not be loaded; see the server log.";
-        else if (!record || !owner || !owner->IsInWorld())
-        {
-            CompanionLoader::Discard(bot);
-            return;
         }
-        else if (!Adopt(owner, bot, *record, message))
-            CompanionLoader::Discard(bot);
-
-        if (owner)
+        if (!group->IsLeader(caller->GetGUID()))
         {
-            ChatHandler(owner->GetSession()).SendSysMessage(message);
-            Addon::Push(owner, message);
+            message = "Only your group's leader can summon followers into it.";
+            return false;
         }
-    });
-
-    message = Acore::StringFormat("{} is on the way.", character->Name);
-    RecordCommand(owner, uint8(Capture::Command::Summon));
-    return true;
-}
-
-void Animus::AnimusMod::SaveParty(ObjectGuid owner)
-{
-    auto const party = _parties.find(owner);
-    if (party == _parties.end())
-        return;
-
-    if (CompanionRegistry::Record* record = _registry.Find(owner))
-    {
-        party->second->Save(*record);
-        _registry.Update(*record);
+        freeSlots = group->GetMembersCount() < MAXGROUPSIZE ? MAXGROUPSIZE - group->GetMembersCount() : 0;
     }
-    RemoveParty(owner);
-}
-
-bool Animus::AnimusMod::Dismiss(Player* owner, std::string& message)
-{
-    if (!PartyOf(owner, message))
-        return false;
-
-    RecordCommand(owner, uint8(Capture::Command::Dismiss));
-    PutAway(owner->GetGUID(), true);
-    message = "Companion dismissed.";
-    return true;
-}
-
-bool Animus::AnimusMod::Rename(Player* owner, std::string name, std::string& message)
-{
-    CompanionRegistry::Record* record = _registry.Find(owner->GetGUID());
-    if (!record)
+    if (count > freeSlots)
     {
-        message = "You have no companion.";
+        message = Acore::StringFormat("Your group has room for {} more.", freeSlots);
         return false;
     }
 
-    if (record->Loading)
+    // The camera needs this map's baked scene (Animus.Vision.Maps).
+    if (!Vision::SceneRegistry::Instance().Get(caller->GetMapId()))
     {
-        message = "Wait for your companion to arrive first.";
+        std::string maps;
+        for (uint32 mapId : _config.VisionMaps)
+            maps += (maps.empty() ? "" : ", ") + std::to_string(mapId);
+        message = Acore::StringFormat("There is no camera scene for this map ({}); followers can be summoned on the "
+            "maps of Animus.Vision.Maps ({}) whose scenes loaded at startup.", caller->GetMapId(), maps);
         return false;
     }
 
-    if (!CompanionRegistry::CheckName(name, message))
-        return false;
+    uint8 const level = uint8(caller->GetLevel());
+    if (level < TRAINED_LEVEL_MIN || level > TRAINED_LEVEL_MAX)
+        warnings.push_back(Acore::StringFormat("Warning: the follow models trained at levels {} to {}; yours is {}.",
+            TRAINED_LEVEL_MIN, TRAINED_LEVEL_MAX, level));
 
-    // The character is renamed in the database, which needs it out of the world: a summoned one goes and comes
-    // back under its new name, which is also how the owner's client learns it.
-    std::string ignored;
-    bool const wasOut = PartyOf(owner, ignored) != nullptr;
-    if (wasOut)
-        PutAway(owner->GetGUID(), true);
-
-    CompanionRegistry::Rename(*record, name);
-    RecordCommand(owner, uint8(Capture::Command::Other), uint32(Capture::OtherCommand::Rename));
-    message = Acore::StringFormat("Your companion is now called {}.", name);
-    LOG_INFO("module.animus", "{} renamed companion {} to {}", owner->GetName(), record->Bot.ToString(), name);
-
-    if (wasOut)
+    // The classes a follower may be: one with a loaded <class>_follow model, a race of the caller's faction, and a
+    // starting level at or below the caller's (a death knight is never below 55).
+    struct Choice
     {
-        std::string again;
-        Summon(owner, again);
-    }
-    return true;
-}
-
-bool Animus::AnimusMod::Reroll(Player* owner, std::string_view race, std::string_view playerClass,
-    std::string& message)
-{
-    CompanionRegistry::Record* record = _registry.Find(owner->GetGUID());
-    if (!record)
+        Curriculum::Layout const* L;
+        std::vector<uint8> Races;
+    };
+    std::vector<Choice> choices;
+    std::string missing;
+    for (Curriculum::ClassProfile const& profile : Curriculum::ClassProfiles())
     {
-        message = "You have no companion. Create one first.";
-        return false;
-    }
-
-    if (record->Loading)
-    {
-        message = "Wait for your companion to arrive first.";
-        return false;
-    }
-
-    uint8 raceId = 0;
-    uint8 classId = 0;
-    if (!ResolveRaceClass(owner, race, playerClass, raceId, classId, message))
-        return false;
-
-    CharacterCacheEntry const* character = CharacterOf(record->Bot);
-    if (!character)
-    {
-        message = "Your companion's character is gone; create a new one.";
-        _registry.Erase(owner->GetGUID(), false);
-        return false;
-    }
-
-    if (BotFactory::IsAway(owner) || !BotFactory::CanJoin(owner))
-    {
-        message = "The new companion could not be placed beside you here; try again on the ground, out of a "
-            "battleground.";
-        return false;
-    }
-
-    // The old character goes, unsaved (nothing of it is kept), and a new one of the same name takes its place.
-    std::string const name = character->Name;
-    PutAway(owner->GetGUID(), false);
-    CompanionRegistry::DeleteCharacter(*record);
-    _registry.Erase(owner->GetGUID(), false);
-    LOG_INFO("module.animus", "{} rerolled companion {} as a {} {}", owner->GetName(), name, race, playerClass);
-
-    if (!Create(owner, name, race, playerClass, message))
-    {
-        message = "Your old companion is gone and the new one could not be created: " + message;
-        return false;
-    }
-    RecordCommand(owner, uint8(Capture::Command::Other), uint32(Capture::OtherCommand::Reroll));
-    return true;
-}
-
-void Animus::AnimusMod::OnOwnerDeleted(ObjectGuid owner)
-{
-    CompanionRegistry::Record const* record = _registry.Find(owner);
-    if (!record)
-        return;
-
-    RemoveParty(owner);
-    LOG_INFO("module.animus", "Owner {} was deleted: deleting companion {} and its account {}", owner.ToString(),
-        record->Bot.ToString(), record->Account);
-    CompanionRegistry::DeleteCharacter(*record);
-    _registry.Erase(owner, true);
-}
-
-std::vector<std::string> Animus::AnimusMod::PurgeAll()
-{
-    // Out of the world first, unsaved: AccountMgr::DeleteAccount kicks a character's session, which a socketless
-    // one never answers, and deleting the rows under a character still in the world is not something to try.
-    std::size_t const out = _parties.size();
-    while (!_parties.empty())
-        RemoveParty(_parties.begin()->first);
-    _registry.Clear();
-
-    std::vector<std::string> lines;
-    if (out)
-        lines.push_back(Acore::StringFormat("{} companion{} sent away unsaved.", out, out == 1 ? "" : "s"));
-    lines.push_back("Table animus_companion dropped.");
-    PlayerSettings::DropTable();
-    lines.push_back("Table animus_player_settings dropped.");
-
-    QueryResult accounts = LoginDatabase.Query("SELECT id, username FROM account WHERE username LIKE 'ANIMUS%'");
-    if (!accounts)
-    {
-        lines.push_back("No Animus accounts.");
-        return lines;
-    }
-
-    do
-    {
-        Field* fields = accounts->Fetch();
-        uint32 const account = fields[0].Get<uint32>();
-        std::string const username = fields[1].Get<std::string>();
-
-        // The account's characters go with it (Player::DeleteFromDB, finally), then the account.
-        uint32 characters = 0;
-        if (QueryResult names = CharacterDatabase.Query("SELECT name FROM characters WHERE account = {}", account))
-            characters = uint32(names->GetRowCount());
-
-        AccountOpResult const result = AccountMgr::DeleteAccount(account);
-        lines.push_back(Acore::StringFormat("Account {} ({}) with {} character{}: {}.", username, account, characters,
-            characters == 1 ? "" : "s", result == AOR_OK ? "deleted" : "could not be deleted"));
-        LOG_INFO("module.animus", "Purge: account {} ({}) with {} characters {}", username, account, characters,
-            result == AOR_OK ? "deleted" : "not deleted");
-    } while (accounts->NextRow());
-
-    return lines;
-}
-
-bool Animus::AnimusMod::Talent(Player* owner, std::string_view name, uint32 talentId, bool learn,
-    std::string& message)
-{
-    CompanionParty* party = PartyOf(owner, message);
-    if (!party || !party->Talent(name, talentId, learn, message))
-        return false;
-    RecordCommand(owner, uint8(Capture::Command::Other), uint32(Capture::OtherCommand::Talent));
-    return true;
-}
-
-bool Animus::AnimusMod::PetTalent(Player* owner, std::string_view name, uint32 talentId, bool learn,
-    std::string& message)
-{
-    CompanionParty* party = PartyOf(owner, message);
-    if (!party || !party->PetTalent(name, talentId, learn, message))
-        return false;
-    RecordCommand(owner, uint8(Capture::Command::Other), uint32(Capture::OtherCommand::PetTalent));
-    return true;
-}
-
-bool Animus::AnimusMod::Equip(Player* owner, std::string_view name, uint8 bag, uint8 slot, uint8 equipSlot,
-    std::string& message)
-{
-    CompanionParty* party = PartyOf(owner, message);
-    if (!party || !party->Equip(owner, name, bag, slot, equipSlot, message))
-        return false;
-    RecordCommand(owner, uint8(Capture::Command::Other), uint32(Capture::OtherCommand::Equip));
-    return true;
-}
-
-bool Animus::AnimusMod::Pet(Player* owner, std::string_view name, CompanionParty::PetView& view,
-    std::string& message)
-{
-    CompanionParty* party = PartyOf(owner, message);
-    return party && party->Pet(name, view, message);
-}
-
-Animus::AnimusMod::Companion Animus::AnimusMod::Describe(Player* owner)
-{
-    Companion companion;
-    CompanionRegistry::Record const* record = _registry.Find(owner->GetGUID());
-    CharacterCacheEntry const* character = record ? CharacterOf(record->Bot) : nullptr;
-    if (!character)
-        return companion;
-
-    companion.Exists = true;
-    companion.Name = character->Name;
-    companion.Race = NameOf(RACE_NAMES, character->Race);
-    companion.Class = NameOf(CLASS_NAMES, character->Class);
-    companion.Level = character->Level;
-    companion.Loading = record->Loading;
-    companion.Out = record->Loading;
-    if (Curriculum::ClassProfile const* profile = Curriculum::ClassAssets::FindProfile(character->Class))
-        if (record->Spec < profile->Specs.size())
-            companion.Spec = profile->Specs[record->Spec].Name;
-
-    auto const party = _parties.find(owner->GetGUID());
-    if (party != _parties.end())
-        for (CompanionParty::Summary const& summary : party->second->Summarize(_models))
+        Curriculum::ClassAssets const& assets = Curriculum::ClassAssets::For(profile);
+        if (assets.Kit && assets.Kit->MinLevel() > level)
+            continue;
+        Choice choice{ &LayoutFor(profile), {} };
+        for (uint8 race : assets.Races)
+            if (Player::TeamIdForRace(race) == caller->GetTeamId())
+                choice.Races.push_back(race);
+        std::string error;
+        if (choice.Races.empty())
+            continue;
+        if (!_models.Find(*choice.L, error))
         {
-            companion.Out = true;
-            companion.Level = summary.Level;
-            companion.Spec = summary.Spec;
-            companion.Parked = summary.Parked;
-            companion.ModelName = summary.ModelName;
-            companion.Model = summary.Model;
+            missing += (missing.empty() ? "" : ", ") + choice.L->ModelName();
+            continue;
         }
-    return companion;
+        choices.push_back(std::move(choice));
+    }
+    if (choices.empty())
+    {
+        message = Acore::StringFormat("No class has a {} model this server can play{}; see `.animus models`.",
+            "follow", missing.empty() ? "" : " (not loading: " + missing + ")");
+        return false;
+    }
+
+    // Every follower's class and its model first, so a model that will not run refuses the summon before any bot is
+    // made.
+    struct Planned
+    {
+        Choice const* C;
+        std::unique_ptr<Follow::FollowPolicy> Policy;
+    };
+    std::vector<Planned> planned;
+    for (uint32 i = 0; i < count; ++i)
+    {
+        Choice const& choice = choices[urand(0, uint32(choices.size()) - 1)];
+        std::string loadError;
+        std::unique_ptr<Follow::FollowPolicy> policy = Follow::MakeFollowPolicy(choice.L->ModelName(),
+            _models.Find(*choice.L, loadError));
+        if (!policy)
+        {
+            message = Acore::StringFormat("The {} model cannot be run by this build (see the server log).",
+                choice.L->ModelName());
+            return false;
+        }
+        planned.push_back({ &choice, std::move(policy) });
+    }
+
+    auto party = std::make_unique<Follow::FollowParty>(caller->GetGUID());
+    std::vector<std::string> joined;
+    for (Planned& plan : planned)
+    {
+        std::string const name = Follow::FollowParty::NewName();
+        if (name.empty())
+        {
+            LOG_ERROR("module.animus", "No free name for a follower of {}", caller->GetName());
+            break;
+        }
+        uint32 const account = FOLLOWER_ACCOUNT_FIRST + (_nextAccount++ % FOLLOWER_ACCOUNTS);
+        uint8 const race = plan.C->Races[urand(0, uint32(plan.C->Races.size()) - 1)];
+        std::string said;
+        if (!party->Add(caller, *plan.C->L, std::move(plan.Policy), race, name, account, said))
+        {
+            LOG_ERROR("module.animus", "Summoning {}'s followers: {}", caller->GetName(), said);
+            warnings.push_back(said);
+            break;
+        }
+        joined.push_back(said);
+    }
+    if (!party->Size())
+    {
+        message = "No follower could be summoned; see the server log.";
+        return false;
+    }
+
+    for (ObjectGuid const& bot : party->GetBotGUIDs())
+        _partyByBot[bot] = party.get();
+    _parties[caller->GetGUID()] = std::move(party);
+
+    message.clear();
+    for (std::string const& line : joined)
+        message += (message.empty() ? "" : " ") + line;
+    return true;
+}
+
+bool Animus::AnimusMod::Dismiss(Player* caller, std::string& message)
+{
+    if (!_parties.contains(caller->GetGUID()))
+    {
+        message = "You have no followers.";
+        return false;
+    }
+    RemoveParty(caller->GetGUID());
+    message = "Your followers are gone.";
+    return true;
+}
+
+std::vector<std::string> Animus::AnimusMod::List(Player* caller) const
+{
+    auto const party = _parties.find(caller->GetGUID());
+    return party == _parties.end() ? std::vector<std::string>() : party->second->Describe();
 }
 
 std::vector<std::string> Animus::AnimusMod::ModelStatus()
@@ -750,55 +360,11 @@ std::vector<std::string> Animus::AnimusMod::ModelStatus()
         loaded += ok ? 1 : 0;
         lines.push_back(Acore::StringFormat("  {}: {}", layout.ModelName(), ok ? "loads" : error));
     }
-    lines.push_back(Acore::StringFormat("{} of {} load. Ground probe: {}{}.", loaded, Curriculum::ClassProfiles().size(),
-        _config.ProbeSource, _config.ProbeSource == "live" ? "" : " from " + _config.ProbeDir));
-    return lines;
-}
-
-std::vector<std::string> Animus::AnimusMod::List(Player* owner)
-{
-    Companion const companion = Describe(owner);
-    if (!companion.Exists)
-        return {};
-
-    std::vector<std::string> lines;
-    lines.push_back(Acore::StringFormat("{}: level {} {} {} ({}), {}", companion.Name, companion.Level,
-        companion.Race, companion.Class, companion.Spec,
-        companion.Loading ? "on the way" : companion.Out ? "with you" : "waiting to be summoned"));
-    if (companion.Out && !companion.Loading)
-        lines.push_back(Acore::StringFormat("model {}: {}{}", companion.ModelName, companion.Model,
-            companion.Parked ? " (waiting for you to land)" : ""));
-    return lines;
-}
-
-std::vector<Animus::AnimusMod::RaceChoice> Animus::AnimusMod::RaceChoices(Player const* owner)
-{
-    std::vector<RaceChoice> choices;
-    for (NamedId const& race : Unique(RACE_NAMES))
-    {
-        if (Player::TeamIdForRace(race.Id) != owner->GetTeamId())
-            continue;
-
-        RaceChoice& choice = choices.emplace_back();
-        choice.Race = race.Name;
-        for (NamedId const& playerClass : Unique(CLASS_NAMES))
-            if (sObjectMgr->GetPlayerInfo(race.Id, playerClass.Id))
-                choice.Classes.emplace_back(playerClass.Name);
-    }
-    return choices;
-}
-
-std::vector<std::string> Animus::AnimusMod::StageList() const
-{
-    std::vector<std::string> lines;
-    for (Curriculum::StageDefinition const& stage : Curriculum::CurriculumStages())
-    {
-        std::string arenas;
-        for (Curriculum::ArenaDefinition const& arena : stage.Arenas)
-            arenas += (arenas.empty() ? "" : ", ") + arena.Name;
-
-        lines.push_back(Acore::StringFormat("{}: {} (arenas: {})", stage.Name, stage.Summary, arenas));
-    }
+    std::string scenes;
+    for (auto const& [mapId, checksum] : Vision::SceneRegistry::Instance().Checksums())
+        scenes += (scenes.empty() ? "" : ", ") + std::to_string(mapId);
+    lines.push_back(Acore::StringFormat("{} of {} load. Camera scenes loaded for maps: {}.", loaded,
+        Curriculum::ClassProfiles().size(), scenes.empty() ? "none" : scenes));
     return lines;
 }
 
@@ -806,7 +372,8 @@ void Animus::AnimusMod::OnPlayerLogout(Player* player)
 {
     _filledInstance.erase(player->GetGUID());
     _pendingFill.erase(player->GetGUID());
-    SaveParty(player->GetGUID());
+    if (_parties.contains(player->GetGUID()))
+        RemoveParty(player->GetGUID());
     PlayerSettings::Forget(player->GetGUID());
 }
 
@@ -814,6 +381,11 @@ void Animus::AnimusMod::OnPlayerLogin(Player* player)
 {
     if (player && !IsBot(player->GetGUID()))
         PlayerSettings::Load(player->GetGUID());
+}
+
+bool Animus::AnimusMod::MaySummon(Player const* player) const
+{
+    return player && player->GetSession() && uint32(player->GetSession()->GetSecurity()) >= _config.FollowSecurity;
 }
 
 bool Animus::AnimusMod::PartyFillFor(Player const* player) const
@@ -834,8 +406,8 @@ bool Animus::AnimusMod::SetPartyFill(Player* player, bool on, std::string& messa
     if (!on)
         _pendingFill.erase(player->GetGUID());
     PartyFillStatus const status = PartyFillState(player);
-    message = on ? "Your dungeon party will be filled with bots." : "Your dungeon party will not be filled with "
-        "bots; temporary members already with you stay until you leave their dungeon.";
+    message = on ? "Your dungeon party will be filled with followers." : "Your dungeon party will not be filled with "
+        "followers; those already with you stay until you leave their dungeon.";
     if (on && !status.Realm)
         message += " (The realm has party fill off right now.)";
     return true;
@@ -861,304 +433,99 @@ Animus::AnimusMod::PartyFillStatus Animus::AnimusMod::PartyFillState(Player cons
     return status;
 }
 
-void Animus::AnimusMod::PutAway(ObjectGuid owner, bool save)
-{
-    auto const party = _parties.find(owner);
-    if (party == _parties.end())
-        return;
-    if (!party->second->HasFillers())
-    {
-        if (save)
-            SaveParty(owner);
-        else
-            RemoveParty(owner);
-        return;
-    }
-
-    // The companion goes; the temporary members stay with the owner until it leaves their dungeon.
-    if (CompanionRegistry::Record* record = _registry.Find(owner); record && save)
-    {
-        party->second->Save(*record);
-        _registry.Update(*record);
-    }
-    party->second->RemoveMembers(false);
-    std::erase_if(_partyByBot, [](auto const& entry) { return !entry.second->HasBot(entry.first); });
-}
-
 void Animus::AnimusMod::OnPlayerMapChanged(Player* player)
 {
-    if (!player || _partyByBot.contains(player->GetGUID()) || IsCompanion(player->GetGUID()))
+    if (!player || IsBot(player->GetGUID()))
         return;
 
     ObjectGuid const guid = player->GetGUID();
     Map* map = player->GetMap();
     bool const dungeon = map && map->IsDungeon() && !map->IsRaid();
 
-    // Leaving the dungeon the group was filled for, its temporary members go. Not as a ghost: releasing in a dungeon
-    // puts the owner outside at a graveyard, and it runs back in to its corpse.
+    // Leaving the dungeon the group was filled for, the followers go. Not as a ghost: releasing in a dungeon puts
+    // the player outside at a graveyard, and it runs back in to its corpse.
     if (auto const filled = _filledInstance.find(guid); filled != _filledInstance.end()
         && (!dungeon || map->GetInstanceId() != filled->second) && player->IsAlive())
     {
         _filledInstance.erase(filled);
-        if (auto const party = _parties.find(guid); party != _parties.end() && party->second->HasFillers())
+        if (_parties.contains(guid))
         {
-            party->second->RemoveMembers(true);
-            std::erase_if(_partyByBot, [](auto const& entry) { return !entry.second->HasBot(entry.first); });
-            if (!party->second->Size())
-                RemoveParty(guid);
-            ChatHandler(player->GetSession()).SendSysMessage("Your temporary party members stay behind in the dungeon.");
+            RemoveParty(guid);
+            ChatHandler(player->GetSession()).SendSysMessage("Your followers stay behind in the dungeon.");
         }
     }
 
-    if (PartyFillFor(player) && dungeon && !_filledInstance.contains(guid))
-        _pendingFill[guid] = 2000;
+    if (PartyFillFor(player) && dungeon && !_filledInstance.contains(guid) && !_parties.contains(guid))
+        _pendingFill[guid] = FILL_DELAY_MS;
 }
 
-std::string Animus::AnimusMod::FillerName()
+void Animus::AnimusMod::FillParty(Player* leader)
 {
-    // Two or three syllables of a fantasy name, capitalized, that no character has and the core accepts.
-    static constexpr std::array<char const*, 24> FIRST = { "Ael", "Bra", "Cor", "Dra", "Eld", "Fen", "Gal", "Hal",
-        "Isa", "Jor", "Kel", "Lor", "Mar", "Nor", "Ora", "Pel", "Quin", "Ros", "Syl", "Tor", "Ul", "Val", "Wyn", "Zar" };
-    static constexpr std::array<char const*, 20> MIDDLE = { "a", "e", "i", "o", "an", "en", "ar", "or", "is", "el",
-        "ith", "on", "ra", "ri", "ul", "ae", "ia", "ed", "in", "ae" };
-    static constexpr std::array<char const*, 20> LAST = { "dor", "wyn", "ric", "las", "mir", "nor", "thas", "vin",
-        "ren", "dan", "sa", "ra", "lin", "gar", "mon", "thil", "ven", "rah", "dis", "mus" };
-    for (uint32 attempt = 0; attempt < 100; ++attempt)
+    Map* map = leader->GetMap();
+    if (!map || !map->IsDungeon() || map->IsRaid() || !PartyFillFor(leader) || _parties.contains(leader->GetGUID()))
+        return;
+    // Alone, or the group's leader; the group never a raid.
+    uint32 members = 1;
+    if (Group* group = leader->GetGroup())
     {
-        std::string name = std::string(FIRST[urand(0, FIRST.size() - 1)]) + (urand(0, 1) ? MIDDLE[urand(0,
-            MIDDLE.size() - 1)] : "") + LAST[urand(0, LAST.size() - 1)];
-        if (name.size() > MAX_PLAYER_NAME)
-            continue;
-        if (ObjectMgr::CheckPlayerName(name) == CHAR_NAME_SUCCESS && !sObjectMgr->IsReservedName(name)
-            && !sCharacterCache->GetCharacterGuidByName(name))
-            return name;
+        if (!group->IsLeader(leader->GetGUID()) || group->isRaidGroup() || group->isBGGroup())
+            return;
+        members = group->GetMembersCount();
     }
-    return {};
-}
-
-void Animus::AnimusMod::FillParty(Player* owner)
-{
-    namespace Curriculum = Animus::Curriculum;
-    Map* map = owner->GetMap();
-    if (!map || !map->IsDungeon() || map->IsRaid())
-        return;
-
-    // The group's leader fills it (a player alone is its own), and only a five-player group.
-    Group* group = owner->GetGroup();
-    if (group && (!group->IsLeader(owner->GetGUID()) || group->isRaidGroup() || group->isBGGroup()))
-        return;
-    uint32 const members = group ? group->GetMembersCount() : 1;
     if (members >= MAXGROUPSIZE)
         return;
-
-    // What the group has: someone to hold the pull, someone to keep the others up. Every member is read off its
-    // talents -- companions and temporary members through their party, real players directly.
-    Curriculum::AptitudeDemand const tanks = Curriculum::AptitudeDemand::HoldsThePull();
-    Curriculum::AptitudeDemand const heals = Curriculum::AptitudeDemand::KeepsThemUp();
-    bool haveTank = false;
-    bool haveHealer = false;
-    auto const read = [&](Curriculum::Aptitude const& aptitude)
+    uint32 const count = std::min<uint32>(MAXGROUPSIZE - members, Follow::FollowParty::MAX_FOLLOWERS);
+    std::string message;
+    std::vector<std::string> warnings;
+    ChatHandler chat(leader->GetSession());
+    if (!Summon(leader, count, message, warnings))
     {
-        if (tanks.MetBy(aptitude))
-            haveTank = true;
-        else if (heals.MetBy(aptitude))
-            haveHealer = true;
-    };
-    std::vector<Player*> present;
-    if (group)
-    {
-        for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
-            if (Player* member = ref->GetSource())
-                present.push_back(member);
-    }
-    else
-        present.push_back(owner);
-    for (Player* member : present)
-    {
-        if (auto const party = _partyByBot.find(member->GetGUID()); party != _partyByBot.end())
-        {
-            if (Curriculum::Aptitude const* aptitude = party->second->AptitudeOf(member->GetGUID()))
-                read(*aptitude);
-        }
-        else if (Curriculum::ClassProfile const* profile = Curriculum::ClassAssets::FindProfile(member->getClass()))
-        {
-            Curriculum::ClassAssets const& assets = Curriculum::ClassAssets::For(*profile);
-            read(Curriculum::Aptitude::Of(assets, CompanionParty::ReadBuild(assets, member), member));
-        }
-    }
-
-    std::vector<Curriculum::AptitudeDemand> roles;
-    if (!haveTank)
-        roles.push_back(tanks);
-    if (!haveHealer)
-        roles.push_back(heals);
-    while (roles.size() < MAXGROUPSIZE - members)
-        roles.push_back(Curriculum::AptitudeDemand::Anything());
-    roles.resize(std::min<std::size_t>(roles.size(), MAXGROUPSIZE - members));
-
-    std::unique_ptr<CompanionParty>& party = _parties[owner->GetGUID()];
-    if (!party)
-        party = std::make_unique<CompanionParty>(owner->GetGUID());
-
-    uint8 const level = uint8(owner->GetLevel());
-    std::vector<std::string> joined;
-    for (Curriculum::AptitudeDemand const& role : roles)
-    {
-        bool const damage = !role.Any();
-        // A class of the owner's faction that can take the role at this level, and a spec of it that does: for a
-        // damage seat, one that neither holds the pull nor heals.
-        struct Choice { uint8 Class; std::vector<uint8> Specs; std::vector<uint8> Races; };
-        std::vector<Choice> choices;
-        for (uint8 playerClass : Curriculum::ClassAssets::ClassesFor(level, role))
-        {
-            Curriculum::ClassProfile const* profile = Curriculum::ClassAssets::FindProfile(playerClass);
-            if (!profile)
-                continue;
-            Curriculum::ClassAssets const& assets = Curriculum::ClassAssets::For(*profile);
-            Choice choice{ playerClass, {}, {} };
-            for (uint8 race : assets.Races)
-                if (Player::TeamIdForRace(race) == owner->GetTeamId())
-                    choice.Races.push_back(race);
-            if (choice.Races.empty())
-                continue;
-            if (damage)
-            {
-                for (uint8 spec = 0; spec < assets.SpecAptitudes.size(); ++spec)
-                    if (!tanks.MetBy(assets.SpecAptitudes[spec]) && !heals.MetBy(assets.SpecAptitudes[spec]))
-                        choice.Specs.push_back(spec);
-            }
-            else
-                choice.Specs = assets.SpecsMeeting(role);
-            if (!choice.Specs.empty())
-                choices.push_back(std::move(choice));
-        }
-        if (choices.empty())
-            continue;
-
-        // A class with no model this server can play fills no seat (no model, no companion).
-        std::erase_if(choices, [this](Choice const& choice)
-        {
-            std::string error;
-            return !_models.Find(LayoutFor(*Curriculum::ClassAssets::FindProfile(choice.Class)), error);
-        });
-        if (choices.empty())
-            continue;
-
-        Choice const& choice = choices[urand(0, choices.size() - 1)];
-        Curriculum::ClassProfile const& profile = *Curriculum::ClassAssets::FindProfile(choice.Class);
-        Curriculum::Layout const& layout = LayoutFor(profile);
-        uint8 const spec = choice.Specs[urand(0, choice.Specs.size() - 1)];
-        std::string const name = FillerName();
-        if (name.empty())
-            break;
-        uint32 const account = BotAccounts::BASE + 800000 + (_nextFillerAccount++ % 100000);
-        std::string message;
-        if (!party->AddFiller(owner, layout, choice.Races[urand(0, choice.Races.size() - 1)], name, account, spec,
-            message))
-        {
-            LOG_ERROR("module.animus", "Filling {}'s party: {}", owner->GetName(), message);
-            break;
-        }
-        _partyByBot[party->GetBotGUIDs().back()] = party.get();
-        joined.push_back(Acore::StringFormat("{} ({} {}, {})", name, profile.Specs[spec].Name, profile.Name,
-            role.Any() ? (role.Feature == tanks.Feature ? "tank" : "healer") : "damage"));
-    }
-
-    if (!party->Size())
-    {
-        _parties.erase(owner->GetGUID());
+        LOG_INFO("module.animus", "Party fill for {} in map {}: {}", leader->GetName(), map->GetId(), message);
+        chat.SendSysMessage(Acore::StringFormat("Your dungeon party was not filled: {}", message));
         return;
     }
-    _filledInstance[owner->GetGUID()] = map->GetInstanceId();
-    if (!joined.empty())
-    {
-        std::string list;
-        for (std::string const& entry : joined)
-            list += (list.empty() ? "" : ", ") + entry;
-        ChatHandler(owner->GetSession()).SendSysMessage(Acore::StringFormat("Your party is filled for the dungeon: {}.",
-            list));
-    }
+    _filledInstance[leader->GetGUID()] = map->GetInstanceId();
+    for (std::string const& warning : warnings)
+        chat.SendSysMessage(warning);
+    chat.SendSysMessage(Acore::StringFormat("Your dungeon party is filled: {}", message));
 }
 
 void Animus::AnimusMod::RecordDamage(Unit const* attacker, Unit const* victim, uint32 damage, DamageEffectType type)
 {
+    // What a follower took, as the forge's EnvPool::RecordDamage counts a seat's DamageTaken: aimed damage, not its
+    // own (drowning, falls). What it dealt is not counted: a follow env has no targets (FollowParty::TrackStep).
     if (_partyByBot.empty() || !attacker || !victim || !damage
         || (type != DIRECT_DAMAGE && type != SPELL_DIRECT_DAMAGE && type != DOT))
         return;
-
-    // A companion's damage dealt and taken, counted as animus-lib's EnvPool::RecordDamage counts a forge seat's:
-    // taken on the companion itself, dealt by it or by its pets, guardians and totems.
     if (auto const taker = _partyByBot.find(victim->GetGUID()); taker != _partyByBot.end())
         taker->second->RecordDamageTaken(victim->GetGUID(), damage);
-
-    ObjectGuid const dealer = attacker->GetCharmerOrOwnerOrOwnGUID();
-    if (auto const party = _partyByBot.find(dealer); party != _partyByBot.end())
-        party->second->RecordDamageDealt(dealer, victim->GetGUID(), damage);
 }
 
-void Animus::AnimusMod::RecordCommand(Player* owner, uint8 command, uint32 arg) const
+void Animus::AnimusMod::RemoveParty(ObjectGuid leader)
 {
-    if (CompanionRegistry::Record const* record = _registry.Find(owner->GetGUID()))
-        Capture::CompanionCommand(owner->GetGUID(), record->Bot, Capture::Command(command), arg);
-}
-
-bool Animus::AnimusMod::Rate(Player* owner, std::string_view sign, std::string_view reason, std::string& message)
-{
-    CompanionRegistry::Record const* record = _registry.Find(owner->GetGUID());
-    if (!record)
-    {
-        message = "You have no companion to rate.";
-        return false;
-    }
-    return Capture::CompanionRating(owner->GetGUID(), record->Bot, sign, reason, message);
-}
-
-void Animus::AnimusMod::RemoveParty(ObjectGuid owner)
-{
-    auto const itr = _parties.find(owner);
+    auto const itr = _parties.find(leader);
     if (itr == _parties.end())
         return;
 
     // Unlink before destroying: logging the bots out re-enters the module through OnPlayerLogout.
-    std::unique_ptr<CompanionParty> const party = std::move(itr->second);
+    std::unique_ptr<Follow::FollowParty> const party = std::move(itr->second);
     _parties.erase(itr);
     std::erase_if(_partyByBot, [&](auto const& entry) { return entry.second == party.get(); });
-
     party->DestroyAll();
 }
 
 void Animus::AnimusMod::RemoveAll()
 {
     while (!_parties.empty())
-        SaveParty(_parties.begin()->first);
-}
-
-Animus::Curriculum::Layout const* Animus::AnimusMod::DirectorLayout()
-{
-    // The stage's director, when its arenas are directed (a party, a dungeon, a raid): one layout for every party.
-    Curriculum::StageDefinition const* stage = Curriculum::FindStage(_config.CurriculumStage);
-    if (!stage || !stage->AnyArena([](Curriculum::ArenaDefinition const& arena) { return arena.DirectorLearned; }))
-        return nullptr;
-    if (!_directorLayout || _directorLayout->Stage != stage)
-    {
-        _directorLayout = Curriculum::Layout::BuildDirector(*stage);
-        LOG_INFO("module.animus", "Animus built the {} layout (obs {}, actions {})", _directorLayout->ModelName(),
-            _directorLayout->ObsDim, _directorLayout->NumActions);
-    }
-    return &*_directorLayout;
+        RemoveParty(_parties.begin()->first);
 }
 
 Animus::Curriculum::Layout const& Animus::AnimusMod::LayoutFor(Curriculum::ClassProfile const& profile)
 {
-    // AnimusConfig::Load only keeps a stage that exists; the first stage stands in should that ever not hold, rather
-    // than a null dereference on the first create (which is what a renamed stage once caused).
+    // AnimusConfig::Load only keeps a stage that exists; the first stage stands in should that ever not hold.
     Curriculum::StageDefinition const* found = Curriculum::FindStage(_config.CurriculumStage);
     if (!found)
-    {
-        LOG_ERROR("module.animus", "Stage \"{}\" is not a curriculum stage; companions use \"{}\"",
-            _config.CurriculumStage, Curriculum::CurriculumStages().front().Name);
         found = &Curriculum::CurriculumStages().front();
-    }
     Curriculum::StageDefinition const& stage = *found;
     std::string const name = profile.Name + stage.Suffix;
     auto itr = _layouts.find(name);
@@ -1169,46 +536,5 @@ Animus::Curriculum::Layout const& Animus::AnimusMod::LayoutFor(Curriculum::Class
         LOG_INFO("module.animus", "Animus built the {} layout (obs {}, actions {})", name, itr->second.ObsDim,
             itr->second.NumActions);
     }
-
     return itr->second;
-}
-
-void Animus::AnimusMod::OnOwnerQuestAccept(Player* owner, Quest const* quest)
-{
-    if (auto const party = _parties.find(owner->GetGUID()); party != _parties.end())
-        sLife->OnOwnerQuestAccept(owner, quest, party->second->PresentBots());
-}
-
-void Animus::AnimusMod::OnOwnerQuestAbandon(Player* owner, uint32 questId)
-{
-    if (auto const party = _parties.find(owner->GetGUID()); party != _parties.end())
-        sLife->OnOwnerQuestAbandon(owner, questId, party->second->PresentBots());
-}
-
-std::vector<std::string> Animus::AnimusMod::LifeStatus() const
-{
-    return sLife->Status();
-}
-
-std::array<bool, 6> Animus::AnimusMod::LifeFlags() const
-{
-    Life::Settings const& life = sLife->Current();
-    return { life.Enable, life.Quests, life.Auction, life.Mail, life.Taxi, life.Crafting };
-}
-
-bool Animus::AnimusMod::LifeToggle(std::string_view feature, std::string_view state, std::string& message)
-{
-    bool const on = state == "on";
-    if (!on && state != "off")
-    {
-        message = "The state is on or off.";
-        return false;
-    }
-    if (!sLife->Toggle(feature, on))
-    {
-        message = "The feature is one of all, quests, auction, mail, taxi, crafting.";
-        return false;
-    }
-    message = Acore::StringFormat("Life: {} {} (until the next reload of the config).", feature, state);
-    return true;
 }

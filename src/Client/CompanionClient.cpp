@@ -129,10 +129,18 @@ void Animus::Client::CompanionClient::Push(uint16 opcode, uint8 const* data, std
     if (!order)
         return;
 
-    // It arrives now: the client's clock and the steady time of its arrival are what a client answering at once
-    // would report and be received at.
-    order->ArrivedAt = std::chrono::steady_clock::now();
-    order->ClientMs = _clock.At(order->ArrivedAt);
+    // A time sync arrives now: the client's clock and the steady time of its arrival are what a client answering at
+    // once would report and be received at. Every other order waits in the inbox for the controller.
+    if (order->Kind == OrderKind::TimeSync)
+    {
+        TimeSyncAsk ask;
+        ask.Counter = order->Counter;
+        ask.ArrivedAt = std::chrono::steady_clock::now();
+        ask.ClientMs = _clock.At(ask.ArrivedAt);
+        std::lock_guard<std::mutex> lock(_syncLock);
+        _syncs.push_back(ask);
+        return;
+    }
     _inbox.Push(*order);
 }
 
@@ -145,15 +153,15 @@ void Animus::Client::CompanionClient::RequestTimeSync(Player* bot)
     bot->GetSession()->SendTimeSync();
 }
 
-void Animus::Client::CompanionClient::AnswerTimeSync(Player* bot, Order const& order)
+void Animus::Client::CompanionClient::AnswerTimeSync(Player* bot, TimeSyncAsk const& ask)
 {
     // CMSG_TIME_SYNC_RESP: the request's counter and the client's clock when it handled it. The handler measures the
     // round trip from the packet's receive time (WorldPacket::GetReceivedTime), so the answer is stamped as received
     // the moment the request arrived, which is when a client on a perfect link would have answered it.
     WorldPacket response(Op::CMSG_TIME_SYNC_RESP, 8);
-    response << uint32(order.Counter);
-    response << uint32(order.ClientMs);
-    WorldPacket received(std::move(response), order.ArrivedAt);
+    response << uint32(ask.Counter);
+    response << uint32(ask.ClientMs);
+    WorldPacket received(std::move(response), ask.ArrivedAt);
     bot->GetSession()->HandleTimeSyncResp(received);
 }
 
@@ -167,19 +175,22 @@ void Animus::Client::CompanionClient::Tick(Player* bot, uint32 diff)
     Movement::Body const shape = Movement::ShapeOf(bot);
     uint32 const nowMs = _clock.Now();
 
-    // Dead, a body or a ghost: nothing is held and nothing moves. A ghost's run back to its corpse is a skill the
-    // companions will learn in a later stage (movement-curriculum §6); until then there is no corpse run at all.
-    // The orders still get their answers, as a client's do.
+    // Dead, a body or a ghost: nothing moves (a forge seat's controller ticks on, yielding to the corpse the server
+    // imposes, which comes to the same). The keys stay as the policy left them (the forge clears them only at the
+    // rise, keeping FaceTurnApplied: FollowParty::Rise), and so do ChangedMs and the applied face turn the next
+    // observation reads. The orders still get their answers, as a client's do.
     bool const alive = bot->IsAlive();
-    if (!alive)
-        Controls.Clear();
 
     // Time syncs first: they need nothing from the body, and the first report must already go out synchronised
     // (an unanswered sync makes the core log every movement packet). The other orders keep their order after them.
+    {
+        std::lock_guard<std::mutex> lock(_syncLock);
+        _syncsTaken.swap(_syncs);
+    }
+    for (TimeSyncAsk const& ask : _syncsTaken)
+        AnswerTimeSync(bot, ask);
+    _syncsTaken.clear();
     _inbox.Drain(_taken);
-    for (Order const& order : _taken)
-        if (order.Kind == OrderKind::TimeSync)
-            AnswerTimeSync(bot, order);
 
     if (!_mover.Started())
         _mover.Start(link, shape, world, nowMs);
@@ -189,7 +200,24 @@ void Animus::Client::CompanionClient::Tick(Player* bot, uint32 diff)
             _mover.Order(order, link, shape, world, nowMs);
 
     if (alive)
+    {
         _mover.Tick(Controls.Held, Movement::SpeedsOf(bot), shape, world, diff, nowMs, link);
+        _window.Moved += _mover.TickMoved;
+        _window.Commanded += _mover.TickCommanded;
+    }
+    _window.Ms += diff;
+}
+
+void Animus::Client::CompanionClient::Restart(Player* bot)
+{
+    _mover.Stop();
+    _window = Window();
+    if (!bot || !bot->IsInWorld() || !bot->FindMap() || !bot->GetSession())
+        return;
+
+    RealmLink link(bot, *this);
+    Movement::MapWorldQuery const world(bot->GetMap(), bot->GetPhaseMask());
+    _mover.Start(link, Movement::ShapeOf(bot), world, _clock.Now());
 }
 
 void Animus::Client::CompanionClient::CountRefusal(Player* bot, Refusal cause, uint16 opcode, float x, float y,

@@ -54,14 +54,20 @@ float Animus::Movement::SweepShare(float free, float length, float radius)
 {
     if (length <= 1e-6f)
         return 1.0f;
-    if (free >= length + radius)
+    // A ray that met nothing comes back as its own length, recomputed from the end point's coordinates; in float at
+    // world coordinates of a few thousand that is a ten-thousandth of a yard short about half the time, and with
+    // six rays a sweep nearly always read as blocked by a hair: every step on open ground was "against a wall"
+    // (wall_seconds 50 of 60 s on the plains, dry check 2026-10-05). Within SWEEP_SLACK of the full reach is free.
+    constexpr float SWEEP_SLACK = 0.001f;
+    if (free >= length + radius - SWEEP_SLACK)
         return 1.0f;
     return std::clamp((free - radius) / length, 0.0f, 1.0f);
 }
 
 float Animus::Movement::MapWorldQuery::FloorBelow(float x, float y, float z, float search) const
 {
-    Heights.fetch_add(1, std::memory_order_relaxed);
+    if (_counted)
+        Heights.fetch_add(1, std::memory_order_relaxed);
     // Terrain, static models and the dynamic tree (Map::GetHeight's own choice between them), the highest at or below z.
     float const floor = _map->GetHeight(_phaseMask, x, y, z, true, search);
     if (floor <= INVALID_HEIGHT || floor > z + 0.05f || floor < z - search)
@@ -100,7 +106,8 @@ Animus::Movement::Liquid Animus::Movement::MapWorldQuery::LiquidAt(float x, floa
 
 float Animus::Movement::MapWorldQuery::RayFree(float x0, float y0, float z0, float x1, float y1, float z1) const
 {
-    Rays.fetch_add(1, std::memory_order_relaxed);
+    if (_counted)
+        Rays.fetch_add(1, std::memory_order_relaxed);
     float const length = std::sqrt((x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0) + (z1 - z0) * (z1 - z0));
     float free = length;
     float rx = 0.0f, ry = 0.0f, rz = 0.0f;
@@ -150,4 +157,12 @@ bool Animus::Movement::MapWorldQuery::InTerrain(float x, float y, float z) const
 {
     float const terrain = _map->GetGridHeight(x, y);
     return terrain > INVALID_HEIGHT && z < terrain - GROUND_HEIGHT_TOLERANCE;
+}
+
+float Animus::Movement::MapWorldQuery::TerrainHeight(float x, float y) const
+{
+    if (_counted)
+        Heights.fetch_add(1, std::memory_order_relaxed);
+    float const terrain = _map->GetGridHeight(x, y);
+    return terrain > INVALID_HEIGHT ? terrain : INVALID_FLOOR;
 }

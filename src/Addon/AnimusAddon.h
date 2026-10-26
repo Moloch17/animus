@@ -28,26 +28,18 @@ namespace Animus::Addon
     /// The addon message prefix the Animus addon whispers with, and the prefix of every reply.
     constexpr std::string_view PREFIX = "Animus";
 
-    /// How the Animus addon (interface_addon/animus_addon/Animus) talks to the module: addon whispers a player sends
-    /// to themselves, tab-separated, the first word a request (`hello`, `list`, `create <name> <race> <class>`,
-    /// `summon`, `dismiss`, `rename <name>`, `reroll <race> <class>`, `talent <name> learn|unlearn <id>`,
-    /// `pettalent ...`, `pet <name>`, `equip <name> <bag> <slot> <inv slot>`, `rate +|- [reason]`; protocol 3:
+    /// How the Animus addon (interface_addon/Animus) talks to the module: addon whispers a player sends to
+    /// themselves, tab-separated, the first word a request (`hello`, `followers`, `follow <n>`, `dismiss`,
     /// `record [on|off keep|discard [title]]`, `note <client ms> <text>`, `settings`, `partyfill on|off`,
-    /// `partyfill realm on|off`, `specs`, `prepare <level> <spec>`, `god on|off`, `life <feature> on|off`).
-    /// Replies are addon whispers from the player to themselves, tab-separated, the first word in capitals (HELLO,
-    /// RACE, COMPANION, PET, PETTALENT, RECORD, NOTE, SETTINGS, SPEC, LEVELS, OK, ERR), so the addon can tell an
-    /// answer from its own request
-    /// echoed back by a realm without the module. interface_addon/animus_addon/Animus/README.md describes every
-    /// message.
+    /// `partyfill realm on|off`, `specs`, `prepare <level> <spec>`, `god on|off`). Replies are addon whispers from
+    /// the player to themselves, tab-separated, the first word in capitals (HELLO, FOLLOW, FOLLOWER, RECORD, NOTE,
+    /// SETTINGS, SPEC, LEVELS, OK, ERR), so the addon can tell an answer from its own request echoed back by a realm
+    /// without the module. interface_addon/Animus/README.md describes every message.
     ///
     /// Handle `msg` (prefix and all) as one of those; false when it is not an Animus message, so the whisper goes
-    /// where it was going. Player security: this is how players use the module, where the `.animus` commands
-    /// stay game master ones.
+    /// where it was going. Every player may talk to it; what each request does is gated as its command is.
     bool Handle(Player* player, std::string_view msg);
 
-    /// Tell the addon about the companion unasked: OK/ERR `message` when there is one, then the COMPANION line.
-    /// For what finishes later than its request (a summon, whose character loads on the database thread).
-    void Push(Player* player, std::string const& message);
 }
 
 #endif

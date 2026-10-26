@@ -1,0 +1,154 @@
+/*
+ * This file is part of the AzerothCore Project. See AUTHORS file for Copyright information
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
+ * more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program. If not, see <http://www.gnu.org/licenses/>.
+ */
+
+#ifndef ANIMUS_VISION_IDENTITY_H
+#define ANIMUS_VISION_IDENTITY_H
+
+#include "Camera.h"
+#include <array>
+#include <cstdint>
+
+/// **What a thing in view is, to this seat** (perception-goals 1a and 1b): the facts a player's client shows about a
+/// unit or a game object -- its nameplate's colour, the quest mark over it, the sparkle on a corpse or a chest, the
+/// cursor over it, its tooltip's quest line -- and the semantic class and the entity list's flags that follow from
+/// them. Pure: MapVisionWorld reads the facts off the core (FactsOf), the tests write them by hand.
+///
+/// **The UI rule** (perception-goals amendment 7): every fact that depends on the character is this seat's own -- a
+/// quest giver's mark only when the seat's client would draw one for it, a quest object only while one of its quests
+/// needs it, a corpse lootable only when this seat may loot it. Nothing about what other players see leaks in.
+namespace Animus::Vision
+{
+    struct EntityFacts
+    {
+        bool GameObject = false;
+
+        // A unit's.
+        bool Player = false;
+        bool Dead = false;
+        /// A dead creature with loot this seat may take: the client's sparkle (UNIT_DYNFLAG_LOOTABLE as the core sends
+        /// it to this seat).
+        bool LootableByMe = false;
+        /// -1 hostile to the seat, 0 neutral, 1 friendly: the nameplate's colour.
+        int8_t Reaction = 0;
+        /// A creature that sells, or trains (its npc flags).
+        bool Vendor = false;
+        bool Trainer = false;
+        /// A creature the seat can talk to or use (any npc flag), when not hostile.
+        bool Interactive = false;
+        /// A creature this seat's quests need killed (its tooltip's objective line).
+        bool QuestTarget = false;
+
+        // Either's.
+        /// A quest mark this seat's client draws over it: a yellow or blue "!" or a "?" (QuestGiverStatus for this
+        /// player from DIALOG_STATUS_INCOMPLETE up; the low-level and unavailable marks the client hides by default
+        /// are not marks).
+        bool QuestMark = false;
+
+        // A game object's.
+        /// Its GameobjectTypes.
+        uint32_t ObjectType = 0;
+        /// The skill its lock asks for (LockType: 2 herbalism, 3 mining), 0 for none.
+        uint32_t LockSkill = 0;
+        /// One of this seat's quests needs it (GameObject::ActivateToQuest for this player: the client's glow).
+        bool QuestRelevant = false;
+        /// The seat's cursor turns to a cog over it: a kind that can be used, selectable, its use not withheld.
+        bool Usable = false;
+        /// A chest whose loot is there to take.
+        bool Lootable = false;
+    };
+
+    /// The class and the entity list's flags of one entity.
+    struct Identity
+    {
+        Class What = Class::OtherObject;
+        bool Quest = false;
+        bool Lootable = false;
+        bool Usable = false;
+    };
+
+    /// The class, by these rules, first match wins:
+    /// - a unit: dead -> lootable corpse (LootableByMe) or corpse; a player -> hostile or friendly player; hostile
+    ///   -> hostile creature; a quest mark -> quest giver; vendor; trainer; neutral or friendly creature;
+    /// - a game object: a door or button -> door; mailbox; a quest mark -> quest giver; a chest locked by
+    ///   herbalism -> herb, by mining -> ore; quest relevant -> quest object; a chest -> chest; usable -> usable
+    ///   object; else other object.
+    /// Quest is a quest mark, a quest target or quest relevance; Lootable a corpse's sparkle or a chest's loot;
+    /// Usable an interactive unit not hostile, or a usable game object.
+    [[nodiscard]] Identity Classify(EntityFacts const& facts);
+
+    /// An entity of a frame, as the entity list reads it (perception-goals 1b): what it is to the seat, its template
+    /// (a creature's or game object's entry; 0 for a player), its level and health (a game object's 0 and 1), how its
+    /// nameplate reads, its middle (the list's distance and direction are to it), and its size and how much of it the
+    /// camera has a clear line to (entity-sensing: the list's angular size and line-of-sight columns).
+    ///
+    /// What entity memory (perception-goals 3) keeps of it besides: its GUID, raw -- the sim's own handle, never
+    /// observed (the observation gets a memory id) -- the way it faces, and the state a player reads off it: dead, a
+    /// door or button standing open (its GO state active), a game object used (activated, or its loot state past
+    /// ready).
+    struct EntityInfo
+    {
+        Identity Id;
+        uint32_t Entry = 0;
+        bool GameObject = false;
+        float Level = 0.0f;
+        float Health = 1.0f;
+        int8_t Reaction = 0;
+        Vec3 Centre;
+        uint64_t Guid = 0;
+        float Orientation = 0.0f;
+        bool Dead = false;
+        bool Open = false;
+        bool Used = false;
+        /// Its radius: a unit's collision radius, a game object's bounding radius, a ground hazard's area radius (how
+        /// far its edge is, as a player reads it off the visual).
+        float Radius = 0.0f;
+        /// Its height: a unit's collision height, a game object's bounding height, a hazard's disc thickness.
+        float Height = 0.0f;
+        /// The share of its sample points with a clear line from the camera, in (0, 1] for a listed entity
+        /// (EntitySensor); 0 for a remembered one.
+        float Los = 0.0f;
+    };
+
+    /// **A seat's entity list for this decision** (perception-goals 1b; entity-sensing): what the sensor found in view,
+    /// in slot order (nearest the camera first), and the camera it was seen from (the list's directions are to it).
+    /// Written by the vision block, read by the entities block; Count 0 when nothing was sensed.
+    struct SeenList
+    {
+        uint32_t Count = 0;
+        Vec3 Camera;
+        float Azimuth = 0.0f;
+        float Elevation = 0.0f;
+        float SeatLevel = 0.0f;
+        std::array<EntityInfo, ENTITY_SLOTS> Info{};
+    };
+
+    /// **One listed entity as the audit draws it** (entity-sensing): its class, where in the frame (the yaw off the
+    /// view's azimuth, + left, and the pitch off its elevation, radians), how big (angular width and height, as
+    /// shares of the field of view) and its line-of-sight share. What EntitiesBlock::ReadMarks reads back from the
+    /// list's columns, so a picture can be drawn from the observation row alone.
+    struct EntityMark
+    {
+        Class What = Class::OtherObject;
+        float Yaw = 0.0f;
+        float Pitch = 0.0f;
+        float Width = 0.0f;
+        float Height = 0.0f;
+        float Los = 0.0f;
+    };
+}
+
+#endif

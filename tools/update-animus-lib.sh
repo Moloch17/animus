@@ -1,78 +1,76 @@
 #!/usr/bin/env bash
-# Refresh the bundled animus-lib (animus-lib/src/runtime) from an Animus Forge checkout.
+# Refresh the bundled runtime (animus-lib/src/runtime) from an Animus Forge checkout.
 #
 #     tools/update-animus-lib.sh [forge checkout]          # default: the forge this module sits in (../..)
 #     tools/update-animus-lib.sh --check [forge checkout]  # copy nothing: only prove the bundle is the forge's
-#     tools/update-animus-lib.sh --only Movement [...]     # refresh (or --check) one directory of the bundle only
 #
-# To bundle a commit rather than a working tree (the forge branch has work in progress), export it first:
-#     git -C <forge> archive <commit> src/server/game/Animus | tar -x -C /tmp/forge-<commit>
-#     FORGE_REV=<commit> tools/update-animus-lib.sh --only Movement /tmp/forge-<commit>
+# To bundle a commit rather than a working tree, export it first:
+#     git -C <forge> archive <commit> src/server/game/Animus/Runtime | tar -x -C /tmp/forge-<commit>
+#     FORGE_REV=<commit> tools/update-animus-lib.sh /tmp/forge-<commit>
 #
-# The forge folded animus-lib into its core (src/server/game/Animus), so that is where the curriculum lives now: the
-# blocks, the layout and its manifest, the characters, the stages and the tuning. A model is refused unless the
-# manifest this module builds is exactly the one it was exported with, so the bundle must be refreshed from the forge
-# revision the models were trained on, together with the models.
+# The forge keeps everything a trained model needs at run time in src/server/game/Animus/Runtime (2026-10-08): the
+# blocks, the layout and its manifest, the characters, the stages, the camera (Vision/), the player controller and the
+# bots; nothing there includes the training half (apps/forge/tools/runtime_graph_check.py holds that line). The bundle
+# is that tree, mirrored: every file copied as the forge has it, new ones added, and a file the forge no longer has
+# removed. A model is refused unless the manifest this module builds is exactly the one it was exported with, so the
+# bundle must be refreshed from the revision the models were trained on, together with the models.
 #
-# Every file of the bundle that the forge also has is copied from it as it is. The module keeps its own:
-#   animus_lib_loader.cpp, Core/ (CoreHooks), Model/ (the .amdl reader and the model library), and Bot/BotFactory.*
-#   (the forge's creates sim-session bots through forge-only core calls; this one places companions beside players)
-# and Scenario/Curriculum/WarmCaches.cpp is left out (it warms the training half's tables; GearBuilder only needs the
-# header). A file the forge has and the bundle does not is not added unless something includes it: the script lists
-# every include the bundle can no longer resolve, and where the forge has it.
+# The module keeps its own (never copied, never removed): animus_lib_loader.cpp, Core/ (CoreHooks: what a stock core
+# has in place of the forge's hooks), Model/ (the .amdl reader and the forward pass: the forge has no inference),
+# Bot/BotFactory.* and Bot/BotSlot.* (the forge's create sim-session bots through forge-only calls; these place bots
+# beside players on a realm). Movement/PlayerLink.* is the forge's server link and is not bundled: the realm's is the
+# module's own (src/Client/CompanionClient).
 #
-# Whole directories are taken as the forge has them (`whole`): every file in them is copied, new ones included, and a
-# file the forge dropped is dropped, except the forge-only ones (`forge_only`). Movement/ is the player controller and
-# the client logic both sides share (the physics, the report cadence, the server's orders and the acks); its
-# PlayerLink is the forge's server link (ClientMovement, a forge-core refactor of the movement handler), and the
-# realm's is the module's own (src/Client/CompanionClient).
-#
-# Last, every bundled file the forge also has is compared byte for byte with it (cmp): a difference fails the script,
-# so a shared file cannot drift. `--check` does only that.
-#
-# After a refresh: build against a stock core (the syntax is not enough: a forge-only call only fails at link), and
-# check the conf template documents every tuning key (this script does that last).
+# Last, every bundled file is compared byte for byte with the forge's (cmp): a difference fails the script, so a
+# shared file cannot drift. `--check` does only that. After a refresh: build against a stock core (the syntax is not
+# enough: a forge-only call only fails at link).
 set -euo pipefail
-
 cd "$(dirname "$0")/.."
+
 check_only=0
-only=''
 while [[ "${1:-}" == --* ]]; do
   case "$1" in
     --check) check_only=1; shift ;;
-    --only) only="${2:?--only needs a directory of the bundle, e.g. Movement}"; only="${only%/}/"; shift 2 ;;
     *) echo "Unknown option $1" >&2; exit 1 ;;
   esac
 done
-# A path inside the refresh: everything, or the --only directory's.
-inside() { [[ -z "$only" || "$1" == "$only"* ]]; }
+
 forge="${1:-../..}"
-core="$forge/src/server/game/Animus"
+core="$forge/src/server/game/Animus/Runtime"
 if [[ ! -d "$core/Scenario/Curriculum" ]]; then
-  echo "No forge core at $forge (looked for $core/Scenario/Curriculum); pass a forge checkout." >&2
+  echo "No forge runtime at $forge (looked for $core/Scenario/Curriculum); pass a forge checkout." >&2
   exit 1
 fi
-
 bundle=animus-lib/src/runtime
-owned='^(animus_lib_loader\.cpp|Core/.*|Model/.*|Bot/BotFactory\.(h|cpp))$'
-whole=(Movement)
+owned='^(animus_lib_loader\.cpp|Core/.*|Model/.*|Bot/BotFactory\.(h|cpp)|Bot/BotSlot\.(h|cpp))$'
 forge_only='^Movement/PlayerLink\.(h|cpp)$'
 
-# Every bundled file the forge has must be the forge's, byte for byte (the module's own and the forge-only excepted).
+forge_files() { (cd "$core" && find . -type f \( -name '*.cpp' -o -name '*.h' \) | sed 's|^\./||' | sort); }
+bundle_files() { (cd "$bundle" && find . -type f \( -name '*.cpp' -o -name '*.h' \) | sed 's|^\./||' | sort); }
+
+# Every bundled file the forge has must be the forge's, byte for byte; and the forge's must all be bundled.
 compare() {
   local differ=0 same=0 file
   while IFS= read -r file; do
     [[ "$file" =~ $owned || "$file" =~ $forge_only ]] && continue
-    inside "$file" || continue
-    [[ -f "$core/$file" ]] || continue
-    if cmp -s "$core/$file" "$bundle/$file"; then
+    if [[ ! -f "$bundle/$file" ]]; then
+      echo "  missing from the bundle: $file" >&2
+      differ=1
+    elif cmp -s "$core/$file" "$bundle/$file"; then
       same=$((same + 1))
     else
       echo "  differs from the forge: $file" >&2
       differ=1
     fi
-  done < <(cd "$bundle" && find . -type f \( -name '*.cpp' -o -name '*.h' \) | sed 's|^\./||' | sort)
-  echo "cmp: $same bundled files identical to $core$( ((differ)) && echo ', some differ')."
+  done < <(forge_files)
+  while IFS= read -r file; do
+    [[ "$file" =~ $owned ]] && continue
+    if [[ ! -f "$core/$file" || "$file" =~ $forge_only ]]; then
+      echo "  bundled but not the forge's runtime: $file" >&2
+      differ=1
+    fi
+  done < <(bundle_files)
+  echo "cmp: $same bundled files identical to $core$( ((differ)) && echo ', and differences (above)')."
   return "$differ"
 }
 
@@ -81,85 +79,41 @@ if ((check_only)); then
   exit $?
 fi
 
-# The whole directories first, so the loop below finds their new files in the bundle and copies them like the rest.
-for dir in "${whole[@]}"; do
-  inside "$dir/" || continue
-  mkdir -p "$bundle/$dir"
-  while IFS= read -r file; do
-    [[ "$dir/$file" =~ $forge_only ]] && continue
-    mkdir -p "$(dirname "$bundle/$dir/$file")"
-    cp "$core/$dir/$file" "$bundle/$dir/$file"
-  done < <(cd "$core/$dir" && find . -type f \( -name '*.cpp' -o -name '*.h' \) | sed 's|^\./||' | sort)
-  while IFS= read -r file; do
-    if [[ ! -f "$core/$dir/$file" || "$dir/$file" =~ $forge_only ]]; then
-      rm "$bundle/$dir/$file"
-      echo "  dropped $dir/$file (the forge has no such file, or it is forge-only)"
-    fi
-  done < <(cd "$bundle/$dir" && find . -type f | sed 's|^\./||' | sort)
-done
-
+# Mirror: copy every forge file in, then drop every bundled file the forge does not have (the module's own aside).
 copied=0
-kept=()
 while IFS= read -r file; do
-  if ! inside "$file"; then
-    continue
-  elif [[ "$file" =~ $owned ]]; then
-    kept+=("$file")
-  elif [[ -f "$core/$file" ]]; then
-    cp "$core/$file" "$bundle/$file"
-    copied=$((copied + 1))
-  else
-    kept+=("$file (the forge has no such file any more)")
+  [[ "$file" =~ $owned || "$file" =~ $forge_only ]] && continue
+  mkdir -p "$(dirname "$bundle/$file")"
+  cp "$core/$file" "$bundle/$file"
+  copied=$((copied + 1))
+done < <(forge_files)
+dropped=0
+while IFS= read -r file; do
+  [[ "$file" =~ $owned ]] && continue
+  if [[ ! -f "$core/$file" || "$file" =~ $forge_only ]]; then
+    rm "$bundle/$file"
+    dropped=$((dropped + 1))
   fi
-done < <(cd "$bundle" && find . -type f \( -name '*.cpp' -o -name '*.h' \) | sed 's|^\./||' | sort)
-echo "Copied $copied files from $core."
-((${#kept[@]})) && printf '  kept the module'"'"'s own: %s\n' "${kept[@]}"
+done < <(bundle_files)
+find "$bundle" -type d -empty -delete
+echo "Copied $copied files from $core; dropped $dropped the forge no longer has."
 
-# Includes the bundle cannot resolve: its own headers, then the core's (a stock core has everything but the forge's).
+# Includes the bundle cannot resolve within itself: either the core's (fine on a stock core) or a forge file outside
+# the runtime, which the runtime must not need.
 missing=0
 while IFS= read -r header; do
   if [[ -z "$(find "$bundle" -name "$header" -print -quit)" ]]; then
-    found="$(cd "$core" && find . -name "$header" | sed 's|^\./||' | head -1)"
+    found="$(cd "$forge/src/server/game/Animus" && find . -name "$header" | sed 's|^\./||' | head -1)"
     if [[ -n "$found" ]]; then
-      echo "  unresolved include $header: the forge has $found (copy it, and its .cpp if the bundle needs it)" >&2
+      echo "  unresolved include $header: the forge has it outside its runtime ($found)" >&2
       missing=1
     fi
   fi
 done < <(grep -rhoE '#include "[^"]+\.h"' "$bundle" | sed 's/#include "//;s/"//' | sort -u)
 
-# A checkout's own revision; for an export of a commit (git archive, which is how a forge branch with uncommitted
-# work is bundled at a commit), FORGE_REV names it.
 revision="${FORGE_REV:-$(git -C "$forge" rev-parse --short HEAD 2>/dev/null || echo unknown)}"
-if [[ -n "$only" ]]; then
-  # The first line is the revision of the whole bundle; a directory refreshed on its own gets a line of its own.
-  { head -1 animus-lib/FORGE_REVISION; tail -n +2 animus-lib/FORGE_REVISION | grep -v "^$only " || true;
-    echo "$only $revision"; } > animus-lib/FORGE_REVISION.new
-  mv animus-lib/FORGE_REVISION.new animus-lib/FORGE_REVISION
-  echo "Bundled ${only%/} is now the forge's at $revision (animus-lib/FORGE_REVISION)."
-else
-  echo "$revision" > animus-lib/FORGE_REVISION
-  echo "Bundled animus-lib is now the forge's runtime at $revision (animus-lib/FORGE_REVISION)."
-fi
-
-# The lib declares every curriculum tuning key once (CurriculumTuning::Visit) and this module documents them
-# again in its conf template. Updating the lib is when they drift, so this is where it is checked: a key the
-# sim reads and the template does not mention is invisible -- Load asks for each with a default and no warning,
-# so it silently keeps its compiled-in value and nobody can find out it exists. The forge's worldserver.conf.dist
-# documents every one as AnimusForge.Curriculum.*.
-tuning="$bundle/Scenario/Curriculum/CurriculumTuning.h"
-conf="conf/mod_animus.conf.dist"
-undocumented=$(comm -23 \
-  <(grep -oE 'f\("[A-Za-z0-9.]+"' "$tuning" | sed 's/f("//;s/"//' | sort -u) \
-  <(grep -oE "^[A-Za-z]+\.Curriculum\.[A-Za-z0-9.]+" "$conf" | sed 's/^[^.]*\.Curriculum\.//' | sort -u))
-if [[ -n "$undocumented" ]]; then
-  echo
-  echo "These tuning keys are read by the sim but not documented in $conf:" >&2
-  echo "$undocumented" | sed 's/^/  /' >&2
-  echo "Copy their blocks from the forge's worldserver.conf.dist (AnimusForge.Curriculum.* -> Animus.Curriculum.*)." >&2
-  missing=1
-else
-  echo "Every tuning key the lib reads is documented in $conf."
-fi
+echo "$revision" > animus-lib/FORGE_REVISION
+echo "Bundled runtime is now the forge's at $revision (animus-lib/FORGE_REVISION)."
 
 compare || missing=1
 exit "$missing"

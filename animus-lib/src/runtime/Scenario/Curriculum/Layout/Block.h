@@ -41,126 +41,53 @@ namespace Animus::Curriculum
 
     enum class BlockId : uint8
     {
-        Core,           // the character, its spells, trinkets and talents
-        Move,           // where it puts its feet, with no reference to a target: bearings and facing
-        Duel,           // movement, auto-attack, pets, stopping casts and forms, the opponent's position
-        Pack,           // enemy slots, target selection, tactical spells
-        Gauntlet,       // pull timing, food, drink, sustain spells
-        Companion,      // the owner: follow, assist, guard, heal it
-        Party,          // three teammates: follow the tank, assist, guard and heal them
-        Pvp,            // the enemy player's class, role and state
-        Context,        // the situation: allies, hostile players and creatures, PvP flag, map kind (no actions)
-        Hostiles,       // per enemy slot: player or creature, class, healing, stealth, pet (no actions)
-        Pet,            // the pet bar: abilities, stance, follow and stay (classes with a controllable pet)
-        Travel,         // mounts, flying and an objective to get to
-        Flag,           // a flag match: both flags, both bases, the score (no actions)
-        Support,        // friends (self, owner, teammates) to heal, shield and buff, and the heals' rank tier
-        Order,          // what the side's director asked of this seat (no actions: an order is advice, not a lever)
-        World,          // life outside the fight: corpses, quest givers, nodes, vendors, bags, gold, gear
-        Forecast,       // what is about to happen: incoming casts, interrupt windows, threat, the owner ahead (no actions)
-        Crowd,          // what is on the party past the pack's slots, and the pack ahead (no actions)
-        Hint,           // a suggested action the learner imitates while the support lasts; hidden from the networks
-        /// After dying where death runs on: release, run back, rise at the corpse or at the spirit healer, accept a
-        /// friend's resurrection. Before the goal block, which stays last.
-        Death,
-        Goal,           // which goal kinds and targets are there, and whether the goal held ended (no actions; last)
-        Count
+        Core = 0,           // the character, its spells, trinkets and talents
+        Move = 1,           // where it puts its feet, with no reference to a target: bearings and facing
+        /// Where the objective is: whether there is one, its bearing and its distance, straight-line (no actions).
+        /// Split from the move block (perception-goals P1): M1 carries it, M2 seek finds its objective by sight.
+        Compass = 2,
+        Duel = 3,           // movement, auto-attack, pets, stopping casts and forms, the opponent's position
+        Pack = 4,           // enemy slots, target selection, tactical spells
+        Gauntlet = 5,       // pull timing, food, drink, sustain spells
+        Pet = 11,            // the pet bar: abilities, stance, follow and stay (classes with a controllable pet)
+        /// What the seat's camera sees: a depth-and-meaning image and the camera's scalars (camera-vision; no
+        /// actions). Before the goal block, which stays last.
+        Vision = 20,
+        /// What the camera's last frame showed, as a list of the entities in it (perception-goals 1b; no actions).
+        /// Right after the vision block, which every stage with one is given it with (CurriculumStages).
+        Entities = 21,
+        /// What the seat remembers of the place: its mental map, as one egocentric heading-up crop (perception-goals
+        /// REDESIGN §3; no actions). After the camera, whose frames write it.
+        Map = 22,
+        /// What the seat sees and remembers, and acting on it (dungeon-curriculum I1 and I2): the frame's visible
+        /// entities and the most relevant remembered ones, as one list, and pointer presses on it -- select, interact
+        /// or use, use an item on, assist, focus -- sent as the client sends them. After the entities block, which
+        /// writes the memory it reads.
+        Sight = 23,
+        /// What a player's UI shows of its party (dungeon-curriculum I5; revision 2, G1: the one source of
+        /// party-member state): the party frames -- each member's health, power, alive, in combat, the leader, its
+        /// debuffs, aggro and target -- and the minimap's party dots, a position only for a member within the
+        /// minimap's radius. Presses: select, focus or assist a member's frame. Only the stages that declare it
+        /// (move4_follow on).
+        PartyFrames = 24,
+        /// Perception-true combat inputs (dungeon-curriculum I3): the player frame and the pet frame (always known;
+        /// the party's members are the party frames block's since its revision 1), the target frame's threat
+        /// indicator and target of target, and -- in a layout with it -- the sight list's per-target combat columns
+        /// (the cast bar, crowd control, elite, whom it hits, the seat's threat on it: visible units only). Presses:
+        /// select or focus the player frame or the pet frame. After the sight block.
+        Combat = 25,
+        Goal = 26,           // which goal kinds and targets are there, and whether the goal held ended (no actions; last)
+        /// A coarse, heading-up map of what the seat has seen, stood on and searched this episode (general search,
+        /// decision 0027): COVERAGE_GRID x COVERAGE_GRID tiles of 32 yd from the mental map's per-tile counters; no
+        /// actions. After the map block, whose map it samples; before the goal block, which stays last.
+        Coverage = 27,
+        Count = 28
     };
 
+    /// **The ids are explicit and never reused.** A manifest, a checkpoint and the learner's seeding by name know a block
+    /// by its place in this list; the first curriculum's blocks were deleted (2026-10-07) and left their numbers unused,
+    /// so the live blocks keep the ids they have always had. A new block takes a number past the last one.
     constexpr std::size_t BLOCK_COUNT = std::size_t(BlockId::Count);
-
-    /// What a director asks of its side. Four channels: the posture the team holds, the enemy it concentrates
-    /// on, the shape it takes, and which seat owes the next duty. A seat reads them and still chooses its own
-    /// actions -- an order is advice, and a seat that has learned better is free to ignore it.
-    enum class TeamPosture : uint8
-    {
-        Attack,         // press the enemy
-        Defend,         // hold what the side has
-        Protect,        // keep one of its own alive
-        Recover,        // disengage, heal, drink
-        Regroup,        // gather before anything else
-        Hold,           // stay where the side was put, at the called place: do not chase
-        Count
-    };
-
-    enum class TeamRally : uint8
-    {
-        None,           // no shape asked for
-        OwnBase,        // home: the flag room, the graveyard, the safe side
-        EnemyBase,      // theirs
-        Carrier,        // whoever of the side carries the objective
-        Focus,          // on the called target
-        Spread,         // away from each other
-        Stack,          // together
-        Point,          // the place the director named (SideOrder::Place, from an anchor and an offset)
-        Count
-    };
-
-    constexpr uint32 TEAM_POSTURE_COUNT = uint32(TeamPosture::Count);
-
-    /// **An order to one member or group** (long-horizon plan, Component E): what a director asks of the members it
-    /// addresses, beyond the side's posture and shape. Each names a target -- an enemy slot for Focus, Tank,
-    /// Interrupt and Control, a member for Heal, the called place for GoTo, a journal objective for Objective.
-    enum class OrderKind : uint8
-    {
-        None,
-        Focus,          // fight this one
-        Tank,           // hold this one's attention
-        Interrupt,      // stop this one's casts
-        Control,        // keep this one out of the fight
-        Heal,           // keep this member up
-        GoTo,           // go to the called place
-        Objective,      // do this journal objective
-        Count
-    };
-
-    constexpr uint32 ORDER_KIND_COUNT = uint32(OrderKind::Count);
-
-    /// Who an order came to: the whole side, the member's group, or the member by name. A raid director's order to
-    /// one member outranks its order to the member's group, which outranks the side's.
-    enum class OrderSource : uint8 { Side, Group, Member, Count };
-    constexpr uint32 ORDER_SOURCE_COUNT = uint32(OrderSource::Count);
-    constexpr uint32 TEAM_RALLY_COUNT = uint32(TeamRally::Count);
-
-    /// How a director names a spot without an action space the size of the world.
-    ///
-    /// A place is an anchor, an offset from it and how far: "behind the flag room", "pull back from the
-    /// target", "twenty yards left of where we are". Three small categorical fields the director edits one at
-    /// a time, exactly as it edits the rest of a standing order, so the whole vocabulary is 13 actions and
-    /// stays 13 whether the map is an arena or a continent -- only the ring radii change.
-    ///
-    /// The offset is relative to an axis the side can actually perceive, not a compass bearing. A director has
-    /// no idea which way north is: its observation carries distances, and (since the bearing features beside
-    /// this) angles relative to its own side, but nothing that orients it to the map. "Sixty yards north" would
-    /// be a direction it could not learn to use; "sixty yards back from them" is one it can.
-    enum class PlaceAnchor : uint8
-    {
-        TeamCentre,     // where the side is now
-        Focus,          // the enemy it called
-        LastSeenEnemy,  // where it last saw one, which is the only place a scout has to go on
-        Objective,      // what the arena is about, when it has one
-        OwnBase,
-        EnemyBase,
-        Count
-    };
-
-    /// Along the axis from the anchor towards the enemy (falling back to the objective, then the last
-    /// sighting, then the side's own facing when it knows of no enemy at all).
-    enum class PlaceOffset : uint8
-    {
-        At,             // the anchor itself
-        Toward,
-        Away,
-        Left,
-        Right,
-        Count
-    };
-
-    enum class PlaceRing : uint8 { Near, Far, Count };
-
-    constexpr uint32 PLACE_ANCHOR_COUNT = uint32(PlaceAnchor::Count);
-    constexpr uint32 PLACE_OFFSET_COUNT = uint32(PlaceOffset::Count);
-    constexpr uint32 PLACE_RING_COUNT = uint32(PlaceRing::Count);
 
     /// Kinds of standing choice a player makes and keeps (SeatMemory: a change of one kind holds for a while).
     enum class ModeGroup : uint8
@@ -177,17 +104,16 @@ namespace Animus::Curriculum
     };
 
     // Sizes several blocks and the scenario agree on.
-    constexpr uint32 RAID_GROUPS = 8;       // a raid's groups
+    constexpr uint32 RAID_GROUPS = 8;       // a raid's groups (a bound: no stage fields a raid)
     constexpr uint32 GROUP_SEATS = 5;       // seats in a group: a party is one of them
-    /// Learned agents per env: 1, an arena's 2, a party's 1-5, or a raid's groups of five.
+    /// Learned agents per env: 1, or a party's 1-5 (one group); a raid's groups of five are the bound.
     constexpr uint32 MAX_SEATS = RAID_GROUPS * GROUP_SEATS;
     constexpr uint32 TEAM_SEATS = 10;       // a battleground side: Warsong Gulch as it is played
     constexpr uint32 TEAM_COUNT = 2;
-    constexpr uint32 TEAM_MATCH_SEATS = TEAM_SEATS * TEAM_COUNT;
     constexpr uint32 NO_SEAT = 0xFFFFFFFF;
     constexpr uint32 GROUP_MEMBERS = GROUP_SEATS - 1;    // the seat's own group, itself aside
     /// Raiders outside the seat's group that it still has to act on: the raid's main tank, its most hurt member,
-    /// and the nearest one. Empty in every stage below a raid, where the group is the whole of it.
+    /// and the nearest one. Empty in every stage, where the group is the whole of it.
     constexpr uint32 SPOTLIGHT_SLOTS = 3;
     /// Teammate slots a seat observes and acts on (PartyBlock). Bounded on purpose: a raider heals, assists and
     /// guards its own group and a few named others, never 39 people, and a slot is 36 features and three actions.
@@ -206,9 +132,11 @@ namespace Animus::Curriculum
     /// features were trained, so a seeded policy reads them as it did. Not a cap: eight attackers read 2.
     constexpr float ENEMY_COUNT_SCALE = 4.0f;
     constexpr uint32 CROWD_SLOTS = 4;       // enemies past the pack's slots, observed one by one (CrowdBlock)
-    /// Rays the movement block senses the ground along: twice the bearings it can walk, because a gap between
-    /// two 45-degree bearings is visible at 22.5 degrees and not at 45 (GroundProbe, MoveBlock::RAY_COUNT).
-    constexpr uint32 SENSE_RAYS = 16;
+    /// The sight block's list (SightBlock): the camera's visible entities (Vision::ENTITY_SLOTS) and as many of the
+    /// most relevant remembered ones not visible now; a press names a slot of it.
+    constexpr uint32 SIGHT_VISIBLE_SLOTS = 32;
+    constexpr uint32 SIGHT_RECALLED_SLOTS = 32;
+    constexpr uint32 SIGHT_SLOTS = SIGHT_VISIBLE_SLOTS + SIGHT_RECALLED_SLOTS;
     /// Positions the movement block remembers of where the seat has been (MovementTrail), one a second.
     constexpr uint32 TRAIL_SAMPLES = 8;
     constexpr uint32 STABLE_SLOTS = 4;      // a hunter's stabled beasts
@@ -233,15 +161,16 @@ namespace Animus::Curriculum
         Protect,        // keep the owner or a teammate alive
         Position,       // get to where its spec fights from
         Prepare,        // buffs, summons and stealth before the fight
-        // Life outside the fight (long-horizon plan, Component C): each with a target the journal names.
-        TravelTo,       // get to a place: an objective's, the giver, the turn-in, a place found, the assigned area
-        Loot,           // loot what lies dead nearby
-        Gather,         // gather the nodes around, or at a place found
-        Interact,       // talk to the giver or the turn-in, use an objective's object, item or vendor
+        TravelTo,       // get to a place: a route place, the assigned area or a trip's objective
         Rest,           // eat and drink out of a fight until ready
         /// Stand up again after dying: at the own corpse (target none) or a dead member raised (a friend slot).
         /// In the goal space from the next-run format on; offered only once death runs exist (Wave 6).
         Resurrect,
+        /// Look for an object in or at a place (goal block revision 5, search-kind, 2026-10-10): a room slot, the way
+        /// on or a block of the seat's own map. Not a fight (no enemy is named) and not a trip for its own sake
+        /// (TravelTo); the place is where the seat means to look, so it is reached when the place is checked (a room)
+        /// or stood at (a cell). Appended: the kinds before it keep their ids.
+        Search,
         Count
     };
 
@@ -252,41 +181,48 @@ namespace Animus::Curriculum
 
     /// **What a goal is about** (Component C): a goal is a kind and a target, sent as one number, kind *
     /// GOAL_TARGETS + target. The targets are one space for every kind -- nothing, an enemy slot, a friend slot, a
-    /// journal objective, the giver, the turn-in, a found place, the assigned area -- and GoalAccepts says which a
-    /// kind can take. The sim tells the learner which kinds and targets are there each decision (GoalBlock), so a
+    /// route place, the assigned area -- and GoalAccepts says which a kind can take. (Goal block revision 1: the
+    /// Loot, Gather and Interact kinds and the journal objective, giver and turn-in targets were never offered, and
+    /// are gone.) The sim tells the learner which kinds and targets are there each decision (GoalBlock), so a
     /// goal can only be chosen about something that exists.
     enum GoalTarget : uint32
     {
         GOAL_TARGET_NONE        = 0,
         GOAL_TARGET_ENEMY_FIRST = 1,
         GOAL_TARGET_FRIEND_FIRST = GOAL_TARGET_ENEMY_FIRST + NAMED_ENEMY_SLOTS,
-        GOAL_TARGET_OBJECTIVE_FIRST = GOAL_TARGET_FRIEND_FIRST + FRIEND_SLOTS,
-        GOAL_TARGET_GIVER       = GOAL_TARGET_OBJECTIVE_FIRST + 4,
-        GOAL_TARGET_ENDER,
-        GOAL_TARGET_PLACE_FIRST,
+        GOAL_TARGET_PLACE_FIRST = GOAL_TARGET_FRIEND_FIRST + FRIEND_SLOTS,
         GOAL_TARGET_ASSIGNMENT  = GOAL_TARGET_PLACE_FIRST + 8,
         GOAL_TARGETS
     };
 
     constexpr uint32 GOAL_JOINT_COUNT = GOAL_COUNT * GOAL_TARGETS;
 
+    /// The seek stage's room goals (M2): place targets 0..GOAL_ROOM_SLOTS-1 are rooms, the next one the way on; the
+    /// last place target is never offered. The goal block publishes GOAL_PLACE_SLOTS slots of features.
+    constexpr uint32 GOAL_ROOM_SLOTS = 6;
+    constexpr uint32 GOAL_PLACE_SLOTS = GOAL_ROOM_SLOTS + 1;
+
     [[nodiscard]] constexpr int32 MakeGoal(SeatGoal kind, uint32 target)
     {
         return int32(uint32(kind) * GOAL_TARGETS + target);
     }
+
+    /// **A cell goal** (free choice goals, 2026-10-09; goal block revision 4): the joint goal search / place_7 (travel_to
+    /// / place_7 before goal block revision 5) -- the last place target, which the room goals never offer -- plus a cell
+    /// of the seat's own mental-map crop, chosen by the learner's pointer head and sent beside it (CellGrid, ACT's cell
+    /// words). Derived: Search * GOAL_TARGETS + GOAL_CELL_TARGET = 9 * 23 + 21 = 228; stage.json goals.cells.joint
+    /// carries it to the learner. At Seek.SearchGoals 0 the cell goal is travel_to / place_7 instead (159) and the
+    /// manifest says so; GoalBlock::IsCellGoal accepts either.
+    constexpr uint32 GOAL_CELL_TARGET = GOAL_TARGET_PLACE_FIRST + GOAL_PLACE_SLOTS;
+    constexpr int32 GOAL_CELL_JOINT = MakeGoal(SeatGoal::Search, GOAL_CELL_TARGET);
     /// The kind of a goal (NO_GOAL stays NO_GOAL as -1 compares), and its target.
     [[nodiscard]] constexpr int32 GoalKindOf(int32 goal) { return goal < 0 ? NO_GOAL : goal / int32(GOAL_TARGETS); }
     [[nodiscard]] constexpr uint32 GoalTargetOf(int32 goal) { return goal < 0 ? 0 : uint32(goal) % GOAL_TARGETS; }
     /// Whether a kind can be about a target: Fight, Control and Position about an enemy (Fight and Position about
-    /// no one in particular too), Protect about a friend, TravelTo about any journal place, Gather about the nodes
-    /// around or a found place, Interact about the giver, the turn-in or an objective; Recover, Prepare, Loot and
-    /// Rest about nothing.
+    /// no one in particular too), Protect about a friend, TravelTo about any route place or the assignment,
+    /// Search about a place (a room slot, the way on or the cell target; never the assignment),
+    /// Resurrect about no one or a friend; Recover, Prepare and Rest about nothing.
     [[nodiscard]] bool GoalAccepts(SeatGoal kind, uint32 target);
-    [[nodiscard]] std::string_view PostureName(TeamPosture posture);
-    [[nodiscard]] std::string_view RallyName(TeamRally rally);
-    [[nodiscard]] std::string_view AnchorName(PlaceAnchor anchor);
-    [[nodiscard]] std::string_view OffsetName(PlaceOffset offset);
-    [[nodiscard]] std::string_view RingName(PlaceRing ring);
     /// The episode clock's scale: the longest arena's episode, so it rises through every episode instead of
     /// saturating. Elapsed time, not the fraction of an episode's own limit: a companion has no limit, and the
     /// critic already sees the fraction (StageScenario::STATE_EPISODE_TIME).
@@ -332,6 +268,11 @@ namespace Animus::Curriculum
         /// meaning; this is for a reading that changed its scale.
         virtual void DescribeRescaled(Layout const& /*layout*/, boost::json::array& /*out*/) const { }
 
+        /// Each observation column's name, in order (stage.json obs_names), for a block whose columns may move to
+        /// another block or revision: the learner's seeding maps named columns across by name (bootstrap), where a
+        /// changed revision would otherwise start the block fresh. Empty (the default) for a block that does not say.
+        virtual void DescribeColumns(Layout const& /*layout*/, boost::json::array& /*names*/) const { }
+
         /// Block-specific manifest entries (spell lists, slot counts), written inside the block's manifest object.
         virtual void DescribeManifest(Layout const& /*layout*/, boost::json::object& /*block*/) const { }
 
@@ -343,10 +284,6 @@ namespace Animus::Curriculum
         /// Every decision before the chosen action, whatever it is: where a durative action (SeatOption) acts. What
         /// it does is recorded in `result` as a press would be.
         virtual void BeforeApply(SeatView& /*view*/, SeatActionResult& /*result*/) const { }
-        /// Every decision before the press, whatever it is (the no-op included) and whichever block it belongs to:
-        /// what a press must meet already true of the world (MoveBlock: the seat's orientation synced to where it is
-        /// looking, for a spell's facing check -- movement-smooth A3). Nothing is recorded; it is not an action.
-        virtual void BeforePress(SeatView& /*view*/) const { }
         /// The action is applied before every block's BeforeApply rather than after: a press that must meet the
         /// world as the seat saw it (a spell: facing, range, the global cooldown).
         [[nodiscard]] virtual bool PressesFirst(Layout const& /*layout*/, uint32 /*local*/) const { return false; }
@@ -378,7 +315,7 @@ namespace Animus::Curriculum
     /// in order and concatenated) and the action ranges that name its slots (`first` global action, `count` = slots).
     /// The enemies are the pack block's slots joined with the hostiles block's for the same slot; the members the
     /// party block's teammates; the friends the support block's; the crowd the crowd block's. Empty for a layout with
-    /// none of them, and for the director, which has its own (DirectorLayout::SetDescriptor).
+    /// none of them.
     void DescribeSeatSets(Layout const& layout, boost::json::array& sets);
 }
 

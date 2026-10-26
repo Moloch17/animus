@@ -73,26 +73,16 @@ namespace
     constexpr CommandHelp COMMAND_HELP[] =
     {
         { "animus", SEC_PLAYER,
-          "Syntax: .animus <command>\r\n\r\nAnimus companions, recordings and settings. Commands: create, summon, "
-          "dismiss, list, rename, reroll, talent, rate, record, note, partyfill, prepare, god; game masters also "
-          "life, stage list, models, purge. .animus help lists them with their syntax." },
+          "Syntax: .animus <command>\r\n\r\nAnimus followers, recordings and settings. Commands: follow, dismiss, "
+          "record, note, partyfill, prepare, god; game masters also models. .animus help lists them with their "
+          "syntax." },
         { "animus help", SEC_PLAYER, "Syntax: .animus help\r\n\r\nEvery .animus command with its syntax." },
-        { "animus create", SEC_PLAYER,
-          "Syntax: .animus create $name $race $class\r\n\r\nYour one companion character, of that name, race and "
-          "class (race and class words as the game spells them, one word: nightelf, deathknight). Example: .animus "
-          "create Tarn orc warrior" },
-        { "animus summon", SEC_PLAYER, "Syntax: .animus summon\r\n\r\nYour companion comes to you." },
-        { "animus dismiss", SEC_PLAYER, "Syntax: .animus dismiss\r\n\r\nYour companion is saved and sent away." },
-        { "animus list", SEC_PLAYER, "Syntax: .animus list\r\n\r\nYour companion and whether its model is loaded." },
-        { "animus rename", SEC_PLAYER, "Syntax: .animus rename $name\r\n\r\nYour companion's new name; nothing else "
-          "changes." },
-        { "animus reroll", SEC_PLAYER, "Syntax: .animus reroll $race $class\r\n\r\nYour companion becomes a new "
-          "character of the same name, with default talents and gear. Everything you changed on it is lost." },
-        { "animus talent", SEC_PLAYER, "Syntax: .animus talent $companion learn|unlearn $talentId\r\n\r\nOne rank of "
-          "your companion's talent learned or unlearned, by Talent.dbc id (the id in a talent link). The addon's "
-          "talent pane does this by clicking." },
-        { "animus rate", SEC_PLAYER, "Syntax: .animus rate +|- [movement|combat|healing|tanking|stuck|other]\r\n\r\n"
-          "Your verdict on your companion's play, recorded for training while the realm records play." },
+        { "animus follow", SEC_PLAYER,
+          "Syntax: .animus follow [$count]\r\n\r\n$count (1-4) followers of your level and faction join your party, "
+          "which you lead (made when you have none; never a raid), each played by its class's follow model. Alone: "
+          "the followers you have. Needs Animus.Follow.Security and a map with a camera scene (Animus.Vision.Maps)." },
+        { "animus dismiss", SEC_PLAYER, "Syntax: .animus dismiss\r\n\r\nYour followers leave (they are never "
+          "saved)." },
         { "animus record", SEC_PLAYER, "Syntax: .animus record [on | off [keep|discard] [$title]]\r\n\r\nA recording "
           "of your own play: on starts one, off ends it with your verdict and an optional title; alone, its status. "
           "Notes go in with .animus note." },
@@ -107,16 +97,8 @@ namespace
           "you wear and carry is mailed to you first. Needs the account security Animus.Prepare.Security." },
         { "animus god", SEC_PLAYER, "Syntax: .animus god on|off\r\n\r\nGod mode for a recording, flagged in it and "
           "switched off when the recording ends. Needs Animus.Capture.Recording.GodSecurity." },
-        { "animus life", SEC_GAMEMASTER, "Syntax: .animus life [$feature on|off]\r\n\r\nWhat companions do outside "
-          "the fight; a switch for each of all, quests, auction, mail, taxi, crafting (until the next .reload "
-          "config). Alone, the current switches." },
-        { "animus stage", SEC_GAMEMASTER, "Syntax: .animus stage list\r\n\r\nThe curriculum stages." },
-        { "animus stage list", SEC_GAMEMASTER, "Syntax: .animus stage list\r\n\r\nEvery curriculum stage and its "
-          "arenas: the names Animus.Curriculum.Stage accepts." },
         { "animus models", SEC_GAMEMASTER, "Syntax: .animus models\r\n\r\nEvery class's model for the configured "
-          "stage and whether it loads." },
-        { "animus purge", SEC_ADMINISTRATOR, "Syntax: .animus purge\r\n\r\nEvery account and character the module "
-          "made deleted, every companion sent away unsaved, the module's tables dropped." },
+          "stage, whether it loads, and the camera scenes loaded." },
     };
 
     /// The help of every `.animus` command into the world database's `command` table (help and security), and the
@@ -156,11 +138,6 @@ namespace
 
         ChatCommandTable GetCommands() const override
         {
-            static ChatCommandTable stageCommandTable =
-            {
-                { "list",       HandleStageListCommand,     SEC_GAMEMASTER, Console::No },
-            };
-
             static ChatCommandTable partyFillCommandTable =
             {
                 { "realm",      HandlePartyFillRealmCommand, SEC_GAMEMASTER, Console::No },
@@ -178,18 +155,9 @@ namespace
                 { "partyfill",  partyFillCommandTable },
                 { "prepare",    HandlePrepareCommand,   SEC_PLAYER,     Console::No },
                 { "god",        HandleGodCommand,       SEC_PLAYER,     Console::No },
-                { "create",     HandleCreateCommand,    SEC_PLAYER,     Console::No },
-                { "summon",     HandleSummonCommand,    SEC_PLAYER,     Console::No },
-                { "list",       HandleListCommand,      SEC_PLAYER,     Console::No },
+                { "follow",     HandleFollowCommand,    SEC_PLAYER,     Console::No },
                 { "dismiss",    HandleDismissCommand,   SEC_PLAYER,     Console::No },
-                { "rename",     HandleRenameCommand,    SEC_PLAYER,     Console::No },
-                { "reroll",     HandleRerollCommand,    SEC_PLAYER,     Console::No },
-                { "talent",     HandleTalentCommand,    SEC_PLAYER,     Console::No },
-                { "purge",      HandlePurgeCommand,     SEC_ADMINISTRATOR, Console::Yes },
-                { "life",       HandleLifeCommand,      SEC_GAMEMASTER, Console::Yes },
                 { "models",     HandleModelsCommand,    SEC_GAMEMASTER, Console::Yes },
-                { "rate",       HandleRateCommand,      SEC_PLAYER,     Console::No },
-                { "stage",      stageCommandTable },
             };
 
             static ChatCommandTable commandTable =
@@ -210,7 +178,7 @@ namespace
             {
                 std::string_view const name(command.Name);
                 std::string_view const text(command.Help);
-                if (name == "animus" || name == "animus help" || name == "animus stage" || command.Security > security)
+                if (name == "animus" || name == "animus help" || command.Security > security)
                     continue;
                 // The usage line without its "Syntax: " prefix.
                 std::string_view usage = text.substr(0, text.find("\r\n"));
@@ -221,105 +189,35 @@ namespace
             return true;
         }
 
-        /// .animus create <name> <race> <class>: your one companion character, of that name, race and class.
-        static bool HandleCreateCommand(ChatHandler* handler, Optional<std::string> name,
-            Optional<std::string_view> race, Optional<std::string_view> playerClass)
+        /// .animus follow <n>: n (1-4) followers join your party, played by the follow models. With no count: the
+        /// followers you have. Animus.Follow.Security says who may.
+        static bool HandleFollowCommand(ChatHandler* handler, Optional<uint32> count)
         {
-            if (!name || !race || !playerClass)
-                return Usage(handler, "animus create");
+            Player* caller = handler->GetPlayer();
+            if (!count)
+                return ReplyLines(handler, sAnimusMod->List(caller), "You have no followers; .animus follow <1-4>.");
+            if (!sAnimusMod->MaySummon(caller))
+                return Reply(handler, false, "Followers are not for your account on this realm (Animus.Follow.Security).");
             std::string message;
-            return Reply(handler, sAnimusMod->Create(handler->GetPlayer(), std::move(*name), *race, *playerClass,
-                message), message);
+            std::vector<std::string> warnings;
+            bool const ok = sAnimusMod->Summon(caller, *count, message, warnings);
+            for (std::string const& warning : warnings)
+                handler->SendSysMessage(warning);
+            return Reply(handler, ok, message);
         }
 
-        /// .animus talent <companion> learn|unlearn <talent id>: one rank of its talent.
-        static bool HandleTalentCommand(ChatHandler* handler, Optional<std::string_view> companion,
-            Optional<std::string_view> action, Optional<uint32> talentId)
-        {
-            if (!companion || !action || !talentId || (*action != "learn" && *action != "unlearn"))
-                return Usage(handler, "animus talent");
-            std::string message;
-            return Reply(handler, sAnimusMod->Talent(handler->GetPlayer(), *companion, *talentId, *action == "learn",
-                message), message);
-        }
-
-        /// .animus summon: your companion comes to you.
-        static bool HandleSummonCommand(ChatHandler* handler)
-        {
-            std::string message;
-            return Reply(handler, sAnimusMod->Summon(handler->GetPlayer(), message), message);
-        }
-
-        /// .animus list: your companion and its model.
-        static bool HandleListCommand(ChatHandler* handler)
-        {
-            return ReplyLines(handler, sAnimusMod->List(handler->GetPlayer()), "You have no companion.");
-        }
-
-        /// .animus dismiss: your companion is saved and leaves.
+        /// .animus dismiss: your followers leave, unsaved.
         static bool HandleDismissCommand(ChatHandler* handler)
         {
             std::string message;
             return Reply(handler, sAnimusMod->Dismiss(handler->GetPlayer(), message), message);
         }
 
-        /// .animus rename <name>
-        static bool HandleRenameCommand(ChatHandler* handler, Optional<std::string> name)
-        {
-            if (!name)
-                return Usage(handler, "animus rename");
-            std::string message;
-            return Reply(handler, sAnimusMod->Rename(handler->GetPlayer(), std::move(*name), message), message);
-        }
-
-        /// .animus reroll <race> <class>: a new companion character of the same name.
-        static bool HandleRerollCommand(ChatHandler* handler, Optional<std::string_view> race,
-            Optional<std::string_view> playerClass)
-        {
-            if (!race || !playerClass)
-                return Usage(handler, "animus reroll");
-            std::string message;
-            return Reply(handler, sAnimusMod->Reroll(handler->GetPlayer(), *race, *playerClass, message), message);
-        }
-
-        /// .animus purge: every account and character the module made, deleted; every companion sent away unsaved.
-        static bool HandlePurgeCommand(ChatHandler* handler)
-        {
-            return ReplyLines(handler, sAnimusMod->PurgeAll(), "Nothing to purge.");
-        }
-
-        /// .animus life [<feature> on|off]: what the companions do outside the fight, and a switch for each.
-        static bool HandleLifeCommand(ChatHandler* handler, Optional<std::string_view> feature,
-            Optional<std::string_view> state)
-        {
-            if (!feature)
-                return ReplyLines(handler, sAnimusMod->LifeStatus(), "Life is off.");
-            std::string message;
-            return Reply(handler, sAnimusMod->LifeToggle(*feature, state.value_or("on"), message), message);
-        }
-
-        /// .animus models: every class's model for the configured stage, and whether it loads (and if not, why).
+        /// .animus models: every class's model for the configured stage, whether it loads (and if not, why), and
+        /// the camera scenes loaded.
         static bool HandleModelsCommand(ChatHandler* handler)
         {
             return ReplyLines(handler, sAnimusMod->ModelStatus(), "No classes.");
-        }
-
-        /// .animus rate <+|-> [movement|combat|healing|tanking|stuck|other]: your verdict on your companion's play,
-        /// recorded for training (Animus.Capture). Any player may rate their own companion.
-        static bool HandleRateCommand(ChatHandler* handler, Optional<std::string_view> sign,
-            Optional<std::string_view> reason)
-        {
-            if (!sign || (*sign != "+" && *sign != "-"))
-                return Usage(handler, "animus rate");
-            std::string message;
-            return Reply(handler, sAnimusMod->Rate(handler->GetPlayer(), *sign, reason.value_or(""), message),
-                message);
-        }
-
-        /// .animus stage list: every curriculum stage and its arenas -- the names Animus.Curriculum.Stage takes.
-        static bool HandleStageListCommand(ChatHandler* handler)
-        {
-            return ReplyLines(handler, sAnimusMod->StageList(), "There are no stages.");
         }
 
         /// .animus record [on | off [keep|discard] [title...]]: a recording of your own play (the addon's Record).
@@ -449,12 +347,11 @@ namespace
     {
     public:
         AnimusPlayerScript() : PlayerScript("AnimusPlayerScript",
-            { PLAYERHOOK_ON_LOGIN, PLAYERHOOK_ON_LOGOUT, PLAYERHOOK_CAN_PLAYER_USE_PRIVATE_CHAT, PLAYERHOOK_ON_DELETE,
+            { PLAYERHOOK_ON_LOGIN, PLAYERHOOK_ON_LOGOUT, PLAYERHOOK_CAN_PLAYER_USE_PRIVATE_CHAT,
                 PLAYERHOOK_CAN_SEND_MAIL, PLAYERHOOK_CAN_GIVE_MAIL_REWARD_AT_GIVE_LEVEL,
-                PLAYERHOOK_ON_BEFORE_ACHI_COMPLETE, PLAYERHOOK_ON_PLAYER_QUEST_ACCEPT,
-                PLAYERHOOK_ON_QUEST_ABANDON, PLAYERHOOK_ON_MAP_CHANGED, PLAYERHOOK_ON_AFTER_UPDATE }) { }
+                PLAYERHOOK_ON_BEFORE_ACHI_COMPLETE, PLAYERHOOK_ON_MAP_CHANGED, PLAYERHOOK_ON_AFTER_UPDATE }) { }
 
-        /// Every player's update, on its map's thread: a companion's client steps its body and reports it, as a real
+        /// Every player's update, on its map's thread: a follower's client steps its body and reports it, as a real
         /// client's movement is handled on that thread (CompanionClient). Any other player returns at once.
         void OnPlayerAfterUpdate(Player* player, uint32 diff) override
         {
@@ -464,47 +361,31 @@ namespace
         void OnPlayerLogin(Player* player) override { sAnimusMod->OnPlayerLogin(player); }
         void OnPlayerLogout(Player* player) override { sAnimusMod->OnPlayerLogout(player); }
 
-        /// Into a five-player dungeon, the group is filled out to a tank, a healer and damage (Animus.PartyFill.Enable);
-        /// out of it, the temporary members stay behind.
+        /// Into a five-player dungeon alone or as the group's leader, the group is filled with followers
+        /// (Animus.PartyFill.Enable, the player's setting); out of it, they go.
         void OnPlayerMapChanged(Player* player) override { sAnimusMod->OnPlayerMapChanged(player); }
 
-        /// The owner's quests are its companions' too (Animus.Life.Quests): taken with the owner, dropped with it.
-        void OnPlayerQuestAccept(Player* player, Quest const* quest) override
-        {
-            if (!sAnimusMod->IsCompanion(player->GetGUID()))
-                sAnimusMod->OnOwnerQuestAccept(player, quest);
-        }
-
-        void OnPlayerQuestAbandon(Player* player, uint32 questId) override
-        {
-            if (!sAnimusMod->IsCompanion(player->GetGUID()))
-                sAnimusMod->OnOwnerQuestAbandon(player, questId);
-        }
-
-        /// A player character deleted: its companion character and account go with it.
-        void OnPlayerDelete(ObjectGuid guid, uint32 /*accountId*/) override { sAnimusMod->OnOwnerDeleted(guid); }
-
-        /// Companions get no mail: none sent to one by a player ...
+        /// Followers get no mail: none sent to one by a player ...
         bool OnPlayerCanSendMail(Player* player, ObjectGuid receiver, ObjectGuid /*mailbox*/, std::string& /*subject*/,
             std::string& /*body*/, uint32 /*money*/, uint32 /*cod*/, Item* /*item*/) override
         {
-            if (!sAnimusMod->IsCompanion(receiver))
+            if (!sAnimusMod->IsBot(receiver))
                 return true;
 
-            ChatHandler(player->GetSession()).SendSysMessage("Companions receive no mail.");
+            ChatHandler(player->GetSession()).SendSysMessage("Followers receive no mail.");
             return false;
         }
 
         /// ... nor a level reward from the server.
         bool OnPlayerCanGiveMailRewardAtGiveLevel(Player* player, uint8 /*level*/) override
         {
-            return !sAnimusMod->IsCompanion(player->GetGUID());
+            return !sAnimusMod->IsBot(player->GetGUID());
         }
 
-        /// Companions earn no achievements (their criteria are not even checked: AnimusAchievementScript).
+        /// Followers earn no achievements (their criteria are not even checked: AnimusAchievementScript).
         bool OnPlayerBeforeAchievementComplete(Player* player, AchievementEntry const* /*achievement*/) override
         {
-            return !sAnimusMod->IsCompanion(player->GetGUID());
+            return !sAnimusMod->IsBot(player->GetGUID());
         }
 
         /// An addon whisper a player sends to themselves is the Animus addon talking to the module (any player, no
@@ -526,7 +407,7 @@ namespace
 
         bool CanCheckCriteria(AchievementMgr* mgr, AchievementCriteriaEntry const* /*criteria*/) override
         {
-            return !mgr->GetPlayer() || !sAnimusMod->IsCompanion(mgr->GetPlayer()->GetGUID());
+            return !mgr->GetPlayer() || !sAnimusMod->IsBot(mgr->GetPlayer()->GetGUID());
         }
     };
 
@@ -548,8 +429,8 @@ namespace
     public:
         AnimusUnitScript() : UnitScript("AnimusUnitScript") { }
 
-        /// Called for every damage event, on map threads, before the victim's AI can change the amount, so companions
-        /// see what was dealt. (Stage seats are counted by animus-lib's own hooks.)
+        /// Called for every damage event, on map threads, before the victim's AI can change the amount, so followers
+        /// see what they took.
         uint32 DealDamage(Unit* attacker, Unit* victim, uint32 damage, DamageEffectType type) override
         {
             sAnimusMod->RecordDamage(attacker, victim, damage, type);
