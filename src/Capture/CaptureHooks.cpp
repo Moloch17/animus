@@ -1569,12 +1569,14 @@ namespace
         if (now - state->LastDetailMs >= Writer().DetailMs())
             WritePlayerDetail(player, *state, now);
 
-        // Companions' own decisions and motion are the companion stream's; snapshots and the map passes are the
-        // humans'.
-        if (state->Kind || !Writer().On(F::Stream::Snapshot))
+        // Companions' own decisions and motion are the companion stream's; the map passes and the snapshots are
+        // the humans'. The pass stamps its map whether or not the snapshot stream is on (the unit hooks' gate).
+        if (state->Kind)
             return;
         if (Map* map = player->FindMap())
             PassMap(map, now);
+        if (!Writer().On(F::Stream::Snapshot))
+            return;
         bool const active = player->IsInCombat() || player->isMoving();
         uint32 const interval = active ? Writer().SnapshotMs() : Writer().IdleSnapshotMs();
         if (now - state->LastSnapshotMs >= interval)
