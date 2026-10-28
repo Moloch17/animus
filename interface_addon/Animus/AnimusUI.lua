@@ -1,6 +1,6 @@
--- Animus: the window and the minimap button. Draws Animus.state (Animus.lua) and sends its requests. Three tabs:
--- Followers (bots played by the follow models: summon one to four, dismiss, who is with you), Record (recordings of
--- your own play; the bar itself is AnimusRecord.lua) and Settings (dungeon party fill, Prepare, god mode).
+-- Animus: the window and the minimap button. Draws Animus.state (Animus.lua) and sends its requests. Two tabs:
+-- Followers (bots played by the follow models: summon one to four, dismiss, who is with you) and Settings (dungeon
+-- party fill, Prepare).
 
 local A = Animus
 
@@ -54,7 +54,7 @@ message:SetJustifyH("CENTER")
 
 -- Tabs -----------------------------------------------------------------------------------------------------------
 
-local TABS = { "Followers", "Record", "Settings" }
+local TABS = { "Followers", "Settings" }
 local tabButtons = {}
 local tabPanels = {}       -- tab index -> { panel, ... } shown with it
 local currentTab = 1
@@ -187,59 +187,12 @@ local function SetEnabled(button, enabled)
     end
 end
 
--- Record tab --------------------------------------------------------------------------------------------------------
-
-local recordPanel = CreateFrame("Frame", nil, frame)
-recordPanel:SetPoint("TOPLEFT", frame, "TOPLEFT", 22, -62)
-recordPanel:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -22, 40)
-InTab(2, recordPanel)
-
-local recordHeader = recordPanel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-recordHeader:SetPoint("TOPLEFT", recordPanel, "TOPLEFT", 0, 0)
-recordHeader:SetText("Record your play")
-
-local recordHelp = recordPanel:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-recordHelp:SetPoint("TOPLEFT", recordHeader, "BOTTOMLEFT", 0, -6)
-recordHelp:SetWidth(WIDTH - 60)
-recordHelp:SetJustifyH("LEFT")
-recordHelp:SetText(Color(GREY, "A recording saves your movement, actions, combat, your group's chat and " ..
-    "everything around you to the realm's recordings folder from the moment you press Record until you stop. It " ..
-    "is identified as yours. Type notes into it whenever you like (the Note box, /animus note, or a key binding); " ..
-    "pulls, rests, doors and bosses are worked out afterwards from the recording itself. When you stop, keep it " ..
-    "or discard it and give it a title."))
-
-local recordState = recordPanel:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-recordState:SetPoint("TOPLEFT", recordHelp, "BOTTOMLEFT", 0, -14)
-recordState:SetWidth(WIDTH - 60)
-recordState:SetJustifyH("LEFT")
-
-local recordToggle = CreateFrame("Button", "AnimusRecordToggleButton", recordPanel, "UIPanelButtonTemplate")
-recordToggle:SetWidth(130)
-recordToggle:SetHeight(24)
-recordToggle:SetPoint("TOPLEFT", recordState, "BOTTOMLEFT", 0, -12)
-recordToggle:SetText("Record")
-recordToggle:SetScript("OnClick", function() A.ToggleRecording() end)
-
-local recordBarButton = CreateFrame("Button", "AnimusRecordBarButton", recordPanel, "UIPanelButtonTemplate")
-recordBarButton:SetWidth(130)
-recordBarButton:SetHeight(24)
-recordBarButton:SetPoint("LEFT", recordToggle, "RIGHT", 8, 0)
-recordBarButton:SetText("Recorder bar")
-recordBarButton:SetScript("OnClick", function() A.ToggleRecordBar() end)
-
-local recordKeys = recordPanel:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-recordKeys:SetPoint("TOPLEFT", recordToggle, "BOTTOMLEFT", 0, -14)
-recordKeys:SetWidth(WIDTH - 60)
-recordKeys:SetJustifyH("LEFT")
-recordKeys:SetText(Color(GREY, "Key bindings (Esc > Key Bindings > Animus): a note, record/stop. Slash: /animus rec " ..
-    "shows the bar, /animus note <text> notes."))
-
 -- Settings tab ------------------------------------------------------------------------------------------------------
 
 local settingsPanel = CreateFrame("Frame", nil, frame)
 settingsPanel:SetPoint("TOPLEFT", frame, "TOPLEFT", 22, -62)
 settingsPanel:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -22, 40)
-InTab(3, settingsPanel)
+InTab(2, settingsPanel)
 
 local fillHeader = settingsPanel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
 fillHeader:SetPoint("TOPLEFT", settingsPanel, "TOPLEFT", 0, 0)
@@ -278,7 +231,7 @@ prepareHelp:SetWidth(WIDTH - 60)
 prepareHelp:SetJustifyH("LEFT")
 prepareHelp:SetText(Color(GREY, "Sets this character to the level you type, with gear, talents and every spell " ..
     "for it, built the way a companion is. Everything you wear and carry is mailed back to you first (bags too); " ..
-    "keyring, bank, money and professions stay. Not while recording."))
+    "keyring, bank, money and professions stay."))
 
 local levelLabel = settingsPanel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
 levelLabel:SetPoint("TOPLEFT", prepareHelp, "BOTTOMLEFT", 0, -10)
@@ -351,33 +304,6 @@ prepareButton:SetScript("OnClick", function()
     end
 end)
 
-local godCheck = CreateFrame("CheckButton", "AnimusGodCheck", settingsPanel, "UICheckButtonTemplate")
-godCheck:SetPoint("TOPLEFT", prepareButton, "BOTTOMLEFT", -4, -10)
-godCheck:SetWidth(26)
-godCheck:SetHeight(26)
-AnimusGodCheckText:SetText("God mode (flagged in the recording; health and damage are no longer human-like)")
-AnimusGodCheckText:SetWidth(WIDTH - 100)
-AnimusGodCheckText:SetJustifyH("LEFT")
-godCheck:SetScript("OnClick", function(self)
-    A.God(self:GetChecked() and true or false)
-end)
-
-local function RefreshRecord(s)
-    local r = s.recording
-    if not s.captureAvailable then
-        recordState:SetText(Color(RED, "Recording is not available on this realm (Animus.Capture.Enable and Dir)."))
-    elseif r.on then
-        local seconds = A.RecordingSeconds()
-        recordState:SetText(Color(RED, "Recording") .. Color(WHITE, format("  %d:%02d  ", floor(seconds / 60),
-            seconds % 60)) .. Color(GREY, format("%d note%s%s\n%s", r.notes, r.notes == 1 and "" or "s",
-            r.god and ", god mode" or "", r.id or "")))
-    else
-        recordState:SetText(Color(GREY, "Not recording."))
-    end
-    recordToggle:SetText(r.on and "Stop" or "Record")
-    SetEnabled(recordToggle, s.connected and s.captureAvailable)
-end
-
 local function RefreshSettings(s)
     local ready = s.connected and s.enabled
     local fill = s.settings
@@ -397,8 +323,7 @@ local function RefreshSettings(s)
     end
 
     local prep = s.prepareAllowed
-    for _, widget in ipairs({ prepareHeader, prepareHelp, levelLabel, levelBox, specLabel, specDrop, prepareButton,
-        godCheck }) do
+    for _, widget in ipairs({ prepareHeader, prepareHelp, levelLabel, levelBox, specLabel, specDrop, prepareButton }) do
         if prep then
             widget:Show()
         else
@@ -416,17 +341,14 @@ local function RefreshSettings(s)
         local level = levelBox:GetNumber()
         local levelOk = level >= s.levels.min and level <= s.levels.max
         levelLabel:SetText(format("Level (%d-%d)", s.levels.min, s.levels.max))
-        SetEnabled(prepareButton, ready and levelOk and chosenSpec ~= nil and not s.recording.on)
-        godCheck:SetChecked(s.recording.god)
-        SetEnabled(godCheck, ready)
+        SetEnabled(prepareButton, ready and levelOk and chosenSpec ~= nil)
     end
 end
 
 -- Drawing the state -----------------------------------------------------------------------------------------------
 
 local function Refresh(s)
-    local ready = s.connected and s.enabled
-    -- An older module (protocol below 3) has no recordings or settings: those tabs are hidden.
+    -- An older module (protocol below 3) has no settings: that tab is hidden.
     local modern = not s.connected or (s.protocol or 0) >= 3
     for i = 2, #TABS do
         if modern then
@@ -450,7 +372,6 @@ local function Refresh(s)
     end
 
     RefreshFollowers(s)
-    RefreshRecord(s)
     RefreshSettings(s)
 
     if s.message then
@@ -478,7 +399,6 @@ frame:SetScript("OnShow", function()
         A.Hello()
     else
         A.RequestFollowers()
-        A.RequestRecord()
         A.RequestSettings()
         if A.state.prepareAllowed and #A.state.specs == 0 then
             A.RequestSpecs()
@@ -491,16 +411,6 @@ A.OnChange(function(s)
     if s.connected and s.prepareAllowed and #s.specs == 0 and not s.specsAsked then
         s.specsAsked = true
         A.RequestSpecs()
-    end
-end)
-
--- The record tab's clock, ticking while the window is open on it.
-local tick = 0
-frame:SetScript("OnUpdate", function(self, elapsed)
-    tick = tick + elapsed
-    if tick >= 1 and currentTab == 2 and A.state.recording.on then
-        tick = 0
-        RefreshRecord(A.state)
     end
 end)
 
@@ -568,11 +478,6 @@ minimap:SetScript("OnEnter", function(self)
     local have = #A.state.followers
     GameTooltip:AddLine(have > 0 and format("%d follower%s with you", have, have == 1 and "" or "s")
         or "No followers", 1, 1, 1)
-    if A.state.recording.on then
-        local seconds = A.RecordingSeconds()
-        GameTooltip:AddLine(format("Recording %d:%02d, %d notes", floor(seconds / 60), seconds % 60,
-            A.state.recording.notes), 1, 0.4, 0.4)
-    end
     GameTooltip:AddLine("Click: window. Drag to move.", 0.7, 0.7, 0.7)
     GameTooltip:Show()
 end)

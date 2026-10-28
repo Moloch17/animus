@@ -1,10 +1,9 @@
 ## Interface: 30300
 ## Title: Animus
-## Notes: Animus followers, recordings of your play, settings and Prepare (needs mod-animus on the realm).
+## Notes: Animus followers, settings and Prepare (needs mod-animus on the realm).
 ## Author: Animus
-## Version: 2.0
+## Version: 2.1
 ## SavedVariables: AnimusDB
 
 Animus.lua
 AnimusUI.lua
-AnimusRecord.lua

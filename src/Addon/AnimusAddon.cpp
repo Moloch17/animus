@@ -18,7 +18,6 @@
 
 #include "AnimusAddon.h"
 #include "AnimusMod.h"
-#include "Capture.h"
 #include "CharacterPrep.h"
 #include "Chat.h"
 #include "Player.h"
@@ -40,7 +39,9 @@ namespace
     /// and the create/summon/rename/reroll/talent/pet/equip/rate requests; followers come in (`follow <n>`,
     /// `dismiss`, `followers`; FOLLOW, FOLLOWER), Life and its LIFE line go, and HELLO tells whether this account may
     /// summon and how many.
-    constexpr uint32 PROTOCOL = 4;
+    /// 5 (2026-10-28, one capture tier): the recordings are gone with the `record`, `note` and `god` requests and
+    /// the RECORD and NOTE lines; HELLO drops its "capture available" field.
+    constexpr uint32 PROTOCOL = 5;
 
     /// The client drops a longer addon message. Replies put the one free-text field last, so it is what a cut
     /// takes.
@@ -102,15 +103,6 @@ namespace
         return player->GetSession() && player->GetSession()->GetSecurity() >= SEC_GAMEMASTER;
     }
 
-    /// RECORD <on> <id> <elapsed seconds> <notes> <god>: the player's own recording, or `RECORD 0` with the rest
-    /// empty.
-    void SendRecord(Player* player)
-    {
-        Animus::Capture::RecordingStatus const status = Animus::Capture::Status(player);
-        Send(player, Acore::StringFormat("RECORD\t{}\t{}\t{}\t{}\t{}\t{}", status.On ? 1 : 0, status.Id,
-            status.Seconds, status.Notes, status.God ? 1 : 0, status.Available ? 1 : 0));
-    }
-
     /// SETTINGS <party fill mine> <party fill realm> <realm overridden> <config default>.
     void SendSettings(Player* player)
     {
@@ -131,27 +123,15 @@ namespace
         Send(player, Acore::StringFormat("LEVELS\t{}\t{}", minLevel, maxLevel));
     }
 
-    /// Everything the addon needs to open: HELLO <protocol> <enabled> <stage> <capture available> <is gm>
-    /// <prepare allowed> <may summon>, then the followers, the recording and the settings.
+    /// Everything the addon needs to open: HELLO <protocol> <enabled> <stage> <is gm> <prepare allowed>
+    /// <may summon>, then the followers and the settings.
     void SendHello(Player* player)
     {
-        Send(player, Acore::StringFormat("HELLO\t{}\t{}\t{}\t{}\t{}\t{}\t{}", PROTOCOL,
-            sAnimusMod->IsEnabled() ? 1 : 0, sAnimusMod->CurrentStage(),
-            Animus::Capture::Status(player).Available ? 1 : 0, IsGameMaster(player) ? 1 : 0,
+        Send(player, Acore::StringFormat("HELLO\t{}\t{}\t{}\t{}\t{}\t{}", PROTOCOL,
+            sAnimusMod->IsEnabled() ? 1 : 0, sAnimusMod->CurrentStage(), IsGameMaster(player) ? 1 : 0,
             Animus::Prepare::Allowed(player) ? 1 : 0, sAnimusMod->MaySummon(player) ? 1 : 0));
         SendFollowers(player);
-        SendRecord(player);
         SendSettings(player);
-    }
-
-    /// The addon's free text, last word of a request: tabs cannot reach here (the split), so the rest is taken
-    /// as it is, joined back with tabs should the text have held any.
-    std::string Rest(std::vector<std::string_view> const& words, std::size_t from)
-    {
-        std::string text;
-        for (std::size_t i = from; i < words.size(); ++i)
-            text += (i > from ? " " : "") + std::string(words[i]);
-        return text;
     }
 }
 
@@ -191,46 +171,6 @@ bool Animus::Addon::Handle(Player* player, std::string_view msg)
         SendResult(player, sAnimusMod->Dismiss(player, message), message);
         SendFollowers(player);
     }
-    else if (request == "record")
-    {
-        // record | record on | record off <keep|discard> [title]
-        if (words.size() == 1)
-            SendRecord(player);
-        else if (words[1] == "on")
-        {
-            SendResult(player, Animus::Capture::StartRecording(player, message), message);
-            SendRecord(player);
-        }
-        else if (words[1] == "off")
-        {
-            std::string_view const verdict = words.size() > 2 ? words[2] : std::string_view();
-            if (!verdict.empty() && verdict != "keep" && verdict != "discard")
-                SendResult(player, false, "A recording is kept or discarded.");
-            else
-            {
-                SendResult(player, Animus::Capture::StopRecording(player, Animus::Capture::StopReason::Stop, verdict,
-                    Rest(words, 3), message), message);
-                SendRecord(player);
-            }
-        }
-        else
-            SendResult(player, false, "record on, or record off keep|discard [title].");
-    }
-    else if (request == "note")
-    {
-        // note <client ms> <text...>
-        std::optional<uint32> const clientMs = words.size() >= 3 ? Number<uint32>(words[1]) : std::nullopt;
-        if (!clientMs)
-            SendResult(player, false, "A note is its clock and its text.");
-        else
-        {
-            uint32 seq = 0;
-            if (Animus::Capture::Note(player, Rest(words, 2), *clientMs, seq, message))
-                Send(player, Acore::StringFormat("NOTE\t{}\t{}", seq, Animus::Capture::Status(player).Notes));
-            else
-                SendResult(player, false, message);
-        }
-    }
     else if (request == "settings")
         SendSettings(player);
     else if (request == "partyfill")
@@ -265,19 +205,6 @@ bool Animus::Addon::Handle(Player* player, std::string_view msg)
             SendResult(player, false, "Prepare takes a level and a spec.");
         else
             SendResult(player, Animus::Prepare::Prepare(player, *level, *spec, message), message);
-    }
-    else if (request == "god")
-    {
-        if (words.size() != 2 || (words[1] != "on" && words[1] != "off"))
-            SendResult(player, false, "god on|off.");
-        else if (!player->GetSession() || uint32(player->GetSession()->GetSecurity())
-            < sAnimusMod->Config().PrepareSecurity)
-            SendResult(player, false, "God mode is not for your account on this realm.");
-        else
-        {
-            SendResult(player, Animus::Capture::God(player, words[1] == "on", message), message);
-            SendRecord(player);
-        }
     }
     else
         SendResult(player, false, Acore::StringFormat("Unknown request {}.", request));

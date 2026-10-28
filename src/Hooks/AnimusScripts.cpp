@@ -18,7 +18,6 @@
 
 #include "AnimusAddon.h"
 #include "AnimusMod.h"
-#include "Capture.h"
 #include "CharacterPrep.h"
 #include "AchievementMgr.h"
 #include "AchievementScript.h"
@@ -72,9 +71,8 @@ namespace
     constexpr CommandHelp COMMAND_HELP[] =
     {
         { "animus", SEC_PLAYER,
-          "Syntax: .animus <command>\r\n\r\nAnimus followers, recordings and settings. Commands: follow, dismiss, "
-          "record, note, partyfill, prepare, god; game masters also models. .animus help lists them with their "
-          "syntax." },
+          "Syntax: .animus <command>\r\n\r\nAnimus followers and settings. Commands: follow, dismiss, partyfill, "
+          "prepare; game masters also models. .animus help lists them with their syntax." },
         { "animus help", SEC_PLAYER, "Syntax: .animus help\r\n\r\nEvery .animus command with its syntax." },
         { "animus follow", SEC_PLAYER,
           "Syntax: .animus follow [$count]\r\n\r\n$count (1-4) followers of your level and faction join your party, "
@@ -82,11 +80,6 @@ namespace
           "the followers you have. Needs Animus.Follow.Security and a map with a camera scene (Animus.Vision.Maps)." },
         { "animus dismiss", SEC_PLAYER, "Syntax: .animus dismiss\r\n\r\nYour followers leave (they are never "
           "saved)." },
-        { "animus record", SEC_PLAYER, "Syntax: .animus record [on | off [keep|discard] [$title]]\r\n\r\nA recording "
-          "of your own play: on starts one, off ends it with your verdict and an optional title; alone, its status. "
-          "Notes go in with .animus note." },
-        { "animus note", SEC_PLAYER, "Syntax: .animus note $text\r\n\r\nFree text into your running recording, with "
-          "where you stand, your target and the state of the moment." },
         { "animus partyfill", SEC_PLAYER, "Syntax: .animus partyfill [on|off]\r\n\r\nWhether your own dungeon parties "
           "are filled with bots (saved per character); alone, the current setting and the realm's." },
         { "animus partyfill realm", SEC_GAMEMASTER, "Syntax: .animus partyfill realm on|off\r\n\r\nThe realm's "
@@ -94,8 +87,6 @@ namespace
         { "animus prepare", SEC_PLAYER, "Syntax: .animus prepare $level $spec\r\n\r\nYour character set to that "
           "level, geared, talented and taught for the spec (its name or index: .animus prepare 18 arms). Everything "
           "you wear and carry is mailed to you first. Needs the account security Animus.Prepare.Security." },
-        { "animus god", SEC_PLAYER, "Syntax: .animus god on|off\r\n\r\nGod mode for a recording, flagged in it and "
-          "switched off when the recording ends. Needs Animus.Capture.Recording.GodSecurity." },
         { "animus models", SEC_GAMEMASTER, "Syntax: .animus models\r\n\r\nEvery class's model for the configured "
           "stage, whether it loads, and the camera scenes loaded." },
     };
@@ -132,11 +123,8 @@ namespace
             static ChatCommandTable animusCommandTable =
             {
                 { "help",       HandleHelpCommand,      SEC_PLAYER,     Console::Yes },
-                { "record",     HandleRecordCommand,    SEC_PLAYER,     Console::No },
-                { "note",       HandleNoteCommand,      SEC_PLAYER,     Console::No },
                 { "partyfill",  partyFillCommandTable },
                 { "prepare",    HandlePrepareCommand,   SEC_PLAYER,     Console::No },
-                { "god",        HandleGodCommand,       SEC_PLAYER,     Console::No },
                 { "follow",     HandleFollowCommand,    SEC_PLAYER,     Console::No },
                 { "dismiss",    HandleDismissCommand,   SEC_PLAYER,     Console::No },
                 { "models",     HandleModelsCommand,    SEC_GAMEMASTER, Console::Yes },
@@ -202,44 +190,6 @@ namespace
             return ReplyLines(handler, sAnimusMod->ModelStatus(), "No classes.");
         }
 
-        /// .animus record [on | off [keep|discard] [title...]]: a recording of your own play (the addon's Record).
-        static bool HandleRecordCommand(ChatHandler* handler, Optional<std::string_view> state,
-            Optional<std::string_view> verdict, Tail title)
-        {
-            Player* player = handler->GetPlayer();
-            std::string message;
-            if (!state)
-            {
-                Animus::Capture::RecordingStatus const status = Animus::Capture::Status(player);
-                if (!status.Available)
-                    return Reply(handler, false, "Recording is not available on this realm.");
-                return Reply(handler, true, status.On ? Acore::StringFormat("Recording {} for {}m{:02}s, {} notes.",
-                    status.Id, status.Seconds / 60, status.Seconds % 60, status.Notes) : "Not recording.");
-            }
-            if (*state == "on")
-                return Reply(handler, Animus::Capture::StartRecording(player, message), message);
-            if (*state == "off")
-            {
-                std::string_view const given = verdict.value_or("");
-                if (!given.empty() && given != "keep" && given != "discard")
-                    return Reply(handler, false, "A recording is kept or discarded.");
-                return Reply(handler, Animus::Capture::StopRecording(player, Animus::Capture::StopReason::Stop, given,
-                    std::string_view(title), message), message);
-            }
-            return Usage(handler, "animus record");
-        }
-
-        /// .animus note <text...>: a note into your running recording.
-        static bool HandleNoteCommand(ChatHandler* handler, Tail text)
-        {
-            if (std::string_view(text).empty())
-                return Usage(handler, "animus note");
-            std::string message;
-            uint32 seq = 0;
-            return Reply(handler, Animus::Capture::Note(handler->GetPlayer(), std::string_view(text), 0, seq, message),
-                message);
-        }
-
         /// .animus partyfill [on|off]: whether your own dungeon party is filled with bots.
         static bool HandlePartyFillCommand(ChatHandler* handler, Optional<std::string_view> state)
         {
@@ -293,20 +243,6 @@ namespace
             std::string message;
             return Reply(handler, Animus::Prepare::Prepare(player, *level, index, message), message);
         }
-
-        /// .animus god on|off: invulnerable while your recording runs (the account security Prepare needs).
-        static bool HandleGodCommand(ChatHandler* handler, Optional<std::string_view> state)
-        {
-            Player* player = handler->GetPlayer();
-            if (!state || (*state != "on" && *state != "off"))
-                return Usage(handler, "animus god");
-            if (!player->GetSession() || uint32(player->GetSession()->GetSecurity())
-                < sAnimusMod->Config().PrepareSecurity)
-                return Reply(handler, false, "God mode is not for your account on this realm.");
-            std::string message;
-            return Reply(handler, Animus::Capture::God(player, *state == "on", message), message);
-        }
-
     };
 
     class AnimusWorldScript : public WorldScript

@@ -6,7 +6,7 @@ Animus = {}
 local A = Animus
 
 A.PREFIX = "Animus"
-A.PROTOCOL = 4
+A.PROTOCOL = 5
 A.TIMEOUT = 5           -- seconds without an answer before the realm is declared silent
 
 A.state = {
@@ -22,11 +22,9 @@ A.state = {
     message = nil,          -- the last OK/ERR text
     messageOk = true,
     waitingSince = nil,     -- GetTime() of the request still unanswered
-    -- Protocol 3: recordings, settings, Prepare.
-    captureAvailable = false,   -- the realm can record (Animus.Capture.Enable and Dir)
+    -- Protocol 3: settings, Prepare.
     isGM = false,
-    prepareAllowed = false,     -- Prepare (and god) are for this account (Animus.Prepare.Security)
-    recording = { on = false, id = nil, startedAt = nil, notes = 0, god = false },
+    prepareAllowed = false,     -- Prepare is for this account (Animus.Prepare.Security)
     settings = { partyFill = true, partyFillRealm = true, partyFillOverridden = false, partyFillConfig = true },
     specs = {},             -- { { index = 0, name = "arms" }, ... } of the player's class
     levels = { min = 1, max = 80 },
@@ -83,51 +81,6 @@ function A.Dismiss()
     A.Send("dismiss")
 end
 
--- ---------------------------------------------------------------------------------------------------------------
--- Recordings (protocol 3): your own play, recorded on the realm while you say so; notes into it.
-
-function A.RequestRecord()
-    A.Send("record")
-end
-
-function A.StartRecording()
-    A.Send("record", "on")
-end
-
--- verdict "keep" or "discard" (or nil), an optional title.
-function A.StopRecording(verdict, title)
-    if title and title ~= "" then
-        A.Send("record", "off", verdict or "", title)
-    else
-        A.Send("record", "off", verdict or "")
-    end
-end
-
--- Free text into the running recording; tabs, newlines and pipes cannot travel, so they become spaces.
-function A.Note(text)
-    text = strtrim(((text or ""):gsub("[\t\r\n|]", " ")))
-    if text == "" then
-        A.SetMessage(false, "A note needs some text.")
-        return
-    end
-    if #text > 200 then
-        text = text:sub(1, 200)
-    end
-    A.Send("note", floor(GetTime() * 1000), text)
-end
-
-function A.IsRecording()
-    return A.state.recording.on
-end
-
-function A.RecordingSeconds()
-    local r = A.state.recording
-    if not r.on or not r.startedAt then
-        return 0
-    end
-    return floor(GetTime() - r.startedAt)
-end
-
 -- Settings: your own dungeon party fill, and (a game master's) the realm's.
 function A.RequestSettings()
     A.Send("settings")
@@ -155,10 +108,6 @@ function A.Prepare(level, spec)
     A.Send("prepare", floor(level), spec)
 end
 
-function A.God(on)
-    A.Send("god", on and "on" or "off")
-end
-
 function A.SetMessage(ok, text)
     if text == "" then
         text = nil
@@ -176,14 +125,13 @@ end
 
 local handlers = {}
 
-function handlers.HELLO(protocol, enabled, stage, capture, gm, prepare, summon)
+function handlers.HELLO(protocol, enabled, stage, gm, prepare, summon)
     local s = A.state
     s.connected = true
     s.absent = false
     s.protocol = tonumber(protocol)
     s.enabled = enabled == "1"
     s.stage = stage
-    s.captureAvailable = capture == "1"
     s.isGM = gm == "1"
     s.prepareAllowed = prepare == "1"
     s.maySummon = summon == "1"
@@ -209,25 +157,6 @@ end
 
 function handlers.FOLLOWER(text)
     table.insert(A.state.followers, text or "")
-end
-
-function handlers.RECORD(on, id, seconds, notes, god, available)
-    local r = A.state.recording
-    r.on = on == "1"
-    r.id = r.on and id or nil
-    r.startedAt = r.on and (GetTime() - (tonumber(seconds) or 0)) or nil
-    r.notes = tonumber(notes) or 0
-    r.god = god == "1"
-    if available ~= nil then
-        A.state.captureAvailable = available == "1"
-    end
-end
-
-function handlers.NOTE(seq, count)
-    A.state.recording.notes = tonumber(count) or A.state.recording.notes
-    if A.OnNoteKept then
-        A.OnNoteKept(tonumber(seq) or 0)
-    end
 end
 
 function handlers.SETTINGS(mine, realm, overridden, config)
@@ -329,22 +258,11 @@ end)
 
 SLASH_ANIMUS1 = "/animus"
 SlashCmdList.ANIMUS = function(input)
-    local word, rest = strsplit(" ", strtrim(input or ""), 2)
+    local word = strsplit(" ", strtrim(input or ""), 2)
     word = strlower(word or "")
-    if word == "rec" or word == "record" then
-        if A.ToggleRecordBar then
-            A.ToggleRecordBar()
-        end
-    elseif word == "note" then
-        if rest and rest ~= "" then
-            A.Note(rest)
-        elseif A.FocusNote then
-            A.FocusNote()
-        end
-    elseif word == "" then
+    if word == "" then
         A.ToggleWindow()
     else
-        A.Print("/animus opens the window; /animus rec the recorder bar; /animus note <text> notes into the "
-            .. "recording. Everything else is a chat command: .animus help lists them.")
+        A.Print("/animus opens the window. Everything else is a chat command: .animus help lists them.")
     end
 end
