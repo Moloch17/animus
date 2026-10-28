@@ -1,7 +1,7 @@
 #
 # mod-animus -- bots for a stock AzerothCore realm, played by models trained in Animus Forge: followers of
 # your level and faction that keep up with you as they did in training; dungeon party fill with them; the play
-# capture the forge trains on, with opt-in recordings; Prepare. The v1 class companion is not in this build.
+# capture the forge trains on (everything, always); Prepare. The v1 class companion is not in this build.
 #
 [worldserver]
 
@@ -38,8 +38,8 @@ Animus.PartyFill.Enable = 1
 #        Description: The account security the addon's Prepare needs (Settings tab, ".animus
 #                     prepare <level> <spec>"): the character set to the level typed in, geared,
 #                     talented and taught for a spec the way a companion is built, everything it
-#                     wore and carried mailed back to it first. For getting a recording character
-#                     ready in a minute. 0 player, 1 moderator, 2 game master, 3 administrator.
+#                     wore and carried mailed back to it first. For getting a character ready for
+#                     a dungeon run in a minute. 0 player, 1 moderator, 2 game master, 3 administrator.
 #        Default:     2 - (Game master)
 
 Animus.Prepare.Security = 2
@@ -258,47 +258,35 @@ Animus.Follow.Security = 0
 ###################################################################################################
 # PLAY CAPTURE
 #
-#    Two tiers, one writer and one file format (doc/capture-format.md, format 4; README, "Play
-#    capture"):
+#    One tier (doc/capture-format.md, format 5; README, "Play capture"): everything, always. Every
+#    player on the realm is recorded from login, on every map, at full detail -- movement packets,
+#    casts, targets, items, interactions, outcomes, chat both ways, their snapshots, numbers,
+#    inventory, bars and talents -- and so are their surroundings: on every map instance a human is
+#    on, every creature, player and game object is visited every UnitMs and written when its state
+#    changed (position, facing, health, power, target, cast, flags, auras, threat list), the map's
+#    spawn table once, and which creatures of an instance are alive. No opt-in; players are told at
+#    login (LoginNotice). Characters and units are hashed ids, salted with <Dir>/salt; chat is kept
+#    as typed (the realm is private). No raw packets are written.
 #
-#    The AUTOMATIC TIER records what every player on the realm does (movement packets, casts,
-#    targets, outcomes, world snapshots) and what the companions decide, into hourly files, with
-#    no opt-in; players are told at login (Animus.Capture.LoginNotice). No chat, names, account
-#    data or IPs are written there: characters and units are hashed ids, salted with <Dir>/salt.
-#
-#    MANUAL RECORDINGS start only when a player presses Record (the addon's Record tab or bar,
-#    ".animus record on") and end when they stop (keep or discard, a title): their own play, into
-#    <Dir>/recordings/<id>/ at the Recording.* rates and detail -- 100 ms snapshots, every nearby
-#    unit's state with auras and threat lists, object states, the map's spawn table, the raw
-#    packets both ways, their group's chat, their typed notes. A recording is identified (the
-#    character's name is in it) and the player is told so when it starts (Recording.Notice). While
-#    they record, their records go to the recording only, not to the hourly files.
+#    Size: change-driven, gzip level 9 in 10 s members. A two-player dungeon run costs on the order
+#    of a few MB per hour per active player (most of it the units' changing states in fights and the
+#    players' 100 ms snapshots); an idle player costs little. Nothing is ever deleted.
 #
 #    Animus.Capture.Enable
-#        Description: The writer: capture of either tier to Animus.Capture.Dir. Can be switched on
-#                     and off with ".reload config".
+#        Description: The capture: on, every player and map is recorded to Animus.Capture.Dir. Can
+#                     be switched on and off with ".reload config".
 #        Default:     1 - (Enabled)
 #                     0 - (Disabled)
 
 Animus.Capture.Enable = 1
 
 #
-#    Animus.Capture.Auto
-#        Description: The automatic tier: every player recorded from login into the hourly files.
-#                     Off, nothing is written and nobody is told until someone presses Record.
-#        Default:     1 - (Enabled)
-#                     0 - (Disabled: manual recordings only)
-
-Animus.Capture.Auto = 1
-
-#
 #    Animus.Capture.Dir
 #        Description: Where the files go: <Dir>/<yyyy-mm-dd>/<hh>/<stream>-<map>.bin.gz (UTC), an
-#                     index.json per hour, <Dir>/recordings/<id>/ per manual recording with its
-#                     manifest.json, and <Dir>/salt (made once, never replaced). Must be a writable
-#                     directory with room to grow: nothing is ever deleted (under Docker, not the
-#                     read-only data volume). Empty: <LogsDir>/animus-capture, the logs directory
-#                     the realm already writes to (under Docker the logs bind mount,
+#                     index.json per hour, and <Dir>/salt (made once, never replaced). Must be a
+#                     writable directory with room to grow: nothing is ever deleted (under Docker,
+#                     not the read-only data volume). Empty: <LogsDir>/animus-capture, the logs
+#                     directory the realm already writes to (under Docker the logs bind mount,
 #                     env/dist/logs/animus-capture on the host); the working directory when there
 #                     is no LogsDir either. Read at startup only.
 #        Default:     "" - (<LogsDir>/animus-capture)
@@ -308,39 +296,75 @@ Animus.Capture.Dir = ""
 #
 #    Animus.Capture.SnapshotMs
 #    Animus.Capture.IdleSnapshotMs
-#        Description: How often a player's world snapshot (self, nearby units, auras, cooldowns) is
-#                     taken in the automatic tier, in milliseconds: SnapshotMs while in combat or
-#                     moving, IdleSnapshotMs otherwise. Snapshots are most of the volume; the idle
-#                     rate is the first lever if storage runs short. Movement is never thinned.
-#        Default:     250, 1000
+#        Description: How often a player's own snapshot (self, the nearest units, auras, cooldowns)
+#                     is taken, in milliseconds: SnapshotMs while in combat or moving,
+#                     IdleSnapshotMs otherwise. Movement is never thinned.
+#        Default:     100, 1000
 
-Animus.Capture.SnapshotMs = 250
+Animus.Capture.SnapshotMs = 100
 Animus.Capture.IdleSnapshotMs = 1000
+
+#
+#    Animus.Capture.DetailMs
+#        Description: How often a player's numbers (PlayerDetail: stats, armor, resistances, attack
+#                     and spell power, ratings, money, xp, combo points, cheat flags) are written,
+#                     in milliseconds.
+#        Default:     1000
+
+Animus.Capture.DetailMs = 1000
+
+#
+#    Animus.Capture.UnitMs
+#        Description: How often each map instance with a human on it is passed over, in
+#                     milliseconds: every creature, player and game object visited, a UnitState or
+#                     GameObjectState written for each whose state changed since its last record.
+#        Default:     100
+
+Animus.Capture.UnitMs = 100
+
+#
+#    Animus.Capture.UnitRange
+#        Description: On a world map (a continent), the units and objects within this many yards of
+#                     any human are visited; 0 visits the whole map. An instanced map (a dungeon, a
+#                     raid, a battleground) is always visited whole.
+#        Default:     150
+
+Animus.Capture.UnitRange = 150
+
+#
+#    Animus.Capture.MoveYards
+#        Description: A unit that moved less than this (and turned less than 0.1 rad) since its
+#                     last record, with nothing else about it changed, is not written again.
+#        Default:     0.5
+
+Animus.Capture.MoveYards = 0.5
 
 #
 #    Animus.Capture.Streams
 #        Description: Which streams are written, a sum of: 1 session, 2 move, 4 action,
-#                     8 snapshot, 16 outcome, 32 companion, 64 note, 128 packet. The note and
-#                     packet streams carry recordings only.
-#        Default:     255 - (all)
+#                     8 snapshot (the players' snapshots and numbers, every unit's and object's
+#                     state, the spawn tables), 16 outcome, 32 companion, 64 note (chat). 128 is
+#                     format 4's packet stream, reserved and ignored.
+#        Default:     127 - (all)
 
-Animus.Capture.Streams = 255
+Animus.Capture.Streams = 127
 
 #
 #    Animus.Capture.FlushMs
-#        Description: How often buffered records are compressed and appended to their files, in
-#                     milliseconds. A crash loses at most this much.
-#        Default:     1000
+#        Description: How often buffered records are compressed (gzip level 9) and appended to
+#                     their files as one member, in milliseconds. A longer member compresses
+#                     better; a crash loses at most this much.
+#        Default:     10000
 
-Animus.Capture.FlushMs = 1000
+Animus.Capture.FlushMs = 10000
 
 #
 #    Animus.Capture.BufferRecords
 #        Description: Each producing thread's buffer (the world thread and every map thread), in
 #                     128-byte record slots: a movement record takes one, a crowded snapshot up to
-#                     about thirty, a recording's packet chunk up to 470. A full buffer drops
-#                     records, never waits; drops are logged and counted in the hour's index.json
-#                     or the recording's manifest. Read at startup only.
+#                     about thirty, a unit's state with its auras and threat list up to six. A full
+#                     buffer drops records, never waits; drops are logged and counted in the hour's
+#                     index.json. Read at startup only.
 #        Default:     131072 - (16 MiB a thread)
 
 Animus.Capture.BufferRecords = 131072
@@ -350,9 +374,8 @@ Animus.Capture.BufferRecords = 131072
 #    Animus.Capture.DiskReserveGB
 #        Description: Free space under Dir, checked every ten seconds. Below DiskWarnGB a warning is
 #                     logged (every ten minutes); below DiskReserveGB the snapshot stream pauses
-#                     (logged loudly, recorded in the hour's index.json), every open recording is
-#                     stopped (end reason "disk"), and the stream resumes 1 GB above it. Movement
-#                     and the other streams are never paused.
+#                     (logged loudly, recorded in the hour's index.json) and resumes 1 GB above it.
+#                     Movement and the other streams are never paused.
 #        Default:     50, 10
 
 Animus.Capture.DiskWarnGB = 50
@@ -360,85 +383,8 @@ Animus.Capture.DiskReserveGB = 10
 
 #
 #    Animus.Capture.LoginNotice
-#        Description: Told to every player at login while the automatic tier is on. Empty: no
-#                     notice.
-#        Default:     "Play on this realm is recorded (movement, actions and combat; never chat or
-#                     account details) to train its bots to play like people."
+#        Description: Told to every player at login while the capture is on. Empty: no notice.
+#        Default:     "Play on this realm is recorded (movement, actions, combat, chat and your
+#                     surroundings; never account details) to train its bots to play like people."
 
-Animus.Capture.LoginNotice = "Play on this realm is recorded (movement, actions and combat; never chat or account details) to train its bots to play like people."
-
-#
-#    Animus.Capture.Recording.SnapshotMs
-#    Animus.Capture.Recording.UnitMs
-#        Description: A recording's rates, in milliseconds: the player's own snapshot (moving, in
-#                     combat or idle alike), and each nearby unit's full state (UnitState: position,
-#                     velocity, health, power, target, victim, cast, motion, home, auras, threat
-#                     list).
-#        Default:     100, 100
-
-Animus.Capture.Recording.SnapshotMs = 100
-Animus.Capture.Recording.UnitMs = 100
-
-#
-#    Animus.Capture.Recording.UnitRange
-#    Animus.Capture.Recording.MaxUnits
-#        Description: Which units a recording's UnitState covers: the nearest MaxUnits within
-#                     UnitRange yards of the player (party members and the player's pet always).
-#        Default:     80, 128
-
-Animus.Capture.Recording.UnitRange = 80
-Animus.Capture.Recording.MaxUnits = 128
-
-#
-#    Animus.Capture.Recording.Packets
-#    Animus.Capture.Recording.PacketMaxBytes
-#    Animus.Capture.Recording.PacketSkip
-#        Description: The raw packets between the recording player's client and the server, both
-#                     ways, as sent (the packet stream): on or off; the most bytes of one packet
-#                     kept (a longer one is cut and flagged); and the opcodes left out, by name or
-#                     number, space-separated. The chat opcodes are left out by default (their text
-#                     is the Chat record's, redacted as the rules say) and Warden's; add
-#                     SMSG_NAME_QUERY_RESPONSE to keep nearby players' names out of the recording.
-#        Default:     1, 1048576,
-#                     "SMSG_MESSAGECHAT SMSG_GM_MESSAGECHAT CMSG_MESSAGECHAT SMSG_WARDEN_DATA CMSG_WARDEN_DATA"
-
-Animus.Capture.Recording.Packets = 1
-Animus.Capture.Recording.PacketMaxBytes = 1048576
-Animus.Capture.Recording.PacketSkip = "SMSG_MESSAGECHAT SMSG_GM_MESSAGECHAT CMSG_MESSAGECHAT SMSG_WARDEN_DATA CMSG_WARDEN_DATA"
-
-#
-#    Animus.Capture.Recording.OthersChat
-#        Description: Whether a recording keeps the text of real players outside the recorder's
-#                     group. Off, their lines are kept with the text redacted (length only); the
-#                     recorder's own lines, their group's, companions', creatures' and the
-#                     system's are always kept.
-#        Default:     0 - (Redacted)
-#                     1 - (Kept)
-
-Animus.Capture.Recording.OthersChat = 0
-
-#
-#    Animus.Capture.Recording.MaxMinutes
-#        Description: A recording stops by itself after this long (end reason "max minutes").
-#        Default:     240
-
-Animus.Capture.Recording.MaxMinutes = 240
-
-#
-#    Animus.Capture.Recording.Notice
-#        Description: Told to the player when their recording starts. Empty: no notice.
-#        Default:     "Your play and surroundings -- movement, actions, combat, your group's chat
-#                     -- are saved to this realm's recordings until you stop."
-
-Animus.Capture.Recording.Notice = "Your play and surroundings -- movement, actions, combat, your group's chat -- are saved to this realm's recordings until you stop."
-
-#
-#    Animus.Capture.Recording.GodSecurity
-#        Description: The account security god mode from the addon needs (".animus god on|off"):
-#                     the stock ".cheat god", switched off again when the recording that switched
-#                     it on stops, and flagged in the recording (RecordingStart, PlayerDetail,
-#                     every note, the manifest), since health and damage under it are no longer
-#                     human-like. 0 player, 1 moderator, 2 game master, 3 administrator.
-#        Default:     2 - (Game master)
-
-Animus.Capture.Recording.GodSecurity = 2
+Animus.Capture.LoginNotice = "Play on this realm is recorded (movement, actions, combat, chat and your surroundings; never account details) to train its bots to play like people."

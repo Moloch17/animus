@@ -19,7 +19,6 @@
 #include "CharacterPrep.h"
 #include "AnimusMod.h"
 #include "Bag.h"
-#include "Capture.h"
 #include "ClassAssets.h"
 #include "ClassKit.h"
 #include "ClassProfile.h"
@@ -70,7 +69,7 @@ namespace
         MailSender const sender(MAIL_NORMAL, player->GetGUID().GetCounter(), MAIL_STATIONERY_GM);
         for (std::size_t from = 0; from < positions.size(); from += MAX_MAIL_ITEMS)
         {
-            MailDraft draft("Your things before Prepare", "Animus Prepare set your character up for a recording. "
+            MailDraft draft("Your things before Prepare", "Animus Prepare set your character up. "
                 "Everything you wore and carried is in these mails, bags included.");
             uint32 packed = 0;
             for (std::size_t i = from; i < positions.size() && i < from + MAX_MAIL_ITEMS; ++i)
@@ -206,11 +205,6 @@ bool Animus::Prepare::Prepare(Player* player, uint8 level, uint8 spec, std::stri
     if (player->InBattleground())
     {
         message = "Not in a battleground or arena.";
-        return false;
-    }
-    if (Capture::Status(player).On)
-    {
-        message = "Stop recording first: Prepare changes the character the recording is of.";
         return false;
     }
     Curriculum::ClassProfile const* profile = FindProfile(player->getClass());

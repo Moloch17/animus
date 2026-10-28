@@ -17,18 +17,22 @@
  */
 
 // The capture's hooks: every stream of doc/capture-format.md, from the stock core's script hooks. Each hook first
-// asks the writer whether its stream is on for the tier it writes to (one atomic load), then copies a few fields
-// into one record in its thread's buffer (CaptureWriter::Commit). Per-player state lives in the player's own
-// CustomData and is only touched by the thread updating that player: its map thread, or the world thread while no
-// map updates.
+// asks the writer whether its stream is on (one atomic load), then copies a few fields into one record in its
+// thread's buffer (CaptureWriter::Commit). Per-player state lives in the player's own CustomData and is only
+// touched by the thread updating that player: its map thread, or the world thread while no map updates.
 //
-// Two tiers (format 4). The automatic tier (slot 0) captures every player from login into the hourly files, as the
-// realm's config says. A manual recording (slot 1..64) is a player's own, started by them (Capture::StartRecording):
-// while it runs, that player's records go to it alone, at the recording's rates and with everything the hourly
-// tier leaves out -- every visible unit's state and threat list, every game object's state, the player's numbers,
-// inventory, bars and talents, every packet both ways, chat, and their notes. Events of other units on a recorder's
-// map (damage, deaths, combat edges, boss states) go to the recording too, found through the map's own record of
-// who records on it (MapRecorders in Map::CustomData, stamped by each recorder's own update on that map's thread).
+// One tier (format 5): every player from login, on every map, at full detail, into the hourly files -- their
+// movement, actions, snapshots, numbers, inventory, bars and talents, chat both ways, and the outcomes. The
+// surroundings are the map's, not a player's: on every map instance that holds a human, once per
+// Animus.Capture.UnitMs, the first human to update in the window visits every creature, player and object (the
+// whole map when instanced, else within Animus.Capture.UnitRange of a human) and writes a UnitState or
+// GameObjectState only for those whose state changed since their last record (MapCapture in Map::CustomData, on the
+// map's own thread). Unit events on a map with a human (damage, deaths, combat edges) are written whoever is
+// involved.
+//
+// Two packet hooks stay (CanPacketReceive, OnPacketSent): not for raw packets -- format 5 writes none -- but for
+// the typed records only the packets carry: cast requests, selections, item uses, attacks, interactions, cast
+// refusals, the environmental damage a death is blamed on, and the chat a player is shown.
 
 #include "Capture.h"
 #include "AllSpellScript.h"
@@ -36,6 +40,7 @@
 #include "Bag.h"
 #include "CaptureConfig.h"
 #include "CaptureWriter.h"
+#include "CellImpl.h"
 #include "CharacterCache.h"
 #include "Chat.h"
 #include "Creature.h"
@@ -44,11 +49,14 @@
 #include "GameObject.h"
 #include "GameTime.h"
 #include "GlobalScript.h"
+#include "GridNotifiers.h"
+#include "GridNotifiersImpl.h"
 #include "Group.h"
 #include "InstanceScript.h"
 #include "Item.h"
 #include "LFG.h"
 #include "Map.h"
+#include "MapReference.h"
 #include "MotionMaster.h"
 #include "MovementHandlerScript.h"
 #include "ObjectAccessor.h"
@@ -74,6 +82,7 @@
 #include "WorldSession.h"
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <mutex>
 #include <unordered_map>
 #include <unordered_set>
@@ -88,18 +97,20 @@ namespace
     constexpr uint32 CLIENT_BUILD = 12340;
     constexpr uint64 LATENCY_EVERY_MS = 60000;
     constexpr uint64 SPELLS_EVERY_MS = 1000;
-    constexpr uint64 DETAIL_EVERY_MS = 1000;
     constexpr uint64 INVENTORY_EVERY_MS = 1000;
-    constexpr float UNIT_RANGE = 40.0f;
+    constexpr uint64 HOUR_MS = 3600000;
+    /// A player's own snapshot lists the nearest hostile and friendly units within this.
+    constexpr float SNAPSHOT_RANGE = 40.0f;
     constexpr uint32 MAX_HOSTILE = 24;
     constexpr uint32 MAX_FRIENDLY = 10;
     constexpr uint32 MAX_UNIT_AURAS = 40;
     constexpr uint32 MAX_UNIT_THREATS = 16;
-    constexpr float NOTE_HOSTILE_YARDS = 30.0f;
-    /// A recorder's stamp on its map is this old at most to count (one world tick is 50 ms; a map that stopped
-    /// updating has nobody recording on it).
-    constexpr uint64 RECORDER_STAMP_MS = 1000;
-    constexpr uint32 MAX_RECORDERS_PER_MAP = 8;
+    /// A unit turned by less than this (and moved less than Animus.Capture.MoveYards) is unchanged.
+    constexpr float FACING_RAD = 0.1f;
+    /// A unit (or object) unseen by the passes this long is forgotten; seen again, it is a first sight.
+    constexpr uint64 FORGET_MS = 30000;
+    /// A map's pass stamp is this old at most to count as "a human is here" for the unit hooks.
+    constexpr uint64 PASS_FRESH_MS = 1000;
     /// Base breath under water (Player::getMaxTimer(BREATH_TIMER) without modifiers).
     constexpr float BREATH_MS = 60000.0f;
 
@@ -108,42 +119,30 @@ namespace
     /// A player's capture state, in its CustomData under a short key (no allocation on lookup).
     struct PlayerState : DataMap::Base
     {
-        bool Started = false;               // the automatic tier's session began (SessionStart written to slot 0)
+        bool Started = false;               // the session began (SessionStart written)
         uint64 Id = 0;
         uint64 Session = 0;
         uint8 Kind = 0;                     // 0 human, 1 companion
-
-        // The manual recording (0 none): its slot, id, session and clock; what it has written so far.
-        uint16 Slot = 0;
-        std::string RecordingId;
-        uint64 RecordingSession = 0;
-        uint64 RecordingStartMs = 0;
-        uint32 Notes = 0;
-        bool GodByRecording = false;        // CHEAT_GOD was turned on through the recording: off again at its stop
-        std::vector<std::pair<uint32, uint32>> MapsVisited;     // (map, instance) in order, for the manifest
-        uint32 LastMapInstance = 0;         // the instance id the last MapSpawns/InstanceCreatures were written for
-        uint32 LastMapId = 0xFFFFFFFF;
-        std::unordered_set<uint32> SpawnsWritten;               // maps whose MapSpawns went into this recording
-        std::unordered_map<uint64, uint32> GoStates;            // visible game objects by raw guid -> packed state
-        std::unordered_set<uint64> GoSeen;                      // this poll's
-        uint64 LastUnitMs = 0;
-        uint64 LastDetailMs = 0;
-        uint64 LastInventoryMs = 0;
-        bool InventoryDirty = true;
-        bool ButtonsDirty = true;
-        bool RecTalentsDirty = true;
 
         // Context (SessionContext on change).
         uint8 Level = 0;
         std::array<uint8, 3> Tree{};
         uint16 ItemLevel = 0;
         uint32 Map = 0;
+        uint32 Instance = 0;
         uint32 Zone = 0;
         uint32 Area = 0;
         uint64 GroupSig = 0;
         bool TalentsDirty = true;
         bool GearDirty = true;
         bool SpellsDirty = false;
+
+        // The dumps (Inventory, ActionButtons, Talents) and the numbers (PlayerDetail).
+        bool InventoryDirty = true;
+        bool ButtonsDirty = true;
+        bool TalentDumpDirty = true;
+        uint64 LastInventoryMs = 0;
+        uint64 LastDetailMs = 0;
 
         uint64 LastSnapshotMs = 0;
         uint64 LastLatencyMs = 0;
@@ -171,7 +170,6 @@ namespace
         uint32 MoverMap = 0;
         uint32 MoverZone = 0;
         uint8 MoverKind = 0;
-        uint16 MoverSlot = 0;
         // A companion's model and its move block revision (CompanionModel, world thread while maps are idle).
         std::string Model;
         uint8 MoveRevision = 0;
@@ -193,70 +191,51 @@ namespace
     };
 
     std::string const STATE_KEY = "ancap";
-    std::string const MAP_KEY = "ancaprec";
+    std::string const MAP_KEY = "ancapmap";
 
-    /// Who records on a map instance: each recorder's slot and the game time of its last update on this map
-    /// (its own map thread stamps; the unit hooks of this map read). A stale stamp is a recorder gone elsewhere.
-    struct MapRecorders : DataMap::Base
+    /// A map instance's capture: the pass clock, and the last state written of every unit and object on it (by raw
+    /// guid), so a pass writes only what changed. Touched by the map's own thread alone (the passes run in a
+    /// player's update; the unit hooks on this map read the stamp).
+    struct MapCapture : DataMap::Base
     {
-        struct Entry
-        {
-            uint16 Slot = 0;
-            uint64 PlayerId = 0;
-            uint64 StampMs = 0;
-        };
-        std::array<Entry, MAX_RECORDERS_PER_MAP> Entries{};
+        uint64 LastPassMs = 0;
+        uint64 PassHour = 0;                // the hour (unix ms / HOUR_MS) the spawn dumps were last written in
+        bool Started = false;
 
-        void Stamp(uint16 slot, uint64 playerId, uint64 nowMs)
+        struct UnitLast
         {
-            Entry* free = nullptr;
-            for (Entry& entry : Entries)
-            {
-                if (entry.Slot == slot)
-                {
-                    entry.PlayerId = playerId;
-                    entry.StampMs = nowMs;
-                    return;
-                }
-                if (!free && (!entry.Slot || nowMs - entry.StampMs > RECORDER_STAMP_MS))
-                    free = &entry;
-            }
-            if (free)
-                *free = Entry{ slot, playerId, nowMs };
-        }
+            float X = 0.0f;
+            float Y = 0.0f;
+            float Z = 0.0f;
+            float O = 0.0f;
+            uint64 Sig = 0;
+            uint64 SeenMs = 0;
+            uint32 SpawnId = 0;
+            uint32 Entry = 0;
+            uint8 UnitType = 0;
+            bool Gone = false;
+        };
+        struct ObjectLast
+        {
+            uint32 Packed = 0;
+            uint64 SeenMs = 0;
+            bool Gone = false;
+        };
+        std::unordered_map<uint64, UnitLast> Units;
+        std::unordered_map<uint64, ObjectLast> Objects;
     };
 
     uint64 GameMs() { return uint64(GameTime::GetGameTimeMS().count()); }
 
-    /// The recorders on `map` whose stamps are fresh: (slot, player id) pairs, at most MAX_RECORDERS_PER_MAP.
-    struct Recorders
-    {
-        std::array<MapRecorders::Entry, MAX_RECORDERS_PER_MAP> Entries{};
-        uint32 Count = 0;
-    };
-
-    Recorders RecordersOn(Map* map)
-    {
-        Recorders out;
-        if (!map || !Writer().AnyRecording())
-            return out;
-        MapRecorders const* recorders = map->CustomData.Get<MapRecorders>(MAP_KEY);
-        if (!recorders)
-            return out;
-        uint64 const now = GameMs();
-        for (MapRecorders::Entry const& entry : recorders->Entries)
-            if (entry.Slot && now - entry.StampMs <= RECORDER_STAMP_MS)
-                out.Entries[out.Count++] = entry;
-        return out;
-    }
-
     PlayerState* StateOf(Player* player) { return player->CustomData.Get<PlayerState>(STATE_KEY); }
 
-    /// The tier a player's own records go to: its recording while one runs, else the automatic tier.
-    uint16 SlotOf(Player* player)
+    MapCapture* CaptureOf(Map* map) { return map ? map->CustomData.GetDefault<MapCapture>(MAP_KEY) : nullptr; }
+
+    /// Whether a human is on `map` (its passes are running): the unit hooks' gate for events between creatures.
+    bool MapFresh(Map* map, uint64 now)
     {
-        PlayerState const* state = StateOf(player);
-        return state ? state->Slot : 0;
+        MapCapture const* capture = map ? map->CustomData.Get<MapCapture>(MAP_KEY) : nullptr;
+        return capture && now - capture->LastPassMs <= PASS_FRESH_MS;
     }
 
     uint64 IdOf(ObjectGuid guid) { return guid ? Writer().UnitId(guid.GetRawValue(), guid.IsPlayer()) : 0; }
@@ -268,6 +247,8 @@ namespace
             return state->Id;
         return IdOf(player);
     }
+
+    bool IsHuman(Player const* player) { return !sAnimusMod->IsBot(player->GetGUID()); }
 
     /// A unit's or object's world spawn id (0 for a player, a pet, a summon or a temporary object).
     uint32 SpawnIdOf(WorldObject const* object)
@@ -379,19 +360,18 @@ namespace
         record.FlightBack = state.Speeds[6];
         record.TurnRate = state.Speeds[7];
         record.PitchRate = state.Speeds[8];
-        Writer().Write(F::Stream::Move, player->GetMapId(), state.Slot, record);
+        Writer().Write(F::Stream::Move, player->GetMapId(), record);
     }
 
-    void WriteMotion(Player* player, uint64 id, F::Motion event, uint32 arg, float x, float y, float z,
-        uint32 map)
+    void WriteMotion(uint64 id, F::Motion event, uint32 arg, float x, float y, float z, uint32 map)
     {
         F::MotionEvent record{ CaptureWriter::NowMs(), id, event, arg, x, y, z, map };
-        Writer().Write(F::Stream::Move, map, SlotOf(player), record);
+        Writer().Write(F::Stream::Move, map, record);
     }
 
     void WriteMotion(Player* player, uint64 id, F::Motion event, uint32 arg = 0)
     {
-        WriteMotion(player, id, event, arg, player->GetPositionX(), player->GetPositionY(), player->GetPositionZ(),
+        WriteMotion(id, event, arg, player->GetPositionX(), player->GetPositionY(), player->GetPositionZ(),
             player->GetMapId());
     }
 
@@ -409,6 +389,7 @@ namespace
         };
         set(state.Level, player->GetLevel());
         set(state.Map, player->GetMapId());
+        set(state.Instance, player->GetInstanceId());
         set(state.Zone, player->GetZoneId());
         set(state.Area, player->GetAreaId());
         if (state.TalentsDirty)
@@ -434,15 +415,14 @@ namespace
         return group->GetGUID().GetRawValue() * 131 + group->GetMembersCount() * 2 + (group->isRaidGroup() ? 1 : 0);
     }
 
-    /// The session id a record of `state` carries in `slot`: the recording's own session while it records.
-    uint64 SessionFor(PlayerState const& state, uint16 slot) { return slot ? state.RecordingSession : state.Session; }
-
-    void WriteSession(Player* player, PlayerState const& state, uint64 now, bool context, uint16 slot)
+    void WriteSession(Player* player, PlayerState const& state, uint64 now, bool context)
     {
+        if (!Writer().On(F::Stream::Session))
+            return;
         F::SessionStart record;
         record.Ms = now;
         record.Player = state.Id;
-        record.Session = SessionFor(state, slot);
+        record.Session = state.Session;
         record.Class = player->getClass();
         record.Race = player->getRace();
         record.Gender = player->getGender();
@@ -456,18 +436,17 @@ namespace
             : 0));
         record.ClientBuild = state.Kind ? 0 : CLIENT_BUILD;
         record.Kind = state.Kind;
-        if (!Writer().OnFor(F::Stream::Session, slot))
-            return;
+        record.Instance = state.Instance;
         F::Out& out = Writer().Scratch();
         record.Write(out, context);
-        Writer().Commit(F::Stream::Session, CaptureWriter::MAP_ALL, slot, out);
+        Writer().Commit(F::Stream::Session, CaptureWriter::MAP_ALL, out);
     }
 
     /// The group as this player's map thread can see it: every member's id, class and role; the level of those on
     /// this map (another map's players are another thread's, so theirs is written 0).
-    void WriteGroup(Player* player, PlayerState const& state, uint64 now, uint16 slot)
+    void WriteGroup(Player* player, PlayerState const& state, uint64 now)
     {
-        if (!Writer().OnFor(F::Stream::Session, slot))
+        if (!Writer().On(F::Stream::Session))
             return;
         std::array<F::GroupMember, 40> members{};
         F::GroupState record;
@@ -495,12 +474,12 @@ namespace
                 member.IsCompanion = sAnimusMod->IsBot(memberSlot.guid) ? 1 : 0;
             }
         }
-        Writer().Write(F::Stream::Session, CaptureWriter::MAP_ALL, slot, record);
+        Writer().Write(F::Stream::Session, CaptureWriter::MAP_ALL, record);
     }
 
-    void WriteKnownSpells(Player* player, PlayerState const& state, uint64 now, uint16 slot)
+    void WriteKnownSpells(Player* player, PlayerState const& state, uint64 now)
     {
-        if (!Writer().OnFor(F::Stream::Session, slot))
+        if (!Writer().On(F::Stream::Session))
             return;
         thread_local std::vector<uint32> spells;
         spells.clear();
@@ -511,14 +490,16 @@ namespace
                 spells.push_back(spellId);
         std::sort(spells.begin(), spells.end());
         F::KnownSpells record{ now, state.Id, spells.data(), uint16(spells.size()) };
-        Writer().Write(F::Stream::Session, CaptureWriter::MAP_ALL, slot, record);
+        Writer().Write(F::Stream::Session, CaptureWriter::MAP_ALL, record);
     }
 
-    // ---- a recording's own records (format 4) ----------------------------------------------------------------------
+    // ---- the dumps and the numbers ---------------------------------------------------------------------------------
 
     void WriteInventory(Player* player, PlayerState& state, uint64 now)
     {
-        if (!state.Slot)
+        state.InventoryDirty = false;
+        state.LastInventoryMs = now;
+        if (!Writer().On(F::Stream::Session))
             return;
         thread_local std::vector<F::InventoryItem> items;
         items.clear();
@@ -540,14 +521,13 @@ namespace
         for (uint8 slot = KEYRING_SLOT_START; slot < KEYRING_SLOT_END; ++slot)
             add(player->GetItemByPos(INVENTORY_SLOT_BAG_0, slot), INVENTORY_SLOT_BAG_0, slot);
         F::Inventory record{ now, state.Id, items.data(), uint16(items.size()) };
-        Writer().Write(F::Stream::Session, CaptureWriter::MAP_ALL, state.Slot, record);
-        state.InventoryDirty = false;
-        state.LastInventoryMs = now;
+        Writer().Write(F::Stream::Session, CaptureWriter::MAP_ALL, record);
     }
 
     void WriteActionButtons(Player* player, PlayerState& state, uint64 now)
     {
-        if (!state.Slot)
+        state.ButtonsDirty = false;
+        if (!Writer().On(F::Stream::Session))
             return;
         std::array<F::ActionButton, MAX_ACTION_BUTTONS> buttons{};
         uint8 count = 0;
@@ -555,13 +535,13 @@ namespace
             if (ActionButton const* held = player->GetActionButton(uint8(button)); held && held->GetAction())
                 buttons[count++] = { uint8(button), uint8(held->GetType()), held->GetAction() };
         F::ActionButtons record{ now, state.Id, buttons.data(), count };
-        Writer().Write(F::Stream::Session, CaptureWriter::MAP_ALL, state.Slot, record);
-        state.ButtonsDirty = false;
+        Writer().Write(F::Stream::Session, CaptureWriter::MAP_ALL, record);
     }
 
     void WriteTalents(Player* player, PlayerState& state, uint64 now)
     {
-        if (!state.Slot)
+        state.TalentDumpDirty = false;
+        if (!Writer().On(F::Stream::Session))
             return;
         thread_local std::vector<F::TalentRank> ranks;
         ranks.clear();
@@ -584,8 +564,7 @@ namespace
             if (uint32 const glyph = player->GetGlyph(slot))
                 glyphs[glyphCount++] = glyph;
         F::Talents record{ now, state.Id, spec, ranks.data(), uint8(ranks.size()), glyphs.data(), glyphCount };
-        Writer().Write(F::Stream::Session, CaptureWriter::MAP_ALL, state.Slot, record);
-        state.RecTalentsDirty = false;
+        Writer().Write(F::Stream::Session, CaptureWriter::MAP_ALL, record);
     }
 
     uint32 CheatFlagsOf(Player const* player)
@@ -599,7 +578,8 @@ namespace
 
     void WritePlayerDetail(Player* player, PlayerState& state, uint64 now)
     {
-        if (!state.Slot)
+        state.LastDetailMs = now;
+        if (!Writer().On(F::Stream::Snapshot))
             return;
         F::PlayerDetail record;
         record.Ms = now;
@@ -630,9 +610,10 @@ namespace
         record.ComboTarget = IdOf(player->GetComboTargetGUID());
         record.CheatFlags = CheatFlagsOf(player);
         record.GameMaster = player->IsGameMaster() ? 1 : 0;
-        Writer().Write(F::Stream::Snapshot, player->GetMapId(), state.Slot, record);
-        state.LastDetailMs = now;
+        Writer().Write(F::Stream::Snapshot, player->GetMapId(), record);
     }
+
+    // ---- the map's surroundings: spawn tables, units, objects ------------------------------------------------------
 
     /// The map's spawn table, worked out once per map id from the world database's in-memory stores.
     std::vector<F::MapSpawn> const& SpawnsOf(uint32 mapId)
@@ -689,8 +670,10 @@ namespace
         return spawns;
     }
 
-    void WriteMapSpawns(uint32 mapId, uint16 slot, uint64 now)
+    void WriteMapSpawns(uint32 mapId, uint64 now)
     {
+        if (!Writer().On(F::Stream::Snapshot))
+            return;
         std::vector<F::MapSpawn> const& spawns = SpawnsOf(mapId);
         uint16 const parts = uint16(std::max<std::size_t>(1, (spawns.size() + F::MAP_SPAWNS_PART - 1)
             / F::MAP_SPAWNS_PART));
@@ -699,13 +682,15 @@ namespace
             std::size_t const from = std::size_t(part) * F::MAP_SPAWNS_PART;
             std::size_t const count = std::min<std::size_t>(F::MAP_SPAWNS_PART, spawns.size() - from);
             F::MapSpawns record{ now, mapId, part, parts, spawns.data() + from, uint16(count) };
-            Writer().Write(F::Stream::Snapshot, mapId, slot, record);
+            Writer().Write(F::Stream::Snapshot, mapId, record);
         }
     }
 
-    void WriteInstanceCreatures(Map* map, uint16 slot, uint64 now)
+    /// Which of an instance's spawned creatures are alive: at its first pass (and its first of each hour) and when
+    /// a human leaves it. Instanced maps only: a continent's store holds the loaded grids alone.
+    void WriteInstanceCreatures(Map* map, uint64 now)
     {
-        if (!map)
+        if (!map || !map->Instanceable() || !Writer().On(F::Stream::Snapshot))
             return;
         thread_local std::vector<F::InstanceCreature> creatures;
         creatures.clear();
@@ -722,7 +707,7 @@ namespace
             std::size_t const count = std::min<std::size_t>(F::INSTANCE_CREATURES_PART, creatures.size() - from);
             F::InstanceCreatures record{ now, map->GetId(), map->GetInstanceId(), part, parts,
                 creatures.data() + from, uint16(count) };
-            Writer().Write(F::Stream::Snapshot, map->GetId(), slot, record);
+            Writer().Write(F::Stream::Snapshot, map->GetId(), record);
         }
     }
 
@@ -731,11 +716,11 @@ namespace
         return uint32(go->GetGoState()) | uint32(go->getLootState()) << 8 | (uint32(go->GetGameObjectFlags()) & 0xFFFF) << 16;
     }
 
-    void WriteGameObject(Player* player, PlayerState const& state, GameObject const* go, uint8 event, uint64 now)
+    void WriteGameObject(uint32 mapId, uint64 observer, GameObject const* go, uint8 event, uint64 now)
     {
         F::GameObjectState record;
         record.Ms = now;
-        record.Player = state.Id;
+        record.Player = observer;
         record.Object = IdOf(go);
         record.SpawnId = uint32(go->GetSpawnId());
         record.Entry = go->GetEntry();
@@ -748,248 +733,417 @@ namespace
         record.Z = go->GetPositionZ();
         record.O = go->GetOrientation();
         record.Event = event;
-        Writer().Write(F::Stream::Snapshot, player->GetMapId(), state.Slot, record);
+        Writer().Write(F::Stream::Snapshot, mapId, record);
     }
 
-    /// Every game object the client can see: all of them on the first poll of a map (`event` 0), then the changed
-    /// (1) and the gone (2) ones -- a door opened, a lever pulled, the cannon fired.
-    void PollGameObjects(Player* player, PlayerState& state, uint64 now, bool all)
+    /// FNV-1a over the fields that make a unit's state (not its clock-driven ones: the cast's time left, an
+    /// aura's time left, the estimated velocity, the position and facing, which have thresholds of their own).
+    struct Signature
     {
-        state.GoSeen.clear();
-        player->DoForAllVisibleWorldObjects([&](WorldObject* object)
+        uint64 Hash = 0xcbf29ce484222325ull;
+
+        template <typename T>
+        void Add(T value)
         {
-            GameObject const* go = object ? object->ToGameObject() : nullptr;
-            if (!go || !go->IsInWorld())
-                return;
+            static_assert(std::is_trivially_copyable_v<T>);
+            uint8 bytes[sizeof(T)];
+            std::memcpy(bytes, &value, sizeof(T));
+            for (uint8 byte : bytes)
+            {
+                Hash ^= byte;
+                Hash *= 0x100000001b3ull;
+            }
+        }
+    };
+
+    /// What a pass collects: the units and objects to visit, each once.
+    struct PassLists
+    {
+        std::vector<Unit*> Units;
+        std::vector<GameObject*> Objects;
+        std::unordered_set<uint64> Seen;
+    };
+
+    struct UnitInRange
+    {
+        WorldObject const* From;
+        float Range;
+        bool operator()(Unit* unit) const { return unit->IsInWorld() && From->GetExactDist(unit) <= Range; }
+    };
+
+    struct ObjectInRange
+    {
+        WorldObject const* From;
+        float Range;
+        bool operator()(GameObject* go) const { return go->IsInWorld() && From->GetExactDist(go) <= Range; }
+    };
+
+    /// Everything on the map (instanced, or UnitRange 0), or everything within UnitRange of any human on it.
+    void Collect(Map* map, PassLists& lists, float range)
+    {
+        lists.Units.clear();
+        lists.Objects.clear();
+        lists.Seen.clear();
+        auto const addUnit = [&](Unit* unit)
+        {
+            if (unit && unit->IsInWorld() && lists.Seen.insert(unit->GetGUID().GetRawValue()).second)
+                lists.Units.push_back(unit);
+        };
+        auto const addObject = [&](GameObject* go)
+        {
+            if (go && go->IsInWorld() && lists.Seen.insert(go->GetGUID().GetRawValue()).second)
+                lists.Objects.push_back(go);
+        };
+        if (map->Instanceable() || range <= 0.0f)
+        {
+            // The map's object store (GridDefines.h: TYPELIST_4(Creature, GameObject, ...)): creatures first in
+            // the list, pets and summons among them, then the game objects; the players from the map's own list.
+            for (auto const& [guid, creature] : map->GetObjectsStore().GetElements()._elements._element)
+                addUnit(creature);
+            for (auto const& [guid, go] : map->GetObjectsStore().GetElements()._TailElements._elements._element)
+                addObject(go);
+            for (MapReference const& reference : map->GetPlayers())
+                addUnit(reference.GetSource());
+            return;
+        }
+        thread_local std::vector<Unit*> near;
+        thread_local std::vector<GameObject*> nearObjects;
+        for (MapReference const& reference : map->GetPlayers())
+        {
+            Player* player = reference.GetSource();
+            if (!player || !player->IsInWorld() || !IsHuman(player))
+                continue;
+            near.clear();
+            nearObjects.clear();
+            UnitInRange unitCheck{ player, range };
+            Acore::UnitListSearcher<UnitInRange> unitSearcher(player, near, unitCheck);
+            Cell::VisitObjects(player, unitSearcher, range);
+            ObjectInRange objectCheck{ player, range };
+            Acore::GameObjectListSearcher<ObjectInRange> objectSearcher(player, nearObjects, objectCheck);
+            Cell::VisitObjects(player, objectSearcher, range);
+            addUnit(player);
+            for (Unit* unit : near)
+                addUnit(unit);
+            for (GameObject* go : nearObjects)
+                addObject(go);
+        }
+    }
+
+    /// Whether `unit` is a player, or a player's pet, guardian or charm.
+    bool PlayerOwned(Unit const* unit) { return unit && unit->GetCharmerOrOwnerPlayerOrPlayerItself(); }
+
+    /// A unit's record as the server has it now, and the signature of its state. `observer` is who the relative
+    /// fields (Kind, Reaction, flag 4) refer to.
+    void FillUnit(F::UnitState& record, Signature& sig, Unit* unit, Player* observer,
+        std::array<F::UnitStateAura, MAX_UNIT_AURAS>& auras, std::array<F::UnitStateThreat, MAX_UNIT_THREATS>& threats)
+    {
+        Creature* creature = unit->ToCreature();
+        record.Unit = IdOf(unit);
+        record.SpawnId = creature ? uint32(creature->GetSpawnId()) : 0;
+        record.Entry = unit->IsPlayer() ? 0 : unit->GetEntry();
+        record.UnitType = unit->IsPlayer() ? 1 : (unit->IsPet() || unit->IsGuardian()) ? 2 : 0;
+        record.Kind = KindOf(observer, unit);
+        record.X = unit->GetPositionX();
+        record.Y = unit->GetPositionY();
+        record.Z = unit->GetPositionZ();
+        record.O = unit->GetOrientation();
+        VelocityOf(unit, record.VX, record.VY, record.VZ);
+        record.MoveFlags = unit->GetUnitMovementFlags();
+        record.Health = unit->GetHealth();
+        record.MaxHealth = unit->GetMaxHealth();
+        record.PowerType = uint8(unit->getPowerType());
+        record.Power = unit->GetPower(unit->getPowerType());
+        record.MaxPower = unit->GetMaxPower(unit->getPowerType());
+        record.Level = unit->GetLevel();
+        bool const hostile = observer->IsHostileTo(unit);
+        record.Reaction = hostile ? 0 : observer->IsFriendlyTo(unit) ? 2 : 1;
+        record.ReactState = 0;
+        record.Rank = 0;
+        record.Boss = 0;
+        record.HomeX = record.HomeY = record.HomeZ = 0.0f;
+        record.FormationLeaderSpawn = 0;
+        record.Flags = 0;
+        if (creature)
+        {
+            record.ReactState = uint8(creature->GetReactState());
+            record.Rank = uint8(creature->GetCreatureTemplate()->rank);
+            record.Boss = creature->IsDungeonBoss() ? 1 : 0;
+            float homeO = 0.0f;
+            creature->GetHomePosition(record.HomeX, record.HomeY, record.HomeZ, homeO);
+            if (CreatureGroup const* formation = creature->GetFormation())
+                if (Creature const* leader = formation->GetLeader())
+                    record.FormationLeaderSpawn = uint32(leader->GetSpawnId());
+            if (creature->hasLootRecipient())
+                record.Flags |= 64;
+        }
+        record.UnitFlags = uint32(unit->GetUnitFlags());
+        record.NpcFlags = uint32(unit->GetNpcFlags());
+        record.DynamicFlags = unit->GetDynamicFlags();
+        record.UnitStateFlags = unit->GetUnitState();
+        record.DeathState = uint8(unit->getDeathState());
+        record.Target = IdOf(unit->GetTarget());
+        record.Victim = IdOf(unit->GetVictim());
+        record.CastingSpell = CastingSpell(unit);
+        record.CastLeftMs = CastLeftMs(unit);
+        record.MotionType = uint8(unit->GetMotionMaster()->GetCurrentMovementGeneratorType());
+        if (unit->IsInCombat())
+            record.Flags |= 1;
+        if (creature && creature->IsInEvadeMode())
+            record.Flags |= 2;
+        if (unit->IsPlayer() && unit != observer && observer->IsInSameGroupWith(unit->ToPlayer()))
+            record.Flags |= 4;
+        if (record.UnitType == 2 && PlayerOwned(unit))
+            record.Flags |= 8;
+        if (unit->IsPlayer() && sAnimusMod->IsBot(unit->GetGUID()))
+            record.Flags |= 16;
+
+        uint8 auraCount = 0;
+        for (auto const& [spellId, application] : unit->GetAppliedAuras())
+        {
+            if (auraCount >= MAX_UNIT_AURAS)
+                break;
+            Aura const* aura = application->GetBase();
+            auras[auraCount++] = { aura->GetId(), uint8(std::min<uint32>(255, aura->GetStackAmount())),
+                aura->GetDuration(), uint8(application->IsPositive() ? 1 : 0), IdOf(aura->GetCasterGUID()) };
+        }
+        record.Auras = auras.data();
+        record.AuraCount = auraCount;
+
+        uint8 threatCount = 0;
+        if (creature && creature->CanHaveThreatList())
+        {
+            bool engaged = false;
+            for (ThreatReference const* reference : creature->GetThreatMgr().GetUnsortedThreatList())
+            {
+                Unit const* victim = reference->GetVictim();
+                if (!victim)
+                    continue;
+                if (PlayerOwned(victim))
+                    engaged = true;
+                if (threatCount < MAX_UNIT_THREATS)
+                    threats[threatCount++] = { IdOf(victim), reference->GetThreat() };
+            }
+            if (engaged)
+                record.Flags |= 32;
+        }
+        record.Threats = threats.data();
+        record.ThreatCount = threatCount;
+
+        // The signature: everything but the clock-driven fields and the thresholded position.
+        sig.Add(record.SpawnId);
+        sig.Add(record.Entry);
+        sig.Add(record.UnitType);
+        sig.Add(uint8(record.Kind));
+        sig.Add(record.MoveFlags);
+        sig.Add(record.Health);
+        sig.Add(record.MaxHealth);
+        sig.Add(record.PowerType);
+        sig.Add(record.Power);
+        sig.Add(record.MaxPower);
+        sig.Add(record.Level);
+        sig.Add(record.Reaction);
+        sig.Add(record.ReactState);
+        sig.Add(record.Rank);
+        sig.Add(record.Boss);
+        sig.Add(record.UnitFlags);
+        sig.Add(record.NpcFlags);
+        sig.Add(record.DynamicFlags);
+        sig.Add(record.UnitStateFlags);
+        sig.Add(record.DeathState);
+        sig.Add(record.Target);
+        sig.Add(record.Victim);
+        sig.Add(record.CastingSpell);
+        sig.Add(record.MotionType);
+        sig.Add(record.HomeX);
+        sig.Add(record.HomeY);
+        sig.Add(record.HomeZ);
+        sig.Add(record.FormationLeaderSpawn);
+        sig.Add(record.Flags);
+        sig.Add(auraCount);
+        for (uint8 i = 0; i < auraCount; ++i)
+        {
+            sig.Add(auras[i].Spell);
+            sig.Add(auras[i].Stacks);
+            sig.Add(auras[i].Positive);
+            sig.Add(auras[i].Caster);
+        }
+        sig.Add(threatCount);
+        for (uint8 i = 0; i < threatCount; ++i)
+        {
+            sig.Add(threats[i].Unit);
+            sig.Add(threats[i].Threat);
+        }
+    }
+
+    /// One pass over a map instance: every unit and object collected, a record for each whose state changed since
+    /// its last (or that is new), a last record (flag 128 / event 2) for each gone, and the forgetting.
+    void PassMap(Map* map, uint64 now)
+    {
+        MapCapture& capture = *CaptureOf(map);
+        if (now - capture.LastPassMs < Writer().UnitMs())
+            return;
+        capture.LastPassMs = now;
+        if (!Writer().On(F::Stream::Snapshot))
+            return;
+
+        // The observer: the lowest human guid on the map, so the relative fields hold still between passes.
+        Player* observer = nullptr;
+        for (MapReference const& reference : map->GetPlayers())
+            if (Player* player = reference.GetSource(); player && player->IsInWorld() && IsHuman(player)
+                && (!observer || player->GetGUID() < observer->GetGUID()))
+                observer = player;
+        if (!observer)
+            return;
+        uint64 const observerId = PlayerIdOf(observer);
+
+        uint64 const hour = now / HOUR_MS;
+        if (!capture.Started || (map->Instanceable() && hour != capture.PassHour))
+        {
+            // The spawn table and who is alive: at the first pass, and on an instanced map at the first pass of
+            // each hour, so an hour's files stand alone.
+            if (!capture.Started || map->Instanceable())
+                WriteMapSpawns(map->GetId(), now);
+            WriteInstanceCreatures(map, now);
+            capture.Started = true;
+            capture.PassHour = hour;
+        }
+
+        thread_local PassLists lists;
+        Collect(map, lists, Writer().UnitRange());
+
+        float const moveYards = Writer().MoveYards();
+        uint32 const mapId = map->GetId();
+        std::array<F::UnitStateAura, MAX_UNIT_AURAS> auras{};
+        std::array<F::UnitStateThreat, MAX_UNIT_THREATS> threats{};
+        for (Unit* unit : lists.Units)
+        {
+            F::UnitState record;
+            record.Ms = now;
+            record.Player = observerId;
+            Signature sig;
+            FillUnit(record, sig, unit, observer, auras, threats);
+
+            uint64 const guid = unit->GetGUID().GetRawValue();
+            auto [itr, created] = capture.Units.try_emplace(guid);
+            MapCapture::UnitLast& last = itr->second;
+            bool changed = created || last.Gone || last.Sig != sig.Hash;
+            if (!changed)
+            {
+                float const dx = record.X - last.X;
+                float const dy = record.Y - last.Y;
+                float const dz = record.Z - last.Z;
+                float dO = std::fabs(record.O - last.O);
+                if (dO > float(M_PI))
+                    dO = 2.0f * float(M_PI) - dO;
+                changed = dx * dx + dy * dy + dz * dz > moveYards * moveYards || dO > FACING_RAD;
+            }
+            last.SeenMs = now;
+            if (!changed)
+                continue;
+            last.X = record.X;
+            last.Y = record.Y;
+            last.Z = record.Z;
+            last.O = record.O;
+            last.Sig = sig.Hash;
+            last.SpawnId = record.SpawnId;
+            last.Entry = record.Entry;
+            last.UnitType = record.UnitType;
+            last.Gone = false;
+            Writer().Write(F::Stream::Snapshot, mapId, record);
+        }
+
+        for (GameObject* go : lists.Objects)
+        {
             uint64 const guid = go->GetGUID().GetRawValue();
             uint32 const packed = PackedGoState(go);
-            state.GoSeen.insert(guid);
-            auto const known = state.GoStates.find(guid);
-            if (known == state.GoStates.end())
-            {
-                state.GoStates[guid] = packed;
-                WriteGameObject(player, state, go, 0, now);
-            }
-            else if (known->second != packed || all)
-            {
-                known->second = packed;
-                WriteGameObject(player, state, go, all ? 0 : 1, now);
-            }
-        });
-        for (auto itr = state.GoStates.begin(); itr != state.GoStates.end();)
+            auto [itr, created] = capture.Objects.try_emplace(guid);
+            MapCapture::ObjectLast& last = itr->second;
+            last.SeenMs = now;
+            if (!created && !last.Gone && last.Packed == packed)
+                continue;
+            uint8 const event = created || last.Gone ? 0 : 1;
+            last.Packed = packed;
+            last.Gone = false;
+            WriteGameObject(mapId, observerId, go, event, now);
+        }
+
+        // Gone: a last record for what no pass sees any more; forgotten after FORGET_MS.
+        for (auto itr = capture.Units.begin(); itr != capture.Units.end();)
         {
-            if (state.GoSeen.contains(itr->first))
+            MapCapture::UnitLast& last = itr->second;
+            if (last.SeenMs == now)
             {
                 ++itr;
                 continue;
             }
-            // Gone from the client's view (despawned, or out of range): its last state is what the tools keep.
-            F::GameObjectState record;
-            record.Ms = now;
-            record.Player = state.Id;
-            record.Object = Writer().UnitId(itr->first, false);
-            record.GoState = uint8(itr->second & 0xFF);
-            record.LootState = uint8(itr->second >> 8 & 0xFF);
-            record.Flags = itr->second >> 16;
-            record.Event = 2;
-            Writer().Write(F::Stream::Snapshot, player->GetMapId(), state.Slot, record);
-            itr = state.GoStates.erase(itr);
+            if (!last.Gone)
+            {
+                last.Gone = true;
+                F::UnitState record;
+                record.Ms = now;
+                record.Player = observerId;
+                record.Unit = Writer().UnitId(itr->first, ObjectGuid(itr->first).IsPlayer());
+                record.SpawnId = last.SpawnId;
+                record.Entry = last.Entry;
+                record.UnitType = last.UnitType;
+                record.X = last.X;
+                record.Y = last.Y;
+                record.Z = last.Z;
+                record.O = last.O;
+                record.Flags = 128;
+                record.Auras = auras.data();
+                record.Threats = threats.data();
+                Writer().Write(F::Stream::Snapshot, mapId, record);
+            }
+            if (now - last.SeenMs > FORGET_MS)
+                itr = capture.Units.erase(itr);
+            else
+                ++itr;
+        }
+        for (auto itr = capture.Objects.begin(); itr != capture.Objects.end();)
+        {
+            MapCapture::ObjectLast& last = itr->second;
+            if (last.SeenMs == now)
+            {
+                ++itr;
+                continue;
+            }
+            if (!last.Gone)
+            {
+                last.Gone = true;
+                F::GameObjectState record;
+                record.Ms = now;
+                record.Player = observerId;
+                record.Object = Writer().UnitId(itr->first, false);
+                record.GoState = uint8(last.Packed & 0xFF);
+                record.LootState = uint8(last.Packed >> 8 & 0xFF);
+                record.Flags = last.Packed >> 16;
+                record.Event = 2;
+                Writer().Write(F::Stream::Snapshot, mapId, record);
+            }
+            if (now - last.SeenMs > FORGET_MS)
+                itr = capture.Objects.erase(itr);
+            else
+                ++itr;
         }
     }
 
-    /// One UnitState per visible unit within the recording's range, nearest first, the party and the pet always.
-    void WriteUnitStates(Player* player, PlayerState& state, uint64 now)
-    {
-        CaptureConfig::RecordingConfig const& settings = Writer().Recording();
-        struct Near
-        {
-            Unit* U = nullptr;
-            float Distance = 0.0f;
-            bool Always = false;
-        };
-        thread_local std::vector<Near> near;
-        near.clear();
-        Group const* group = player->GetGroup();
-        if (group)
-            for (Group::MemberSlot const& memberSlot : group->GetMemberSlots())
-                if (Player* member = ObjectAccessor::GetPlayer(*player, memberSlot.guid); member && member != player)
-                    near.push_back({ member, player->GetExactDist(member), true });
-        if (Pet* pet = player->GetPet())
-            near.push_back({ pet, player->GetExactDist(pet), true });
-        ObjectGuid const playerGuid = player->GetGUID();
-        player->DoForAllVisibleWorldObjects([&](WorldObject* object)
-        {
-            Unit* unit = object ? object->ToUnit() : nullptr;
-            if (!unit || unit == player || !unit->IsInWorld())
-                return;
-            if (unit->GetOwnerGUID() == playerGuid && unit->IsPet())
-                return;
-            if (group && unit->IsPlayer() && player->IsInSameGroupWith(unit->ToPlayer()))
-                return;
-            float const distance = player->GetExactDist(unit);
-            if (distance > settings.UnitRange)
-                return;
-            near.push_back({ unit, distance, false });
-        });
-        std::sort(near.begin(), near.end(), [](Near const& a, Near const& b)
-        {
-            return a.Always != b.Always ? a.Always : a.Distance < b.Distance;
-        });
+    // ---- chat ------------------------------------------------------------------------------------------------------
 
-        uint32 written = 0;
-        std::array<F::UnitStateAura, MAX_UNIT_AURAS> auras{};
-        std::array<F::UnitStateThreat, MAX_UNIT_THREATS> threats{};
-        for (Near const& candidate : near)
-        {
-            if (!candidate.Always && written >= settings.MaxUnits)
-                break;
-            Unit* unit = candidate.U;
-            Creature* creature = unit->ToCreature();
-            F::UnitState record;
-            record.Ms = now;
-            record.Player = state.Id;
-            record.Unit = IdOf(unit);
-            record.SpawnId = creature ? uint32(creature->GetSpawnId()) : 0;
-            record.Entry = unit->IsPlayer() ? 0 : unit->GetEntry();
-            record.UnitType = unit->IsPlayer() ? 1 : (unit->IsPet() || unit->IsGuardian()) ? 2 : 0;
-            record.Kind = KindOf(player, unit);
-            record.X = unit->GetPositionX();
-            record.Y = unit->GetPositionY();
-            record.Z = unit->GetPositionZ();
-            record.O = unit->GetOrientation();
-            VelocityOf(unit, record.VX, record.VY, record.VZ);
-            record.MoveFlags = unit->GetUnitMovementFlags();
-            record.Health = unit->GetHealth();
-            record.MaxHealth = unit->GetMaxHealth();
-            record.PowerType = uint8(unit->getPowerType());
-            record.Power = unit->GetPower(unit->getPowerType());
-            record.MaxPower = unit->GetMaxPower(unit->getPowerType());
-            record.Level = unit->GetLevel();
-            bool const hostile = player->IsHostileTo(unit);
-            record.Reaction = hostile ? 0 : player->IsFriendlyTo(unit) ? 2 : 1;
-            if (creature)
-            {
-                record.ReactState = uint8(creature->GetReactState());
-                record.Rank = uint8(creature->GetCreatureTemplate()->rank);
-                record.Boss = creature->IsDungeonBoss() ? 1 : 0;
-                float homeO = 0.0f;
-                creature->GetHomePosition(record.HomeX, record.HomeY, record.HomeZ, homeO);
-                if (CreatureGroup const* formation = creature->GetFormation())
-                    if (Creature const* leader = formation->GetLeader())
-                        record.FormationLeaderSpawn = uint32(leader->GetSpawnId());
-                if (creature->isTappedBy(player))
-                    record.Flags |= 64;
-            }
-            record.UnitFlags = uint32(unit->GetUnitFlags());
-            record.NpcFlags = uint32(unit->GetNpcFlags());
-            record.DynamicFlags = unit->GetDynamicFlags();
-            record.UnitStateFlags = unit->GetUnitState();
-            record.DeathState = uint8(unit->getDeathState());
-            record.Target = IdOf(unit->GetTarget());
-            record.Victim = IdOf(unit->GetVictim());
-            record.CastingSpell = CastingSpell(unit);
-            record.CastLeftMs = CastLeftMs(unit);
-            record.MotionType = uint8(unit->GetMotionMaster()->GetCurrentMovementGeneratorType());
-            if (unit->IsInCombat())
-                record.Flags |= 1;
-            if (creature && creature->IsInEvadeMode())
-                record.Flags |= 2;
-            if (candidate.Always)
-                record.Flags |= unit->IsPlayer() ? 4 : 8;
-            if (unit->IsPlayer() && sAnimusMod->IsBot(unit->GetGUID()))
-                record.Flags |= 16;
-
-            uint8 auraCount = 0;
-            for (auto const& [spellId, application] : unit->GetAppliedAuras())
-            {
-                if (auraCount >= MAX_UNIT_AURAS)
-                    break;
-                Aura const* aura = application->GetBase();
-                auras[auraCount++] = { aura->GetId(), uint8(std::min<uint32>(255, aura->GetStackAmount())),
-                    aura->GetDuration(), uint8(application->IsPositive() ? 1 : 0), IdOf(aura->GetCasterGUID()) };
-            }
-            record.Auras = auras.data();
-            record.AuraCount = auraCount;
-
-            uint8 threatCount = 0;
-            if (creature && creature->CanHaveThreatList())
-            {
-                bool engaged = false;
-                for (ThreatReference const* reference : creature->GetThreatMgr().GetUnsortedThreatList())
-                {
-                    Unit const* victim = reference->GetVictim();
-                    if (!victim)
-                        continue;
-                    if (victim == player || (group && victim->IsPlayer() && player->IsInSameGroupWith(victim->ToPlayer()))
-                        || (victim->GetOwnerGUID() == playerGuid))
-                        engaged = true;
-                    if (threatCount < MAX_UNIT_THREATS)
-                        threats[threatCount++] = { IdOf(victim), reference->GetThreat() };
-                }
-                if (engaged)
-                    record.Flags |= 32;
-            }
-            record.Threats = threats.data();
-            record.ThreatCount = threatCount;
-
-            Writer().Write(F::Stream::Snapshot, player->GetMapId(), state.Slot, record);
-            ++written;
-        }
-        state.LastUnitMs = now;
-    }
-
-    // ---- chat and raw packets --------------------------------------------------------------------------------------
-
-    bool PacketSkipped(uint16 opcode)
-    {
-        std::vector<uint16> const& skip = Writer().Recording().PacketSkip;
-        return std::binary_search(skip.begin(), skip.end(), opcode);
-    }
-
-    /// A packet both ways into the recording's packet stream, in chunks, cut at Recording.PacketMaxBytes.
-    void WriteRawPacket(uint16 slot, uint64 playerId, uint32 map, WorldPacket const& packet, uint8 direction)
-    {
-        if (!slot || !Writer().Recording().Packets || PacketSkipped(packet.GetOpcode()))
-            return;
-        uint64 const now = CaptureWriter::NowMs();
-        uint32 const serverMs = getMSTime();
-        uint32 const total = uint32(packet.size());
-        uint32 const kept = std::min<uint32>(total, Writer().Recording().PacketMaxBytes);
-        uint8 const* bytes = kept ? packet.contents() : nullptr;
-        uint32 offset = 0;
-        do
-        {
-            uint32 const length = std::min<uint32>(uint32(F::RAW_PACKET_CHUNK), kept - offset);
-            F::RawPacket record;
-            record.Ms = now;
-            record.Player = playerId;
-            record.Direction = direction;
-            record.Opcode = packet.GetOpcode();
-            record.ServerMs = serverMs;
-            record.Total = total;
-            record.Offset = offset;
-            record.Flags = (kept < total ? 1 : 0) | (offset + length < kept ? 2 : 0);
-            record.Bytes = bytes ? bytes + offset : nullptr;
-            record.Length = uint16(length);
-            Writer().Write(F::Stream::Packet, map, slot, record);
-            offset += length;
-        } while (offset < kept);
-    }
-
-    /// Who said it, as the recorder's client would tell: themself, someone in their group, a bot, a creature, any
+    /// Who said it, as the player's client would tell: themself, someone in their group, a bot, a creature, any
     /// other player, or the system.
-    uint8 SenderKindOf(Player* recorder, ObjectGuid sender, uint32& entry)
+    uint8 SenderKindOf(Player* player, ObjectGuid sender, uint32& entry)
     {
         entry = 0;
         if (!sender)
             return 5;
-        if (sender == recorder->GetGUID())
+        if (sender == player->GetGUID())
             return 0;
         if (sender.IsPlayer())
         {
             if (sAnimusMod->IsBot(sender))
                 return 2;
-            if (Group const* group = recorder->GetGroup(); group && group->IsMember(sender))
+            if (Group const* group = player->GetGroup(); group && group->IsMember(sender))
                 return 1;
             return 4;
         }
@@ -998,60 +1152,53 @@ namespace
         return 3;
     }
 
-    void WriteChat(Player* recorder, uint16 slot, uint8 direction, uint8 type, uint32 language, ObjectGuid sender,
+    void WriteChat(Player* player, uint8 direction, uint8 type, uint32 language, ObjectGuid sender,
         ObjectGuid receiver, std::string_view text)
     {
-        if (!slot)
+        if (!Writer().On(F::Stream::Note))
             return;
         uint32 entry = 0;
-        uint8 const senderKind = SenderKindOf(recorder, sender, entry);
-        bool const redact = senderKind == 4 && !Writer().Recording().OthersChat;
-        std::string stars;
-        if (redact)
-            stars.assign(std::min<std::size_t>(text.size(), 512), '*');
         F::Chat record;
         record.Ms = CaptureWriter::NowMs();
-        record.Player = PlayerIdOf(recorder);
+        record.Player = PlayerIdOf(player);
         record.Direction = direction;
         record.ChatType = type;
         record.Language = language;
         record.Sender = IdOf(sender);
-        record.SenderKind = senderKind;
+        record.SenderKind = SenderKindOf(player, sender, entry);
         record.SenderEntry = entry;
         record.Receiver = IdOf(receiver);
-        record.Redacted = redact ? 1 : 0;
-        record.Text = redact ? std::string_view(stars) : text.substr(0, 4000);
-        Writer().Write(F::Stream::Note, recorder->GetMapId(), slot, record);
+        record.Redacted = 0;
+        record.Text = text.substr(0, 4000);
+        Writer().Write(F::Stream::Note, CaptureWriter::MAP_ALL, record);
     }
 
     /// The player's session, started the first time a hook sees it with capture on: at login for players, at
-    /// their first update for companions (whose loading need not pass through a login). The state alone, when
-    /// `write` is false (a recording about to start on a player the automatic tier never began).
-    PlayerState* Begin(Player* player, bool write = true)
+    /// their first update for companions (whose loading need not pass through a login). The session's records,
+    /// then the dumps.
+    PlayerState* Begin(Player* player)
     {
         PlayerState* state = player->CustomData.GetDefault<PlayerState>(STATE_KEY);
-        if (state->Started || (!write && state->Id))
+        if (state->Started)
             return state;
 
         uint64 const now = CaptureWriter::NowMs();
-        if (!state->Id)
-        {
-            state->Id = IdOf(player);
-            state->Session = Writer().SessionId(player->GetGUID().GetRawValue(), now);
-            state->Kind = sAnimusMod->IsBot(player->GetGUID()) ? 1 : 0;
-            RefreshContext(player, *state);
-            state->GroupSig = GroupSignature(player);
-            state->LastLatencyMs = now;
-            state->LastSpellsMs = now;
-            state->Speeds = SpeedsOf(player);
-        }
-        if (!write)
-            return state;
+        state->Id = IdOf(player);
+        state->Session = Writer().SessionId(player->GetGUID().GetRawValue(), now);
+        state->Kind = sAnimusMod->IsBot(player->GetGUID()) ? 1 : 0;
+        RefreshContext(player, *state);
+        state->GroupSig = GroupSignature(player);
+        state->LastLatencyMs = now;
+        state->LastSpellsMs = now;
+        state->Speeds = SpeedsOf(player);
         state->Started = true;
-        WriteSession(player, *state, now, false, 0);
-        WriteKnownSpells(player, *state, now, 0);
-        WriteGroup(player, *state, now, 0);
+        WriteSession(player, *state, now, false);
+        WriteKnownSpells(player, *state, now);
+        WriteGroup(player, *state, now);
         WriteSpeeds(player, *state, now);
+        WriteInventory(player, *state, now);
+        WriteActionButtons(player, *state, now);
+        WriteTalents(player, *state, now);
         return state;
     }
 
@@ -1074,7 +1221,7 @@ namespace
         if (state.MoverWritten && mount == state.MoverMount && form == state.MoverForm && combat == state.MoverCombat
             && state.Level == state.MoverLevel && state.Map == state.MoverMap && state.Zone == state.MoverZone
             && state.Model == state.MoverModel && state.MoveRevision == state.MoverRevision && state.Kind
-            == state.MoverKind && state.Slot == state.MoverSlot)
+            == state.MoverKind)
             return;
         state.MoverWritten = true;
         state.MoverMount = mount;
@@ -1086,7 +1233,6 @@ namespace
         state.MoverModel = state.Model;
         state.MoverRevision = state.MoveRevision;
         state.MoverKind = state.Kind;
-        state.MoverSlot = state.Slot;
 
         F::MoverState record;
         record.Ms = now;
@@ -1102,7 +1248,7 @@ namespace
         record.InCombat = combat ? 1 : 0;
         record.MoveRevision = state.Kind ? state.MoveRevision : 0;
         record.Model = state.Kind ? std::string_view(state.Model) : std::string_view();
-        Writer().Write(F::Stream::Move, player->GetMapId(), state.Slot, record);
+        Writer().Write(F::Stream::Move, player->GetMapId(), record);
     }
 
     constexpr uint64 TALLY_EVERY_MS = 60000;
@@ -1118,23 +1264,19 @@ namespace
         state.LastTallyMs = now;
         state.TallySent = state.MovesSent;
         state.TallyKept = state.MovesKept;
-        Writer().Write(F::Stream::Move, player->GetMapId(), state.Slot,
+        Writer().Write(F::Stream::Move, player->GetMapId(),
             F::MoveTally{ now, state.Id, state.Kind, state.MovesSent, state.MovesKept });
     }
 
     /// A MapUpdate for the map instance `player` is on, the first time one of its movers updates in this world tick
     /// (each map's players update on its own thread, every world tick, with the same diff). Keyed per thread by the
-    /// map and the tick's game time, so a map is written once a tick whichever thread updates it; a recorder's map
-    /// is written to its recording as well.
+    /// map and the tick's game time, so a map is written once a tick whichever thread updates it.
     void WriteMapUpdate(Player* player, uint32 diff)
     {
-        if (!player->IsInWorld())
+        if (!player->IsInWorld() || !Writer().On(F::Stream::Move))
             return;
         Map const* map = player->FindMap();
         if (!map)
-            return;
-        uint16 const slot = SlotOf(player);
-        if (!Writer().On(F::Stream::Move) && !slot)
             return;
         struct Last
         {
@@ -1143,9 +1285,6 @@ namespace
         };
         thread_local std::unordered_map<Map const*, Last> written;
         uint64 const tick = GameMs();
-        F::MapUpdate const record{ CaptureWriter::NowMs(), map->GetId(), map->GetInstanceId(), diff };
-        if (slot)
-            Writer().Write(F::Stream::Move, map->GetId(), slot, record);
         Last& last = written[map];
         if (last.Tick == tick && last.Instance == map->GetInstanceId())
             return;
@@ -1156,7 +1295,8 @@ namespace
             // Maps come and go (instances): keep only this tick's.
             std::erase_if(written, [tick](auto const& entry) { return entry.second.Tick != tick; });
         }
-        Writer().Write(F::Stream::Move, map->GetId(), record);
+        Writer().Write(F::Stream::Move, map->GetId(),
+            F::MapUpdate{ CaptureWriter::NowMs(), map->GetId(), map->GetInstanceId(), diff });
     }
 
     /// Edges of what moves the player without its keys, and of its mode, polled each update.
@@ -1164,12 +1304,7 @@ namespace
     {
         uint64 const id = state.Id;
 
-        uint32 mount = 0;
-        if (player->IsMounted())
-        {
-            Unit::AuraEffectList const& mounts = player->GetAuraEffectsByType(SPELL_AURA_MOUNTED);
-            mount = mounts.empty() ? 1 : mounts.front()->GetId();
-        }
+        uint32 const mount = MountSpellOf(player);
         if (mount != state.Mount)
         {
             if (state.Mount)
@@ -1334,15 +1469,13 @@ namespace
             if (group && unit->IsPlayer() && player->IsInSameGroupWith(unit->ToPlayer()))
                 return;                     // a party member, already listed
             float const distance = player->GetExactDist(unit);
-            if (distance > UNIT_RANGE)
+            if (distance > SNAPSHOT_RANGE)
                 return;
             candidates.push_back({ unit, distance, false, !player->IsFriendlyTo(unit) });
         });
         std::sort(candidates.begin(), candidates.end(),
             [](Candidate const& a, Candidate const& b) { return a.Distance < b.Distance; });
 
-        if (!Writer().OnFor(F::Stream::Snapshot, state.Slot))
-            return;
         F::Out& out = Writer().Scratch();
         F::SnapshotBuilder snapshot(out, now, state.Id, self);
         uint32 hostile = 0;
@@ -1370,87 +1503,40 @@ namespace
                 snapshot.Cooldown({ spellId, cooldown.end - msNow });
 
         snapshot.Finish();
-        Writer().Commit(F::Stream::Snapshot, player->GetMapId(), state.Slot, out);
-    }
-
-    /// A recording player arrived on a map instance (or started recording on one): the map's spawn table (once a
-    /// map id per recording), who is alive in the instance, every visible game object, and the manifest's list.
-    void EnterMap(Player* player, PlayerState& state, uint64 now)
-    {
-        Map* map = player->FindMap();
-        if (!map || !state.Slot)
-            return;
-        state.LastMapId = map->GetId();
-        state.LastMapInstance = map->GetInstanceId();
-        state.MapsVisited.emplace_back(map->GetId(), map->GetInstanceId());
-        if (state.SpawnsWritten.insert(map->GetId()).second)
-            WriteMapSpawns(map->GetId(), state.Slot, now);
-        WriteInstanceCreatures(map, state.Slot, now);
-        state.GoStates.clear();
-        PollGameObjects(player, state, now, true);
-    }
-
-    /// The automatic tier is taking anything at all.
-    bool AnyAutoOn()
-    {
-        for (uint32 i = 1; i <= F::STREAM_COUNT; ++i)
-            if (Writer().On(F::Stream(i)))
-                return true;
-        return false;
+        Writer().Commit(F::Stream::Snapshot, player->GetMapId(), out);
     }
 
     /// Everything polled at a player's update: its session's context, latency and spells, its speeds and motion
-    /// edges, and its snapshot when due; a recording's units, objects, numbers and dumps at their own rates.
+    /// edges, its dumps, numbers and snapshot at their rates; and, for a human, its map's pass when due.
     void Update(Player* player)
     {
-        if (!player->IsInWorld())
+        if (!player->IsInWorld() || !Writer().AnyOn())
             return;
-        bool const autoOn = AnyAutoOn();
         PlayerState* state = StateOf(player);
-        if (!state)
-        {
-            if (!autoOn)
-                return;
+        if (!state || !state->Started)
             state = Begin(player);
-        }
-        else if (!state->Started && autoOn)
-            Begin(player);
-        uint16 const slot = state->Slot;
-        if (!slot && !autoOn)
-            return;
         uint64 const now = CaptureWriter::NowMs();
 
         if (!state->Kind && sAnimusMod->IsBot(player->GetGUID()))
         {
             // A companion whose login came before its party knew it.
             state->Kind = 1;
-            WriteSession(player, *state, now, true, slot);
-        }
-
-        if (slot)
-        {
-            // The map knows who records on it, for the hooks of the units around the recorder.
-            if (Map* map = player->FindMap())
-            {
-                map->CustomData.GetDefault<MapRecorders>(MAP_KEY)->Stamp(slot, state->Id, GameMs());
-                if (map->GetId() != state->LastMapId || map->GetInstanceId() != state->LastMapInstance)
-                    EnterMap(player, *state, now);
-            }
+            WriteSession(player, *state, now, true);
         }
 
         uint64 const groupSig = GroupSignature(player);
         bool const groupChanged = groupSig != state->GroupSig;
         state->GroupSig = groupSig;
         if (RefreshContext(player, *state) || groupChanged)
-            WriteSession(player, *state, now, true, slot);
+            WriteSession(player, *state, now, true);
         if (groupChanged)
-            WriteGroup(player, *state, now, slot);
+            WriteGroup(player, *state, now);
 
         if (now - state->LastLatencyMs >= LATENCY_EVERY_MS)
         {
             state->LastLatencyMs = now;
             if (!state->Kind && player->GetSession())
-                Writer().Write(F::Stream::Session, CaptureWriter::MAP_ALL, slot, F::Latency{ now, state->Id,
+                Writer().Write(F::Stream::Session, CaptureWriter::MAP_ALL, F::Latency{ now, state->Id,
                     uint16(std::min<uint32>(0xFFFF, player->GetSession()->GetLatency())) });
         }
 
@@ -1458,10 +1544,10 @@ namespace
         {
             state->SpellsDirty = false;
             state->LastSpellsMs = now;
-            WriteKnownSpells(player, *state, now, slot);
+            WriteKnownSpells(player, *state, now);
         }
 
-        if (Writer().OnFor(F::Stream::Move, slot))
+        if (Writer().On(F::Stream::Move))
         {
             std::array<float, 9> const speeds = SpeedsOf(player);
             if (speeds != state->Speeds)
@@ -1474,33 +1560,21 @@ namespace
             WriteTally(player, *state, now, false);
         }
 
-        if (slot)
-        {
-            CaptureConfig::RecordingConfig const& settings = Writer().Recording();
-            if (state->InventoryDirty && now - state->LastInventoryMs >= INVENTORY_EVERY_MS)
-                WriteInventory(player, *state, now);
-            if (state->ButtonsDirty)
-                WriteActionButtons(player, *state, now);
-            if (state->RecTalentsDirty)
-                WriteTalents(player, *state, now);
-            if (now - state->LastDetailMs >= DETAIL_EVERY_MS)
-                WritePlayerDetail(player, *state, now);
-            if (now - state->LastUnitMs >= settings.UnitMs)
-            {
-                WriteUnitStates(player, *state, now);
-                PollGameObjects(player, *state, now, false);
-            }
-            if (now - state->LastSnapshotMs >= settings.SnapshotMs)
-            {
-                state->LastSnapshotMs = now;
-                WriteSnapshot(player, *state, now);
-            }
-            return;
-        }
+        if (state->InventoryDirty && now - state->LastInventoryMs >= INVENTORY_EVERY_MS)
+            WriteInventory(player, *state, now);
+        if (state->ButtonsDirty)
+            WriteActionButtons(player, *state, now);
+        if (state->TalentDumpDirty)
+            WriteTalents(player, *state, now);
+        if (now - state->LastDetailMs >= Writer().DetailMs())
+            WritePlayerDetail(player, *state, now);
 
-        // Companions' own decisions and motion are the companion stream's; snapshots are of the players.
+        // Companions' own decisions and motion are the companion stream's; snapshots and the map passes are the
+        // humans'.
         if (state->Kind || !Writer().On(F::Stream::Snapshot))
             return;
+        if (Map* map = player->FindMap())
+            PassMap(map, now);
         bool const active = player->IsInCombat() || player->isMoving();
         uint32 const interval = active ? Writer().SnapshotMs() : Writer().IdleSnapshotMs();
         if (now - state->LastSnapshotMs >= interval)
@@ -1509,8 +1583,6 @@ namespace
             WriteSnapshot(player, *state, now);
         }
     }
-
-    bool AnyOn() { return AnyAutoOn() || Writer().AnyRecording(); }
 
     /// A packet's payload, read without moving its read position (the hooks get it const, before its handler).
     class PacketReader
@@ -1596,8 +1668,8 @@ namespace
             hasDest = in.ReadPacked(ignored) && in.Read(x) && in.Read(y) && in.Read(z);
     }
 
-    /// A chat line the server shows the recorder (SMSG_MESSAGECHAT, SMSG_GM_MESSAGECHAT: ChatHandler::BuildChatPacket).
-    void ReadChatShown(Player* recorder, uint16 slot, WorldPacket const& packet)
+    /// A chat line the server shows the player (SMSG_MESSAGECHAT, SMSG_GM_MESSAGECHAT: ChatHandler::BuildChatPacket).
+    void ReadChatShown(Player* player, WorldPacket const& packet)
     {
         PacketReader in(packet);
         uint8 type = 0;
@@ -1605,6 +1677,8 @@ namespace
         uint64 sender = 0;
         uint32 flags = 0;
         if (!in.Read(type) || !in.Read(language) || !in.Read(sender) || !in.Read(flags))
+            return;
+        if (language == int32(LANG_ADDON))
             return;
         uint64 receiver = 0;
         uint32 nameLength = 0;
@@ -1668,12 +1742,12 @@ namespace
         std::string_view text;
         if (!in.Read(textLength) || !in.ReadString(text))
             return;
-        WriteChat(recorder, slot, 1, type, uint32(language), ObjectGuid(sender), ObjectGuid(receiver), text);
+        WriteChat(player, 1, type, uint32(language), ObjectGuid(sender), ObjectGuid(receiver), text);
     }
 
-    /// A text emote shown to the recorder (SMSG_TEXT_EMOTE: u64 sender, u32 emote, u32 emote number, u32 name
+    /// A text emote shown to the player (SMSG_TEXT_EMOTE: u64 sender, u32 emote, u32 emote number, u32 name
     /// length, name): kept as a Chat line "emote:<id>" of type CHAT_MSG_TEXT_EMOTE.
-    void ReadTextEmote(Player* recorder, uint16 slot, WorldPacket const& packet)
+    void ReadTextEmote(Player* player, WorldPacket const& packet)
     {
         PacketReader in(packet);
         uint64 sender = 0;
@@ -1681,7 +1755,7 @@ namespace
         if (!in.Read(sender) || !in.Read(emote))
             return;
         std::string const text = Acore::StringFormat("emote:{}", emote);
-        WriteChat(recorder, slot, 1, CHAT_MSG_TEXT_EMOTE, 0, ObjectGuid(sender), recorder->GetGUID(), text);
+        WriteChat(player, 1, CHAT_MSG_TEXT_EMOTE, 0, ObjectGuid(sender), player->GetGUID(), text);
     }
 
     void WriteInteract(Player* player, F::Interaction what, ObjectGuid target, uint32 arg)
@@ -1689,7 +1763,7 @@ namespace
         WorldObject const* object = target ? ObjectAccessor::GetWorldObject(*player, target) : nullptr;
         F::Interact record{ CaptureWriter::NowMs(), PlayerIdOf(player), what, object ? object->GetEntry() : 0,
             IdOf(target), arg, SpawnIdOf(object) };
-        Writer().Write(F::Stream::Action, player->GetMapId(), SlotOf(player), record);
+        Writer().Write(F::Stream::Action, player->GetMapId(), record);
     }
 
     void HandleClientPacket(Player* player, WorldPacket const& packet)
@@ -1697,7 +1771,6 @@ namespace
         PacketReader in(packet);
         uint64 const now = CaptureWriter::NowMs();
         uint32 const map = player->GetMapId();
-        uint16 const slot = SlotOf(player);
         switch (packet.GetOpcode())
         {
             case CMSG_CAST_SPELL:
@@ -1729,7 +1802,7 @@ namespace
                 record.Casting = player->IsNonMeleeSpellCast(false) ? 1 : 0;
                 record.Power = player->GetPower(player->getPowerType());
                 record.PowerType = uint8(player->getPowerType());
-                Writer().Write(F::Stream::Action, map, slot, record);
+                Writer().Write(F::Stream::Action, map, record);
                 return;
             }
             case CMSG_CANCEL_CAST:
@@ -1755,7 +1828,7 @@ namespace
                 WorldObject const* object = target ? ObjectAccessor::GetWorldObject(*player, target) : nullptr;
                 F::Select record{ now, PlayerIdOf(player), IdOf(target), KindOf(player, object),
                     object ? player->GetExactDist(object) : 0.0f };
-                Writer().Write(F::Stream::Action, map, slot, record);
+                Writer().Write(F::Stream::Action, map, record);
                 return;
             }
             case CMSG_USE_ITEM:
@@ -1778,7 +1851,7 @@ namespace
                 ReadTargets(in, target, hasDest, x, y, z);
                 Item const* item = player->GetItemByPos(bag, itemSlot);
                 F::ItemUse record{ now, PlayerIdOf(player), item ? item->GetEntry() : 0, spell, IdOf(target) };
-                Writer().Write(F::Stream::Action, map, slot, record);
+                Writer().Write(F::Stream::Action, map, record);
                 if (PlayerState* state = StateOf(player))
                     state->InventoryDirty = true;
                 return;
@@ -1788,14 +1861,13 @@ namespace
                 uint64 raw = 0;
                 if (!in.Read(raw))
                     return;
-                Writer().Write(F::Stream::Action, map, slot,
-                    F::Attack{ now, PlayerIdOf(player), IdOf(ObjectGuid(raw)), 1 });
+                Writer().Write(F::Stream::Action, map, F::Attack{ now, PlayerIdOf(player), IdOf(ObjectGuid(raw)), 1 });
                 return;
             }
             case CMSG_ATTACKSTOP:
             {
                 Unit const* victim = player->GetVictim();
-                Writer().Write(F::Stream::Action, map, slot, F::Attack{ now, PlayerIdOf(player), IdOf(victim), 0 });
+                Writer().Write(F::Stream::Action, map, F::Attack{ now, PlayerIdOf(player), IdOf(victim), 0 });
                 return;
             }
             default:
@@ -1861,37 +1933,16 @@ namespace
         }
     }
 
-    /// One record to every tier a unit event on `map` belongs to: the automatic tier when `autoTier` (and its
-    /// stream is on), and every recording whose player is on the map.
-    template <typename Record>
-    void WriteOnMap(F::Stream stream, Map* map, uint32 mapId, bool autoTier, Record const& record)
+    /// Who is alive in an instance a human is leaving (a teleport off it, a logout): its last InstanceCreatures.
+    void LeaveMap(Player* player)
     {
-        if (autoTier)
-            Writer().Write(stream, mapId, record);
-        Recorders const recorders = RecordersOn(map);
-        for (uint32 i = 0; i < recorders.Count; ++i)
-            Writer().Write(stream, mapId, recorders.Entries[i].Slot, record);
-    }
-
-    // ---- the manual recordings' bookkeeping (world thread) --------------------------------------------------------
-
-    /// Who records now, by character: the world thread's list for the clock and the writer's stop requests.
-    std::unordered_map<ObjectGuid, uint16> g_recorders;
-
-    std::string RecordingIdFor(Player* player, uint64 now)
-    {
-        std::time_t const seconds = std::time_t(now / 1000);
-        std::tm tm{};
-        gmtime_r(&seconds, &tm);
-        return Acore::StringFormat("{:04}-{:02}-{:02}T{:02}{:02}{:02}Z-{}-{:06x}", tm.tm_year + 1900, tm.tm_mon + 1,
-            tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec, player->GetName(),
-            uint32(player->GetGUID().GetCounter() * 2654435761u ^ uint32(now)) & 0xFFFFFF);
-    }
-
-    void Tell(Player* player, std::string const& text)
-    {
-        if (player->GetSession())
-            ChatHandler(player->GetSession()).SendSysMessage(text);
+        if (!player->IsInWorld() || !IsHuman(player))
+            return;
+        Map* map = player->FindMap();
+        if (!map || !map->Instanceable())
+            return;
+        if (MapCapture const* capture = map->CustomData.Get<MapCapture>(MAP_KEY); capture && capture->Started)
+            WriteInstanceCreatures(map, CaptureWriter::NowMs());
     }
 
     // ---- scripts --------------------------------------------------------------------------------------------------
@@ -1928,10 +1979,10 @@ namespace
                 PLAYERHOOK_CAN_PLAYER_USE_GROUP_CHAT, PLAYERHOOK_CAN_PLAYER_USE_GUILD_CHAT,
                 PLAYERHOOK_CAN_PLAYER_USE_CHANNEL_CHAT }) { }
 
-        /// The automatic tier's session begins at login, with its notice; a manual recording begins at Record.
+        /// The session begins at login, with its notice.
         void OnPlayerLogin(Player* player) override
         {
-            if (!AnyAutoOn())
+            if (!sCaptureWriter->AnyOn())
                 return;
             PlayerState const* state = Begin(player);
             if (!state->Kind && player->GetSession() && !sCaptureWriter->LoginNotice().empty())
@@ -1941,17 +1992,10 @@ namespace
         void OnPlayerLogout(Player* player) override
         {
             PlayerState* state = StateOf(player);
-            if (!state)
+            if (!state || !state->Started)
                 return;
             bool const disconnected = !state->Kind && player->GetSession() && player->GetSession()->IsSocketClosed();
-            if (state->Slot)
-            {
-                std::string message;
-                StopRecording(player, World::IsStopped() ? StopReason::Shutdown : disconnected ? StopReason::Disconnect
-                    : StopReason::Logout, "", "", message);
-            }
-            if (!state->Started)
-                return;
+            LeaveMap(player);
             if (sCaptureWriter->On(F::Stream::Move))
                 WriteTally(player, *state, CaptureWriter::NowMs(), true);
             if (!sCaptureWriter->On(F::Stream::Session))
@@ -1962,12 +2006,13 @@ namespace
             else if (disconnected)
                 reason = 1;
             sCaptureWriter->Write(F::Stream::Session, CaptureWriter::MAP_ALL,
-                F::SessionEnd{ CaptureWriter::NowMs(), state->Id, state->Session, reason });
+                F::SessionEnd{ CaptureWriter::NowMs(), state->Id, state->Session, reason, player->GetMapId(),
+                    player->GetInstanceId() });
         }
 
         void OnPlayerUpdate(Player* player, uint32 diff) override
         {
-            if (!AnyOn())
+            if (!sCaptureWriter->AnyOn())
                 return;
             WriteMapUpdate(player, diff);
             Update(player);
@@ -1978,7 +2023,7 @@ namespace
             if (PlayerState* state = StateOf(player))
             {
                 state->TalentsDirty = true;
-                state->RecTalentsDirty = true;
+                state->TalentDumpDirty = true;
             }
         }
 
@@ -1987,7 +2032,7 @@ namespace
             if (PlayerState* state = StateOf(player))
             {
                 state->TalentsDirty = true;
-                state->RecTalentsDirty = true;
+                state->TalentDumpDirty = true;
             }
         }
 
@@ -1996,7 +2041,7 @@ namespace
             if (PlayerState* state = StateOf(player))
             {
                 state->TalentsDirty = true;
-                state->RecTalentsDirty = true;
+                state->TalentDumpDirty = true;
                 state->SpellsDirty = true;
                 state->ButtonsDirty = true;
             }
@@ -2045,7 +2090,7 @@ namespace
         void OnPlayerMapChanged(Player* player) override
         {
             PlayerState* state = StateOf(player);
-            if (!state || !sCaptureWriter->OnFor(F::Stream::Move, state->Slot))
+            if (!state || !sCaptureWriter->On(F::Stream::Move))
                 return;
             if (state->Loading)
             {
@@ -2057,23 +2102,26 @@ namespace
         bool OnPlayerBeforeTeleport(Player* player, uint32 mapId, float x, float y, float z, float /*o*/,
             uint32 /*options*/, Unit* /*target*/) override
         {
-            PlayerState* state = StateOf(player);
-            if (!sCaptureWriter->OnFor(F::Stream::Move, state ? state->Slot : 0))
+            if (!sCaptureWriter->AnyOn())
                 return true;
+            PlayerState* state = StateOf(player);
             uint64 const id = state ? state->Id : IdOf(player);
             if (mapId != player->GetMapId())
             {
-                WriteMotion(player, id, F::Motion::LoadingStart, mapId);
+                LeaveMap(player);
+                if (sCaptureWriter->On(F::Stream::Move))
+                    WriteMotion(player, id, F::Motion::LoadingStart, mapId);
                 if (state)
                     state->Loading = true;
             }
-            WriteMotion(player, id, F::Motion::Teleport, mapId, x, y, z, mapId);
+            if (sCaptureWriter->On(F::Stream::Move))
+                WriteMotion(id, F::Motion::Teleport, mapId, x, y, z, mapId);
             return true;
         }
 
         void OnPlayerResurrect(Player* player, float /*restorePercent*/, bool& /*applySickness*/) override
         {
-            if (sCaptureWriter->OnFor(F::Stream::Move, SlotOf(player)))
+            if (sCaptureWriter->On(F::Stream::Move))
                 WriteMotion(player, PlayerIdOf(player), F::Motion::Resurrect);
         }
 
@@ -2082,9 +2130,9 @@ namespace
             if (!killer || !killed)
                 return;
             uint64 const now = CaptureWriter::NowMs();
-            sCaptureWriter->Write(F::Stream::Outcome, killer->GetMapId(), SlotOf(killer),
+            sCaptureWriter->Write(F::Stream::Outcome, killer->GetMapId(),
                 F::PvP{ now, PlayerIdOf(killer), PlayerIdOf(killed), 0 });
-            sCaptureWriter->Write(F::Stream::Outcome, killed->GetMapId(), SlotOf(killed),
+            sCaptureWriter->Write(F::Stream::Outcome, killed->GetMapId(),
                 F::PvP{ now, PlayerIdOf(killed), PlayerIdOf(killer), 1 });
         }
 
@@ -2093,9 +2141,9 @@ namespace
             if (type != DUEL_WON || !winner || !loser)
                 return;
             uint64 const now = CaptureWriter::NowMs();
-            sCaptureWriter->Write(F::Stream::Outcome, winner->GetMapId(), SlotOf(winner),
+            sCaptureWriter->Write(F::Stream::Outcome, winner->GetMapId(),
                 F::PvP{ now, PlayerIdOf(winner), PlayerIdOf(loser), 2 });
-            sCaptureWriter->Write(F::Stream::Outcome, loser->GetMapId(), SlotOf(loser),
+            sCaptureWriter->Write(F::Stream::Outcome, loser->GetMapId(),
                 F::PvP{ now, PlayerIdOf(loser), PlayerIdOf(winner), 3 });
         }
 
@@ -2118,7 +2166,7 @@ namespace
 
         void OnPlayerQuestAbandon(Player* player, uint32 questId) override { WriteQuest(player, questId, 3); }
 
-        /// What the recorder says (the five chat hooks): say, yell, emote; whispers; party and raid; guild; channels.
+        /// What the player says (the five chat hooks): say, yell, emote; whispers; party and raid; guild; channels.
         /// The addon's own whispers (LANG_ADDON) are not chat. Never refuses a line.
         bool OnPlayerCanUseChat(Player* player, uint32 type, uint32 language, std::string& msg) override
         {
@@ -2157,23 +2205,20 @@ namespace
     private:
         static void ChatSent(Player* player, uint32 type, uint32 language, std::string const& msg, ObjectGuid receiver)
         {
-            if (language == LANG_ADDON || !player)
+            if (language == LANG_ADDON || !player || !sCaptureWriter->On(F::Stream::Note))
                 return;
-            uint16 const slot = SlotOf(player);
-            if (!slot)
-                return;
-            WriteChat(player, slot, 0, uint8(type), language, player->GetGUID(), receiver, msg);
+            WriteChat(player, 0, uint8(type), language, player->GetGUID(), receiver, msg);
         }
 
         static void WriteArea(Player* player, uint32 zone, uint32 area)
         {
-            sCaptureWriter->Write(F::Stream::Outcome, player->GetMapId(), SlotOf(player),
+            sCaptureWriter->Write(F::Stream::Outcome, player->GetMapId(),
                 F::Area{ CaptureWriter::NowMs(), PlayerIdOf(player), player->GetMapId(), zone, area });
         }
 
         static void WriteQuest(Player* player, uint32 questId, uint8 event)
         {
-            sCaptureWriter->Write(F::Stream::Outcome, player->GetMapId(), SlotOf(player),
+            sCaptureWriter->Write(F::Stream::Outcome, player->GetMapId(),
                 F::Quest{ CaptureWriter::NowMs(), PlayerIdOf(player), questId, event });
         }
     };
@@ -2188,8 +2233,7 @@ namespace
         /// `client_ms` is the client's own clock.
         void OnPlayerMove(Player* player, MovementInfo info, uint32 opcode) override
         {
-            uint16 const slot = SlotOf(player);
-            if (!sCaptureWriter->OnFor(F::Stream::Move, slot))
+            if (!sCaptureWriter->On(F::Stream::Move))
                 return;
             uint64 const id = PlayerIdOf(player);
             F::Move record;
@@ -2216,12 +2260,12 @@ namespace
             PlayerState const* state = StateOf(player);
             bool const companion = state ? state->Kind != 0 : sAnimusMod->IsBot(player->GetGUID());
             record.Source = uint8(companion ? F::MoveSource::ControllerPacket : F::MoveSource::ClientPacket);
-            sCaptureWriter->Write(F::Stream::Move, record.Map, slot, record);
+            sCaptureWriter->Write(F::Stream::Move, record.Map, record);
             if (PlayerState* kept = StateOf(player))
                 ++kept->MovesKept;
 
             if (opcode == CMSG_MOVE_KNOCK_BACK_ACK)
-                WriteMotion(player, id, F::Motion::Knockback, 0, record.X, record.Y, record.Z, record.Map);
+                WriteMotion(id, F::Motion::Knockback, 0, record.X, record.Y, record.Z, record.Map);
         }
     };
 
@@ -2231,70 +2275,66 @@ namespace
         CaptureServerScript() : ServerScript("AnimusCaptureServerScript",
             { SERVERHOOK_CAN_PACKET_RECEIVE, SERVERHOOK_ON_PACKET_SENT }) { }
 
-        /// Never refuses a packet: it only looks.
+        /// Never refuses a packet: it only looks, for the typed action records and the movement tally.
         bool CanPacketReceive(WorldSession* session, WorldPacket const& packet) override
         {
             Player* player = session ? session->GetPlayer() : nullptr;
-            if (!player || !player->IsInWorld())
+            if (!player || !player->IsInWorld() || !sCaptureWriter->AnyOn())
                 return true;
-            uint16 const slot = SlotOf(player);
 
             // A player's movement packet about to reach its handler (MoveTally's `sent`). A companion's never come
             // this way: its client calls the handlers itself and counts there (Capture::MovementSent).
-            if (Animus::Capture::ReachesMoveHook(packet.GetOpcode()) && sCaptureWriter->OnFor(F::Stream::Move, slot))
+            if (Animus::Capture::ReachesMoveHook(packet.GetOpcode()) && sCaptureWriter->On(F::Stream::Move))
                 if (PlayerState* state = StateOf(player))
                     ++state->MovesSent;
 
-            // A recording keeps every packet the client sent, as sent.
-            if (slot)
-            {
-                WriteRawPacket(slot, PlayerIdOf(player), player->GetMapId(), packet, 0);
-                if (packet.GetOpcode() == CMSG_SET_ACTION_BUTTON)
-                    if (PlayerState* state = StateOf(player))
-                        state->ButtonsDirty = true;
-            }
+            if (packet.GetOpcode() == CMSG_SET_ACTION_BUTTON)
+                if (PlayerState* state = StateOf(player))
+                    state->ButtonsDirty = true;
 
-            if (!IsCapturedOpcode(packet.GetOpcode()) || !sCaptureWriter->OnFor(F::Stream::Action, slot))
+            if (!IsCapturedOpcode(packet.GetOpcode()) || !sCaptureWriter->On(F::Stream::Action))
                 return true;
             HandleClientPacket(player, packet);
             return true;
         }
 
-        /// Every packet the server sends a recording player (any thread: the session registry says who records);
-        /// a cast refused (SMSG_CAST_FAILED: u8 count, u32 spell, u8 result), and the environmental damage a player
-        /// takes (SMSG_ENVIRONMENTAL_DAMAGE_LOG: u64 victim, u8 type), kept for its death's cause. Before the
-        /// socket check, so companions' casts count too.
+        /// What the server sends a player that the typed records need (any thread): the chat shown
+        /// (SMSG_MESSAGECHAT, SMSG_GM_MESSAGECHAT, SMSG_TEXT_EMOTE), a cast refused (SMSG_CAST_FAILED: u8 count,
+        /// u32 spell, u8 result), and the environmental damage a player takes (SMSG_ENVIRONMENTAL_DAMAGE_LOG: u64
+        /// victim, u8 type), kept for its death's cause. Before the socket check, so companions' casts count too.
         void OnPacketSent(WorldSession* session, WorldPacket const& packet) override
         {
             uint16 const opcode = packet.GetOpcode();
+            if (opcode != SMSG_CAST_FAILED && opcode != SMSG_ENVIRONMENTAL_DAMAGE_LOG && opcode != SMSG_MESSAGECHAT
+                && opcode != SMSG_GM_MESSAGECHAT && opcode != SMSG_TEXT_EMOTE)
+                return;
             Player* player = session ? session->GetPlayer() : nullptr;
-            CaptureWriter::SessionSlot const recording = sCaptureWriter->SlotOfSession(session);
-            if (recording.Slot && player && player->IsInWorld())
+            if (!player || !player->IsInWorld() || !sCaptureWriter->AnyOn())
+                return;
+            if (opcode == SMSG_MESSAGECHAT || opcode == SMSG_GM_MESSAGECHAT)
             {
-                if (opcode == SMSG_MESSAGECHAT || opcode == SMSG_GM_MESSAGECHAT)
-                    ReadChatShown(player, recording.Slot, packet);
-                else if (opcode == SMSG_TEXT_EMOTE)
-                    ReadTextEmote(player, recording.Slot, packet);
-                WriteRawPacket(recording.Slot, recording.PlayerId, player->GetMapId(), packet, 1);
+                ReadChatShown(player, packet);
+                return;
+            }
+            if (opcode == SMSG_TEXT_EMOTE)
+            {
+                ReadTextEmote(player, packet);
+                return;
             }
 
-            if (opcode != SMSG_CAST_FAILED && opcode != SMSG_ENVIRONMENTAL_DAMAGE_LOG)
-                return;
-            if (!player || !player->IsInWorld())
-                return;
             PacketReader in(packet);
             if (opcode == SMSG_CAST_FAILED)
             {
                 uint8 count = 0;
                 F::CastOutcome record;
-                if (!sCaptureWriter->OnFor(F::Stream::Action, recording.Slot) || !in.Read(count)
-                    || !in.Read(record.Spell) || !in.Read(record.Value))
+                if (!sCaptureWriter->On(F::Stream::Action) || !in.Read(count) || !in.Read(record.Spell)
+                    || !in.Read(record.Value))
                     return;
                 record.Ms = CaptureWriter::NowMs();
                 record.Player = PlayerIdOf(player);
                 F::Out& out = sCaptureWriter->Scratch();
                 record.Write(out, F::Type::CastResult);
-                sCaptureWriter->Commit(F::Stream::Action, player->GetMapId(), recording.Slot, out);
+                sCaptureWriter->Commit(F::Stream::Action, player->GetMapId(), out);
                 return;
             }
 
@@ -2319,18 +2359,15 @@ namespace
         /// A player's cast went off: CastResult "go", and the end of a cast that took time.
         void OnSpellCast(Spell* spell, Unit* caster, SpellInfo const* info, bool /*skipCheck*/) override
         {
-            if (!caster || !caster->IsPlayer() || spell->IsTriggered())
+            if (!caster || !caster->IsPlayer() || spell->IsTriggered() || !sCaptureWriter->On(F::Stream::Action))
                 return;
             Player* player = caster->ToPlayer();
-            uint16 const slot = SlotOf(player);
-            if (!sCaptureWriter->OnFor(F::Stream::Action, slot))
-                return;
             F::CastOutcome record{ CaptureWriter::NowMs(), PlayerIdOf(player), info->Id, F::CAST_GO };
-            Write(player, slot, record, F::Type::CastResult);
+            Write(player, record, F::Type::CastResult);
             if (spell->GetCastTime() > 0 || info->IsChanneled())
             {
                 record.Value = 0;
-                Write(player, slot, record, F::Type::CastEnd);
+                Write(player, record, F::Type::CastEnd);
             }
         }
 
@@ -2338,12 +2375,9 @@ namespace
         /// interrupted by anything else.
         void OnSpellCastCancel(Spell* spell, Unit* caster, SpellInfo const* info, bool /*bySelf*/) override
         {
-            if (!caster || !caster->IsPlayer() || spell->IsTriggered())
+            if (!caster || !caster->IsPlayer() || spell->IsTriggered() || !sCaptureWriter->On(F::Stream::Action))
                 return;
             Player* player = caster->ToPlayer();
-            uint16 const slot = SlotOf(player);
-            if (!sCaptureWriter->OnFor(F::Stream::Action, slot))
-                return;
             uint64 const now = CaptureWriter::NowMs();
             uint8 how = 3;
             PlayerState const* state = StateOf(player);
@@ -2351,15 +2385,15 @@ namespace
                 how = 1;
             else if (state && state->CancelSpell == info->Id && now - state->CancelMs < 2000)
                 how = 2;
-            Write(player, slot, F::CastOutcome{ now, PlayerIdOf(player), info->Id, how }, F::Type::CastEnd);
+            Write(player, F::CastOutcome{ now, PlayerIdOf(player), info->Id, how }, F::Type::CastEnd);
         }
 
     private:
-        static void Write(Player* player, uint16 slot, F::CastOutcome const& record, F::Type type)
+        static void Write(Player* player, F::CastOutcome const& record, F::Type type)
         {
             F::Out& out = sCaptureWriter->Scratch();
             record.Write(out, type);
-            sCaptureWriter->Commit(F::Stream::Action, player->GetMapId(), slot, out);
+            sCaptureWriter->Commit(F::Stream::Action, player->GetMapId(), out);
         }
     };
 
@@ -2370,48 +2404,47 @@ namespace
             { UNITHOOK_ON_HEAL, UNITHOOK_ON_UNIT_DEATH, UNITHOOK_ON_UNIT_ENTER_COMBAT, UNITHOOK_ON_UNIT_EXIT_COMBAT,
                 UNITHOOK_ON_UNIT_ENTER_EVADE_MODE }) { }
 
-        /// Every damage event (map threads), when either side is a player or a companion -- or anyone's, on a map
-        /// somebody records. The hook carries no spell, school, absorb or crit: those are written 0; a DoT tick is
-        /// flagged periodic.
+        /// Every damage event (map threads) when either side is a player's (a player, their pet, guardian or
+        /// charm), or on a map a human is on. The hook carries no spell, school, absorb or crit: those are written
+        /// 0; a DoT tick is flagged periodic.
         uint32 DealDamage(Unit* attacker, Unit* victim, uint32 damage, DamageEffectType type) override
         {
-            if (!damage || !victim)
+            if (!damage || !victim || !sCaptureWriter->On(F::Stream::Outcome))
                 return damage;
-            bool const players = victim->IsPlayer() || (attacker && attacker->IsPlayer());
-            if (!players && !sCaptureWriter->AnyRecording())
+            uint64 const now = CaptureWriter::NowMs();
+            if (!PlayerOwned(victim) && !PlayerOwned(attacker) && !MapFresh(victim->FindMap(), now))
                 return damage;
             uint32 const health = victim->GetHealth();
-            F::Damage record{ CaptureWriter::NowMs(), IdOf(attacker), IdOf(victim), 0, damage, 0,
-                damage > health ? damage - health : 0, 0, uint8(type == DOT ? 2 : 0) };
-            WriteOnMap(F::Stream::Outcome, victim->FindMap(), victim->GetMapId(), players, record);
+            F::Damage record{ now, IdOf(attacker), IdOf(victim), 0, damage, 0, damage > health ? damage - health : 0,
+                0, uint8(type == DOT ? 2 : 0) };
+            sCaptureWriter->Write(F::Stream::Outcome, victim->GetMapId(), record);
             return damage;
         }
 
-        /// Health actually restored (Unit::DealHeal), when either side is a player or a companion; spell and
-        /// overheal are not in the hook and are written 0.
+        /// Health actually restored (Unit::DealHeal), under the same gate; spell and overheal are not in the hook
+        /// and are written 0.
         void OnHeal(Unit* healer, Unit* receiver, uint32& gain) override
         {
-            if (!gain || !receiver)
+            if (!gain || !receiver || !sCaptureWriter->On(F::Stream::Outcome))
                 return;
-            bool const players = receiver->IsPlayer() || (healer && healer->IsPlayer());
-            if (!players && !sCaptureWriter->AnyRecording())
+            uint64 const now = CaptureWriter::NowMs();
+            if (!PlayerOwned(receiver) && !PlayerOwned(healer) && !MapFresh(receiver->FindMap(), now))
                 return;
-            F::Heal record{ CaptureWriter::NowMs(), IdOf(healer), IdOf(receiver), 0, gain, 0, 0 };
-            WriteOnMap(F::Stream::Outcome, receiver->FindMap(), receiver->GetMapId(), players, record);
+            F::Heal record{ now, IdOf(healer), IdOf(receiver), 0, gain, 0, 0 };
+            sCaptureWriter->Write(F::Stream::Outcome, receiver->GetMapId(), record);
         }
 
         void OnUnitDeath(Unit* unit, Unit* killer) override
         {
-            if (!unit)
+            if (!unit || !sCaptureWriter->AnyOn())
                 return;
             uint64 const now = CaptureWriter::NowMs();
             Player* owner = killer ? killer->GetCharmerOrOwnerPlayerOrPlayerItself() : nullptr;
-            bool const players = owner || unit->IsPlayer();
-            if (players || sCaptureWriter->AnyRecording())
+            if (owner || unit->IsPlayer() || MapFresh(unit->FindMap(), now))
             {
                 F::Kill record{ now, IdOf(killer), IdOf(unit), unit->IsPlayer() ? 0 : unit->GetEntry(),
                     owner ? KindOf(owner, unit) : F::TargetKind::None, SpawnIdOf(unit) };
-                WriteOnMap(F::Stream::Outcome, unit->FindMap(), unit->GetMapId(), players, record);
+                sCaptureWriter->Write(F::Stream::Outcome, unit->GetMapId(), record);
             }
 
             Player* player = unit->ToPlayer();
@@ -2419,8 +2452,7 @@ namespace
                 return;
             PlayerState const* state = StateOf(player);
             uint64 const id = state ? state->Id : IdOf(player);
-            uint16 const slot = state ? state->Slot : 0;
-            if (sCaptureWriter->OnFor(F::Stream::Outcome, slot))
+            if (sCaptureWriter->On(F::Stream::Outcome))
             {
                 uint8 cause = 5;
                 if (killer && killer != unit)
@@ -2439,14 +2471,14 @@ namespace
                 }
                 F::Death record{ now, id, killer && killer != unit ? IdOf(killer) : 0, cause, player->GetPositionX(),
                     player->GetPositionY(), player->GetPositionZ(), player->GetMapId() };
-                sCaptureWriter->Write(F::Stream::Outcome, player->GetMapId(), slot, record);
+                sCaptureWriter->Write(F::Stream::Outcome, player->GetMapId(), record);
             }
-            if (sCaptureWriter->OnFor(F::Stream::Move, slot))
+            if (sCaptureWriter->On(F::Stream::Move))
                 WriteMotion(player, id, F::Motion::Death);
         }
 
-        /// A unit entering a fight with `victim` (format 4, CombatEdge): the first creature engaged of a pull, on a
-        /// recorder's map; the automatic tier keeps the edges a player or a companion is part of.
+        /// A unit entering a fight with `victim`, leaving one or evading (CombatEdge): a player's own, or any
+        /// unit's on a map a human is on -- the first creature engaged of a pull, the evade that resets it.
         void OnUnitEnterCombat(Unit* unit, Unit* victim) override { Edge(unit, victim, 0, 0); }
         void OnUnitExitCombat(Unit* unit) override { Edge(unit, nullptr, 1, 0); }
         void OnUnitEnterEvadeMode(Unit* unit, uint8 evadeReason) override { Edge(unit, nullptr, 2, evadeReason); }
@@ -2454,13 +2486,13 @@ namespace
     private:
         static void Edge(Unit* unit, Unit* other, uint8 event, uint8 reason)
         {
-            if (!unit || !unit->IsInWorld())
+            if (!unit || !unit->IsInWorld() || !sCaptureWriter->On(F::Stream::Outcome))
                 return;
-            bool const players = unit->IsPlayer() || (other && other->GetCharmerOrOwnerPlayerOrPlayerItself());
-            if (!players && !sCaptureWriter->AnyRecording())
+            uint64 const now = CaptureWriter::NowMs();
+            if (!PlayerOwned(unit) && !PlayerOwned(other) && !MapFresh(unit->FindMap(), now))
                 return;
             F::CombatEdge record;
-            record.Ms = CaptureWriter::NowMs();
+            record.Ms = now;
             record.Map = unit->GetMapId();
             record.Instance = unit->GetInstanceId();
             record.Unit = IdOf(unit);
@@ -2479,7 +2511,7 @@ namespace
                 record.OY = other->GetPositionY();
                 record.OZ = other->GetPositionZ();
             }
-            WriteOnMap(F::Stream::Outcome, unit->FindMap(), unit->GetMapId(), players, record);
+            sCaptureWriter->Write(F::Stream::Outcome, unit->GetMapId(), record);
         }
     };
 
@@ -2506,381 +2538,11 @@ namespace
             uint64 const now = CaptureWriter::NowMs();
             for (MapReference const& reference : instance->GetPlayers())
                 if (Player* player = reference.GetSource())
-                    sCaptureWriter->Write(F::Stream::Outcome, instance->GetId(), SlotOf(player),
+                    sCaptureWriter->Write(F::Stream::Outcome, instance->GetId(),
                         F::Encounter{ now, PlayerIdOf(player), instance->GetId(), instance->GetInstanceId(), id,
                             event });
         }
     };
-}
-
-// ---- the public API: manual recordings (world thread) -----------------------------------------------------------
-
-bool Animus::Capture::StartRecording(Player* player, std::string& message)
-{
-    if (!player || !player->IsInWorld() || !player->GetSession())
-    {
-        message = "You are not in the world.";
-        return false;
-    }
-    if (!sCaptureWriter->Running())
-    {
-        message = "Recording is not available on this realm (Animus.Capture.Enable and Animus.Capture.Dir).";
-        return false;
-    }
-    if (sAnimusMod->IsBot(player->GetGUID()))
-    {
-        message = "A bot cannot record.";
-        return false;
-    }
-    PlayerState* state = Begin(player, false);
-    if (state->Slot)
-    {
-        message = Acore::StringFormat("You are already recording ({}).", state->RecordingId);
-        return false;
-    }
-
-    uint64 const now = CaptureWriter::NowMs();
-    CaptureWriter::ManifestStart start;
-    start.Id = RecordingIdFor(player, now);
-    start.Character = player->GetName();
-    start.Guid = player->GetGUID().GetRawValue();
-    start.PlayerId = state->Id;
-    start.Class = player->getClass();
-    start.Race = player->getRace();
-    start.Gender = player->getGender();
-    start.Level = player->GetLevel();
-    uint8 points[3] = { 0, 0, 0 };
-    player->GetTalentTreePoints(points);
-    start.TreePoints = { points[0], points[1], points[2] };
-    start.ItemLevel = uint16(std::lround(std::max(0.0f, player->GetAverageItemLevel())));
-    start.Map = player->GetMapId();
-    start.Instance = player->GetInstanceId();
-    start.God = player->GetCommandStatus(CHEAT_GOD);
-    start.GameMaster = player->IsGameMaster();
-    start.PartyFill = sAnimusMod->PartyFillFor(player);
-    if (Group const* group = player->GetGroup())
-        for (Group::MemberSlot const& memberSlot : group->GetMemberSlots())
-        {
-            uint8 memberClass = 0;
-            uint8 memberLevel = 0;
-            if (Player const* member = ObjectAccessor::FindConnectedPlayer(memberSlot.guid))
-            {
-                memberClass = member->getClass();
-                memberLevel = member->GetLevel();
-            }
-            start.Party.push_back(Acore::StringFormat("{}|{}|{}|{}", memberSlot.name, memberClass, memberLevel,
-                sAnimusMod->IsBot(memberSlot.guid) ? 1 : 0));
-        }
-
-    uint16 const slot = sCaptureWriter->OpenRecording(start);
-    if (!slot)
-    {
-        message = "The realm cannot open another recording right now.";
-        return false;
-    }
-
-    state->Slot = slot;
-    state->RecordingId = start.Id;
-    state->RecordingSession = sCaptureWriter->SessionId(player->GetGUID().GetRawValue(), now ^ 0x5bd1e995u);
-    state->RecordingStartMs = now;
-    state->Notes = 0;
-    state->GodByRecording = false;
-    state->MapsVisited.clear();
-    state->SpawnsWritten.clear();
-    state->GoStates.clear();
-    state->LastMapId = 0xFFFFFFFF;
-    state->InventoryDirty = true;
-    state->ButtonsDirty = true;
-    state->RecTalentsDirty = true;
-    state->LastUnitMs = 0;
-    state->LastDetailMs = 0;
-    state->LastInventoryMs = 0;
-    state->MoverWritten = false;
-    sCaptureWriter->RegisterSession(player->GetSession(), slot, state->Id);
-    g_recorders[player->GetGUID()] = slot;
-
-    // The first records: who and where, then the session's own dumps into the recording.
-    F::RecordingStart first;
-    first.Ms = now;
-    first.Player = state->Id;
-    first.Session = state->RecordingSession;
-    first.Id = start.Id;
-    first.Class = start.Class;
-    first.Race = start.Race;
-    first.Gender = start.Gender;
-    first.Level = start.Level;
-    first.Map = start.Map;
-    first.Instance = start.Instance;
-    first.Zone = player->GetZoneId();
-    first.Area = player->GetAreaId();
-    first.X = player->GetPositionX();
-    first.Y = player->GetPositionY();
-    first.Z = player->GetPositionZ();
-    first.O = player->GetOrientation();
-    first.SnapshotMs = uint16(std::min<uint32>(0xFFFF, sCaptureWriter->Recording().SnapshotMs));
-    first.UnitMs = uint16(std::min<uint32>(0xFFFF, sCaptureWriter->Recording().UnitMs));
-    first.Streams = F::STREAMS_ALL;
-    first.Flags = (start.God ? 1 : 0) | (start.GameMaster ? 2 : 0) | (start.PartyFill ? 0 : 4);
-    first.Name = start.Character;
-    sCaptureWriter->Write(F::Stream::Note, CaptureWriter::MAP_ALL, slot, first);
-    RefreshContext(player, *state);
-    WriteSession(player, *state, now, false, slot);
-    WriteKnownSpells(player, *state, now, slot);
-    WriteGroup(player, *state, now, slot);
-    WriteSpeeds(player, *state, now);
-    WriteInventory(player, *state, now);
-    WriteActionButtons(player, *state, now);
-    WriteTalents(player, *state, now);
-    WritePlayerDetail(player, *state, now);
-    EnterMap(player, *state, now);
-    if (Map* map = player->FindMap())
-        map->CustomData.GetDefault<MapRecorders>(MAP_KEY)->Stamp(slot, state->Id, GameMs());
-    WriteSnapshot(player, *state, now);
-    WriteUnitStates(player, *state, now);
-
-    std::string const& notice = sCaptureWriter->Recording().Notice;
-    message = Acore::StringFormat("|cffff4040[REC]|r Recording {} started.{}{}", start.Id, notice.empty() ? "" : " ",
-        notice);
-    LOG_INFO("module.animus", "Recording {} started by {} (account {}) on map {} instance {}", start.Id,
-        player->GetName(), player->GetSession()->GetAccountId(), start.Map, start.Instance);
-    return true;
-}
-
-bool Animus::Capture::StopRecording(Player* player, StopReason reason, std::string_view verdict,
-    std::string_view title, std::string& message)
-{
-    PlayerState* state = player ? StateOf(player) : nullptr;
-    if (!state || !state->Slot)
-    {
-        message = "You are not recording.";
-        return false;
-    }
-    uint16 const slot = state->Slot;
-    uint64 const now = CaptureWriter::NowMs();
-    uint32 const seconds = uint32((now - std::min(now, state->RecordingStartMs)) / 1000);
-    uint8 const verdictId = verdict == "keep" ? 1 : verdict == "discard" ? 2 : 0;
-
-    // The last records: the tally, who is alive, the session's end and the recording's.
-    WriteTally(player, *state, now, true);
-    if (player->IsInWorld())
-        WriteInstanceCreatures(player->FindMap(), slot, now);
-    sCaptureWriter->Write(F::Stream::Session, CaptureWriter::MAP_ALL, slot,
-        F::SessionEnd{ now, state->Id, state->RecordingSession, uint8(reason == StopReason::Logout ? 0
-            : reason == StopReason::Disconnect ? 1 : reason == StopReason::Shutdown ? 2 : 0) });
-    F::RecordingEnd last;
-    last.Ms = now;
-    last.Player = state->Id;
-    last.Session = state->RecordingSession;
-    last.Reason = uint8(reason);
-    last.Verdict = verdictId;
-    last.Notes = state->Notes;
-    last.Seconds = seconds;
-    last.Title = title.substr(0, 200);
-    sCaptureWriter->Write(F::Stream::Note, CaptureWriter::MAP_ALL, slot, last);
-
-    CaptureWriter::ManifestEnd end;
-    end.Reason = uint8(reason);
-    end.Verdict = verdictId;
-    end.Title = std::string(title.substr(0, 200));
-    end.Notes = state->Notes;
-    end.Maps = state->MapsVisited;
-    sCaptureWriter->CloseRecording(slot, end);
-    sCaptureWriter->ForgetSession(player->GetSession());
-    g_recorders.erase(player->GetGUID());
-
-    if (state->GodByRecording)
-    {
-        player->SetCommandStatusOff(CHEAT_GOD);
-        state->GodByRecording = false;
-    }
-    std::string const id = state->RecordingId;
-    state->Slot = 0;
-    state->RecordingId.clear();
-    state->MoverWritten = false;
-    state->GoStates.clear();
-
-    message = Acore::StringFormat("Recording {} stopped: {}m{:02}s, {} note{}, {}.", id, seconds / 60, seconds % 60,
-        state->Notes, state->Notes == 1 ? "" : "s", verdictId == 1 ? "kept" : verdictId == 2 ? "discarded"
-        : reason == StopReason::Stop ? "no verdict" : reason == StopReason::Logout ? "ended by logout"
-        : reason == StopReason::Disconnect ? "ended by a disconnect" : reason == StopReason::Shutdown
-        ? "ended by the shutdown" : reason == StopReason::Disk ? "stopped: the disk is short" : "stopped at the time limit");
-    LOG_INFO("module.animus", "Recording {} by {} stopped after {} s: reason {}, verdict {}, {} notes", id,
-        player->GetName(), seconds, uint32(reason), verdictId, state->Notes);
-    state->Notes = 0;
-    return true;
-}
-
-bool Animus::Capture::Note(Player* player, std::string_view text, uint32 clientMs, uint32& seq, std::string& message)
-{
-    PlayerState* state = player ? StateOf(player) : nullptr;
-    if (!state || !state->Slot)
-    {
-        message = "You are not recording: press Record first.";
-        return false;
-    }
-    if (text.empty())
-    {
-        message = "A note needs some text.";
-        return false;
-    }
-    if (!player->IsInWorld())
-    {
-        message = "You are not in the world.";
-        return false;
-    }
-
-    F::Annotation note;
-    note.Ms = CaptureWriter::NowMs();
-    note.Player = state->Id;
-    note.Seq = ++state->Notes;
-    note.Kind = 1;
-    note.Map = player->GetMapId();
-    note.Instance = player->GetInstanceId();
-    note.Zone = player->GetZoneId();
-    note.Area = player->GetAreaId();
-    note.X = player->GetPositionX();
-    note.Y = player->GetPositionY();
-    note.Z = player->GetPositionZ();
-    note.O = player->GetOrientation();
-    if (Unit* target = player->GetSelectedUnit())
-    {
-        note.Target = IdOf(target);
-        note.TargetSpawnId = SpawnIdOf(target);
-        note.TargetEntry = target->IsPlayer() ? 0 : target->GetEntry();
-        note.TargetKindOf = KindOf(player, target);
-        note.TargetHealthPct = target->GetHealthPct();
-        note.TargetDistance = player->GetExactDist(target);
-    }
-    if (player->IsInCombat())
-        note.State |= 1;
-    if (!player->IsAlive())
-        note.State |= 2;
-    if (player->IsMounted())
-        note.State |= 4;
-    if (player->IsNonMeleeSpellCast(false))
-        note.State |= 8;
-    if (player->HasUnitMovementFlag(MOVEMENTFLAG_SWIMMING))
-        note.State |= 16;
-    if (player->HasUnitMovementFlag(MOVEMENTFLAG_FALLING))
-        note.State |= 32;
-    if (player->GetCommandStatus(CHEAT_GOD))
-        note.State |= 64;
-    note.HealthPct = player->GetHealthPct();
-    note.PowerPct = player->GetPowerPct(player->getPowerType());
-    note.PowerType = uint8(player->getPowerType());
-    uint32 threatened = 0;
-    uint32 hostiles = 0;
-    player->DoForAllVisibleWorldObjects([&](WorldObject* object)
-    {
-        Unit* unit = object ? object->ToUnit() : nullptr;
-        if (!unit || unit == player || !unit->IsInWorld() || !unit->IsAlive())
-            return;
-        if (player->IsHostileTo(unit) && player->GetExactDist(unit) <= NOTE_HOSTILE_YARDS)
-            ++hostiles;
-        if (Creature const* creature = unit->ToCreature(); creature && creature->CanHaveThreatList()
-            && creature->GetThreatMgr().IsThreatenedBy(player))
-            ++threatened;
-    });
-    note.ThreatOnMe = uint8(std::min<uint32>(255, threatened));
-    note.HostilesNear = uint8(std::min<uint32>(255, hostiles));
-    if (Group const* group = player->GetGroup())
-    {
-        uint32 alive = 0;
-        uint32 size = 0;
-        for (Group::MemberSlot const& memberSlot : group->GetMemberSlots())
-        {
-            ++size;
-            if (Player const* member = ObjectAccessor::FindConnectedPlayer(memberSlot.guid); member && member->IsAlive())
-                ++alive;
-        }
-        note.PartyAlive = uint8(std::min<uint32>(255, alive));
-        note.PartySize = uint8(std::min<uint32>(255, size));
-    }
-    note.ClientMs = clientMs;
-    note.Text = text.substr(0, 4000);
-    sCaptureWriter->Write(F::Stream::Note, CaptureWriter::MAP_ALL, state->Slot, note);
-    seq = note.Seq;
-    message = Acore::StringFormat("Note {} kept.", seq);
-    return true;
-}
-
-Animus::Capture::RecordingStatus Animus::Capture::Status(Player* player)
-{
-    RecordingStatus status;
-    status.Available = sCaptureWriter->Running();
-    PlayerState const* state = player ? StateOf(player) : nullptr;
-    if (!state || !state->Slot)
-        return status;
-    status.On = true;
-    status.Id = state->RecordingId;
-    uint64 const now = CaptureWriter::NowMs();
-    status.Seconds = uint32((now - std::min(now, state->RecordingStartMs)) / 1000);
-    status.Notes = state->Notes;
-    status.God = player->GetCommandStatus(CHEAT_GOD);
-    return status;
-}
-
-bool Animus::Capture::God(Player* player, bool on, std::string& message)
-{
-    PlayerState* state = player ? StateOf(player) : nullptr;
-    if (!state || !state->Slot)
-    {
-        message = "God mode here is for a recording: press Record first.";
-        return false;
-    }
-    bool const was = player->GetCommandStatus(CHEAT_GOD);
-    if (on && !was)
-    {
-        player->SetCommandStatusOn(CHEAT_GOD);
-        state->GodByRecording = true;
-    }
-    else if (!on && was)
-    {
-        player->SetCommandStatusOff(CHEAT_GOD);
-        state->GodByRecording = false;
-    }
-    message = on ? "You are invulnerable while this recording runs (the recording says so)."
-        : "You can be hurt again.";
-    return true;
-}
-
-uint16 Animus::Capture::RecordingSlotOf(Player* player)
-{
-    return player ? SlotOf(player) : 0;
-}
-
-void Animus::Capture::UpdateRecordings()
-{
-    if (g_recorders.empty())
-        return;
-    // The writer's stop requests (the disk is short), then the clock.
-    for (uint16 slot : sCaptureWriter->TakeStopRequests())
-        for (auto const& [guid, held] : g_recorders)
-            if (held == slot)
-            {
-                if (Player* player = ObjectAccessor::FindConnectedPlayer(guid))
-                {
-                    std::string message;
-                    if (StopRecording(player, StopReason::Disk, "", "", message))
-                        Tell(player, message);
-                }
-                break;
-            }
-    uint64 const now = CaptureWriter::NowMs();
-    uint64 const limitMs = uint64(sCaptureWriter->Recording().MaxMinutes) * 60000;
-    std::vector<ObjectGuid> expired;
-    for (auto const& [guid, slot] : g_recorders)
-        if (Player* player = ObjectAccessor::FindConnectedPlayer(guid))
-            if (PlayerState const* state = StateOf(player); state && state->Slot
-                && now - state->RecordingStartMs >= limitMs)
-                expired.push_back(guid);
-    for (ObjectGuid guid : expired)
-        if (Player* player = ObjectAccessor::FindConnectedPlayer(guid))
-        {
-            std::string message;
-            if (StopRecording(player, StopReason::MaxMinutes, "", "", message))
-                Tell(player, message);
-        }
 }
 
 // ---- companions ---------------------------------------------------------------------------------------------------
@@ -2888,19 +2550,13 @@ void Animus::Capture::UpdateRecordings()
 void Animus::Capture::CompanionDecision(Player* bot, ObjectGuid owner, std::string_view model, float const* obs,
     std::size_t obsCount, int32 action, int32 goal, int32 goal2)
 {
-    if (!bot)
-        return;
-    // A recorder's companion decides into the recording; anyone else's into the automatic tier.
-    uint16 slot = 0;
-    if (Player* ownerPlayer = ObjectAccessor::FindConnectedPlayer(owner))
-        slot = SlotOf(ownerPlayer);
-    if (!sCaptureWriter->OnFor(F::Stream::Companion, slot))
+    if (!bot || !sCaptureWriter->On(F::Stream::Companion))
         return;
     uint16 const actions[1] = { uint16(action < 0 ? 0xFFFF : action) };
     F::CompanionDecision record{ CaptureWriter::NowMs(), PlayerIdOf(bot), IdOf(owner), model,
         F::Fnv1a(obs, obsCount * sizeof(float)), actions, 1, uint16(goal < 0 ? 0xFFFF : goal),
         uint16(goal2 < 0 ? 0xFFFF : goal2) };
-    sCaptureWriter->Write(F::Stream::Companion, CaptureWriter::MAP_ALL, slot, record);
+    sCaptureWriter->Write(F::Stream::Companion, CaptureWriter::MAP_ALL, record);
 }
 
 bool Animus::Capture::ReachesMoveHook(uint16 opcode)
@@ -2937,14 +2593,14 @@ void Animus::Capture::MovementSent(Player* bot, uint16 opcode)
     // The companion's map thread, as a player's packets are counted on theirs.
     if (!bot || !ReachesMoveHook(opcode))
         return;
-    if (PlayerState* state = StateOf(bot); state && sCaptureWriter->OnFor(F::Stream::Move, state->Slot))
+    if (PlayerState* state = StateOf(bot); state && sCaptureWriter->On(F::Stream::Move))
         ++state->MovesSent;
 }
 
 void Animus::Capture::CompanionModel(Player* bot, std::string_view model, uint8 moveRevision)
 {
     // World thread, while maps are idle (CompanionParty::Decide): the map thread's PollMover reads these.
-    if (!bot || !bot->IsInWorld() || !AnyOn())
+    if (!bot || !bot->IsInWorld() || !sCaptureWriter->AnyOn())
         return;
     PlayerState* state = bot->CustomData.GetDefault<PlayerState>(STATE_KEY);
     if (state->Model != model)
@@ -2954,10 +2610,7 @@ void Animus::Capture::CompanionModel(Player* bot, std::string_view model, uint8 
 
 void Animus::Capture::CompanionCommand(ObjectGuid owner, ObjectGuid companion, Command command, uint32 arg)
 {
-    uint16 slot = 0;
-    if (Player* ownerPlayer = ObjectAccessor::FindConnectedPlayer(owner))
-        slot = SlotOf(ownerPlayer);
-    sCaptureWriter->Write(F::Stream::Companion, CaptureWriter::MAP_ALL, slot,
+    sCaptureWriter->Write(F::Stream::Companion, CaptureWriter::MAP_ALL,
         F::CompanionCommand{ CaptureWriter::NowMs(), IdOf(owner), IdOf(companion), uint8(command), arg });
 }
 
@@ -2990,7 +2643,6 @@ bool Animus::Capture::CompanionRating(ObjectGuid owner, ObjectGuid companion, st
         reasonId = uint8(found - REASONS.begin() + 1);
     }
 
-    // A rating is an explicit act: it goes to the hourly companion file whatever tier the owner is on.
     if (!sCaptureWriter->On(F::Stream::Companion))
     {
         message = "Thanks, but this realm is not recording companion feedback right now.";

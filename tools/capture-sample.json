@@ -1,11 +1,11 @@
 {
-  "format": 4,
+  "format": 5,
   "identity": {"salt_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f", "tag": "player", "guid": 1, "hashed_bytes": "salt || tag (ascii, no terminator) || guid (u64 little-endian)", "id": 15289167984064978332, "sha256_of_empty": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},
   "records": [
-    {"type": 0, "name": "FileHeader", "fields": {"magic": "ANCAP", "format": 4, "stream": 2, "opened_ms": 1791216000123, "module_revision": "0123456789abcdef0123456789abcdef01234567", "realm_build": "5c87f702f"}},
-    {"type": 1, "name": "SessionStart", "fields": {"ms": 1791216000123, "player": 1234605616436508552, "session": 72623859790382856, "class": 8, "race": 7, "gender": 1, "level": 42, "tree_points": [31, 5, 0], "item_level": 187, "map": 1, "zone": 17, "area": 380, "latency_ms": 87, "client_build": 12340, "kind": 0}},
-    {"type": 2, "name": "SessionContext", "fields": {"ms": 1791216001123, "player": 1234605616436508552, "session": 72623859790382856, "class": 8, "race": 7, "gender": 1, "level": 43, "tree_points": [31, 5, 0], "item_level": 187, "map": 1, "zone": 17, "area": 381, "latency_ms": 87, "client_build": 12340, "kind": 0}},
-    {"type": 3, "name": "SessionEnd", "fields": {"ms": 1791216002123, "player": 1234605616436508552, "session": 72623859790382856, "reason": 1}},
+    {"type": 0, "name": "FileHeader", "fields": {"magic": "ANCAP", "format": 5, "stream": 2, "opened_ms": 1791216000123, "module_revision": "0123456789abcdef0123456789abcdef01234567", "realm_build": "5c87f702f"}},
+    {"type": 1, "name": "SessionStart", "fields": {"ms": 1791216000123, "player": 1234605616436508552, "session": 72623859790382856, "class": 8, "race": 7, "gender": 1, "level": 42, "tree_points": [31, 5, 0], "item_level": 187, "map": 1, "zone": 17, "area": 380, "latency_ms": 87, "client_build": 12340, "kind": 0, "instance": 0}},
+    {"type": 2, "name": "SessionContext", "fields": {"ms": 1791216001123, "player": 1234605616436508552, "session": 72623859790382856, "class": 8, "race": 7, "gender": 1, "level": 43, "tree_points": [31, 5, 0], "item_level": 187, "map": 36, "zone": 17, "area": 1581, "latency_ms": 87, "client_build": 12340, "kind": 0, "instance": 1771}},
+    {"type": 3, "name": "SessionEnd", "fields": {"ms": 1791216002123, "player": 1234605616436508552, "session": 72623859790382856, "reason": 1, "map": 36, "instance": 1771}},
     {"type": 4, "name": "GroupState", "fields": {"ms": 1791216003123, "player": 1234605616436508552, "kind": 1, "count": 2, "members": [{"unit": 12297641732488560641, "class": 1, "level": 42, "role": 1, "is_companion": 0}, {"unit": 13527405905737416706, "class": 5, "level": 41, "role": 2, "is_companion": 1}]}},
     {"type": 5, "name": "KnownSpells", "fields": {"ms": 1791216004123, "player": 1234605616436508552, "count": 3, "spells": [133, 116, 2136]}},
     {"type": 6, "name": "Latency", "fields": {"ms": 1791216005123, "player": 1234605616436508552, "latency_ms": 95}},
@@ -47,10 +47,6 @@
     {"type": 34, "name": "MapSpawns", "fields": {"ms": 1791216030129, "map": 36, "part": 0, "parts": 1, "count": 2, "spawn0_id": 44560, "spawn0_rank": 1, "spawn1_kind": 1, "spawn1_x": -102}},
     {"type": 35, "name": "InstanceCreatures", "fields": {"ms": 1791216030130, "map": 36, "instance": 1771, "count": 2, "creature1_spawn_id": 44563, "creature1_alive": 0}},
     {"type": 48, "name": "CombatEdge", "fields": {"ms": 1791216030131, "map": 36, "instance": 1771, "unit": 14757170078986272772, "spawn_id": 44563, "entry": 1729, "event": 0, "other": 1234605616436508552, "x": -14.5, "oz": 56.5}},
-    {"type": 60, "name": "Annotation", "fields": {"ms": 1791216030132, "player": 1234605616436508552, "seq": 1, "kind": 1, "instance": 1771, "x": -30, "target_spawn_id": 44563, "target_kind": 5, "target_distance": 17.2000008, "state": 65, "power_pct": 0.400000006, "threat_on_me": 3, "party_size": 1, "client_ms": 123456, "text": "pulled the patrol first"}},
-    {"type": 61, "name": "RecordingStart", "fields": {"ms": 1791216029123, "player": 1234605616436508552, "session": 7, "id": "2026-10-25T120000Z-Thrall-abc123", "class": 1, "level": 18, "zone": 40, "x": -11100, "snapshot_ms": 100, "unit_ms": 100, "streams": 255, "flags": 2, "name": "Thrall"}},
-    {"type": 62, "name": "RecordingEnd", "fields": {"ms": 1791216031123, "player": 1234605616436508552, "session": 7, "reason": 0, "verdict": 1, "notes": 1, "seconds": 2000, "title": "Deadmines, solo, level 18"}},
-    {"type": 63, "name": "Chat", "fields": {"ms": 1791216030133, "player": 1234605616436508552, "direction": 0, "chat_type": 51, "language": 7, "sender": 1234605616436508552, "sender_kind": 0, "receiver": 0, "redacted": 0, "text": "pulling"}},
-    {"type": 70, "name": "RawPacket", "fields": {"ms": 1791216030134, "player": 1234605616436508552, "direction": 0, "opcode": 181, "server_ms": 777777, "total": 6, "offset": 0, "flags": 0, "length": 6, "bytes_hex": "010203040506"}}
+    {"type": 63, "name": "Chat", "fields": {"ms": 1791216030133, "player": 1234605616436508552, "direction": 0, "chat_type": 51, "language": 7, "sender": 1234605616436508552, "sender_kind": 0, "receiver": 0, "redacted": 0, "text": "pulling"}}
   ]
 }

@@ -156,13 +156,16 @@ int main(int argc, char** argv)
     start.LatencyMs = 87;
     start.ClientBuild = 12340;
     start.Kind = 0;
+    start.Instance = 0;
     for (bool context : { false, true })
     {
         if (context)
         {
             start.Ms += 1000;
             start.Level = 43;
-            start.Area = 381;
+            start.Map = 36;
+            start.Area = 1581;
+            start.Instance = 1771;
         }
         start.Write(out, context);
         json.Record(context ? Type::SessionContext : Type::SessionStart, context ? "SessionContext" : "SessionStart");
@@ -182,15 +185,18 @@ int main(int argc, char** argv)
         json.Field("latency_ms", U(start.LatencyMs));
         json.Field("client_build", U(start.ClientBuild));
         json.Field("kind", U(start.Kind));
+        json.Field("instance", U(start.Instance));
     }
 
-    SessionEnd end{ ms + 2000, player, session, 1 };
+    SessionEnd end{ ms + 2000, player, session, 1, 36, 1771 };
     end.Write(out);
     json.Record(Type::SessionEnd, "SessionEnd");
     json.Field("ms", U(end.Ms));
     json.Field("player", U(end.Player));
     json.Field("session", U(end.Session));
     json.Field("reason", U(end.Reason));
+    json.Field("map", U(end.Map));
+    json.Field("instance", U(end.Instance));
 
     GroupMember const members[2] = { { 0xAAAA000000000001ull, 1, 42, 1, 0 }, { 0xBBBB000000000002ull, 5, 41, 2, 1 } };
     GroupState group{ ms + 3000, player, 1, members, 2 };
@@ -816,76 +822,6 @@ int main(int argc, char** argv)
     json.Field("x", F(edge.X));
     json.Field("oz", F(edge.OZ));
 
-    Annotation note{};
-    note.Ms = ms + 30009;
-    note.Player = player;
-    note.Seq = 1;
-    note.Map = 36; note.Instance = 1771; note.Zone = 1581; note.Area = 1581;
-    note.X = -30.0f; note.Y = -390.0f; note.Z = 56.5f; note.O = 2.0f;
-    note.Target = unit.Unit; note.TargetSpawnId = 44563; note.TargetEntry = 1729;
-    note.TargetKindOf = TargetKind::HostileCreature;
-    note.TargetHealthPct = 0.8f; note.TargetDistance = 17.2f;
-    note.State = 1 | 64;
-    note.HealthPct = 0.95f; note.PowerPct = 0.4f; note.PowerType = 1;
-    note.ThreatOnMe = 3; note.HostilesNear = 4; note.PartyAlive = 1; note.PartySize = 1;
-    note.ClientMs = 123456;
-    note.Text = "pulled the patrol first";
-    note.Write(out);
-    json.Record(Type::Annotation, "Annotation");
-    json.Field("ms", U(note.Ms));
-    json.Field("player", U(note.Player));
-    json.Field("seq", U(note.Seq));
-    json.Field("kind", U(note.Kind));
-    json.Field("instance", U(note.Instance));
-    json.Field("x", F(note.X));
-    json.Field("target_spawn_id", U(note.TargetSpawnId));
-    json.Field("target_kind", U(uint8_t(note.TargetKindOf)));
-    json.Field("target_distance", F(note.TargetDistance));
-    json.Field("state", U(note.State));
-    json.Field("power_pct", F(note.PowerPct));
-    json.Field("threat_on_me", U(note.ThreatOnMe));
-    json.Field("party_size", U(note.PartySize));
-    json.Field("client_ms", U(note.ClientMs));
-    json.Field("text", S(note.Text));
-
-    RecordingStart recording{};
-    recording.Ms = ms + 29000;
-    recording.Player = player;
-    recording.Session = 7;
-    recording.Id = "2026-10-25T120000Z-Thrall-abc123";
-    recording.Class = 1; recording.Race = 2; recording.Gender = 0; recording.Level = 18;
-    recording.Map = 0; recording.Instance = 0; recording.Zone = 40; recording.Area = 40;
-    recording.X = -11100.0f; recording.Y = 1500.0f; recording.Z = 50.0f; recording.O = 0.5f;
-    recording.SnapshotMs = 100; recording.UnitMs = 100; recording.Streams = 255; recording.Flags = 2;
-    recording.Name = "Thrall";
-    recording.Write(out);
-    json.Record(Type::RecordingStart, "RecordingStart");
-    json.Field("ms", U(recording.Ms));
-    json.Field("player", U(recording.Player));
-    json.Field("session", U(recording.Session));
-    json.Field("id", S(recording.Id));
-    json.Field("class", U(recording.Class));
-    json.Field("level", U(recording.Level));
-    json.Field("zone", U(recording.Zone));
-    json.Field("x", F(recording.X));
-    json.Field("snapshot_ms", U(recording.SnapshotMs));
-    json.Field("unit_ms", U(recording.UnitMs));
-    json.Field("streams", U(recording.Streams));
-    json.Field("flags", U(recording.Flags));
-    json.Field("name", S(recording.Name));
-
-    RecordingEnd finished{ ms + 31000, player, 7, 0, 1, 1, 2000, "Deadmines, solo, level 18" };
-    finished.Write(out);
-    json.Record(Type::RecordingEnd, "RecordingEnd");
-    json.Field("ms", U(finished.Ms));
-    json.Field("player", U(finished.Player));
-    json.Field("session", U(finished.Session));
-    json.Field("reason", U(finished.Reason));
-    json.Field("verdict", U(finished.Verdict));
-    json.Field("notes", U(finished.Notes));
-    json.Field("seconds", U(finished.Seconds));
-    json.Field("title", S(finished.Title));
-
     Chat chat{ ms + 30010, player, 0, 51, 7, player, 0, 0, 0, 0, "pulling" };
     chat.Write(out);
     json.Record(Type::Chat, "Chat");
@@ -899,21 +835,6 @@ int main(int argc, char** argv)
     json.Field("receiver", U(chat.Receiver));
     json.Field("redacted", U(chat.Redacted));
     json.Field("text", S(chat.Text));
-
-    uint8_t const bytes[6] = { 1, 2, 3, 4, 5, 6 };
-    RawPacket packet{ ms + 30011, player, 0, 0x0B5, 777777, 6, 0, 0, bytes, 6 };
-    packet.Write(out);
-    json.Record(Type::RawPacket, "RawPacket");
-    json.Field("ms", U(packet.Ms));
-    json.Field("player", U(packet.Player));
-    json.Field("direction", U(packet.Direction));
-    json.Field("opcode", U(packet.Opcode));
-    json.Field("server_ms", U(packet.ServerMs));
-    json.Field("total", U(packet.Total));
-    json.Field("offset", U(packet.Offset));
-    json.Field("flags", U(packet.Flags));
-    json.Field("length", U(packet.Length));
-    json.Field("bytes_hex", S(Hex(bytes, 6)));
 
     if (!out.Ok())
     {

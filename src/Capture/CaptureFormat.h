@@ -43,13 +43,20 @@ namespace Animus::Capture::Format
     /// 3: every Move carries the server's handling time on its monotonic clock (`server_ms`) beside the client's own
     /// (`client_ms`), MoveTally (type 14) counts each mover's movement packets sent and kept, and MapUpdate (type 15)
     /// records each tick of a map instance that holds a captured mover.
-    /// 4 (2026-10-25, manual recordings): a player's own recording of their play (FORMAT §1.2: `recordings/<id>/`,
-    /// a manifest.json) beside the realm-wide hourly files. Two streams more -- Note (7: Annotation, RecordingStart,
-    /// RecordingEnd, Chat) and Packet (8: RawPacket, every packet both ways) -- and the records a recording adds to
-    /// the old streams: Inventory, ActionButtons and Talents (session), UnitState, GameObjectState, PlayerDetail,
-    /// MapSpawns and InstanceCreatures (snapshot), CombatEdge (outcome); Kill gains `victim_spawn_id` and Interact
-    /// `spawn_id`, appended (an older file reads them as 0).
-    constexpr uint16_t FORMAT_VERSION = 4;
+    /// 4 (2026-10-25, manual recordings): a player's own recording of their play beside the realm-wide hourly
+    /// files. Two streams more -- Note (7: Annotation, RecordingStart, RecordingEnd, Chat) and Packet (8:
+    /// RawPacket) -- and the records a recording added to the old streams: Inventory, ActionButtons and Talents
+    /// (session), UnitState, GameObjectState, PlayerDetail, MapSpawns and InstanceCreatures (snapshot), CombatEdge
+    /// (outcome); Kill gains `victim_spawn_id` and Interact `spawn_id`, appended (an older file reads them as 0).
+    /// 5 (2026-10-28, one tier): the manual recordings are gone; the hourly files hold everything, for every player
+    /// on every map, at the recording's detail. Types 60-62 (Annotation, RecordingStart, RecordingEnd) and 70
+    /// (RawPacket) and stream 8 (packet) are reserved and never written again. UnitState and GameObjectState are
+    /// **change-driven** per map instance (a unit's record is written when something about it changed; a missing
+    /// record means "as the last one said"; a gone unit's last record carries flag 128), their `player` the
+    /// observer the relative fields refer to (the lowest human guid on the map). Chat is every player's, both
+    /// ways, never redacted (`redacted` always 0). SessionStart, SessionContext and SessionEnd gain `instance`,
+    /// appended (0 in an older file), so a map instance's visits can be listed from the session file alone.
+    constexpr uint16_t FORMAT_VERSION = 5;
 
     /// FileHeader `stream`, and the file name's prefix (StreamName).
     enum class Stream : uint16_t
@@ -60,12 +67,13 @@ namespace Animus::Capture::Format
         Snapshot = 4,
         Outcome = 5,
         Companion = 6,
-        Note = 7,
-        Packet = 8,
+        Note = 7,                   // Chat only since format 5
+        Packet = 8,                 // reserved: format 4's raw packets, never written since format 5
     };
     constexpr uint32_t STREAM_COUNT = 8;
-    /// Every stream's bit (Animus.Capture.Streams).
-    constexpr uint32_t STREAMS_ALL = (1u << STREAM_COUNT) - 1;
+    /// Every writable stream's bit (Animus.Capture.Streams): 1 session, 2 move, 4 action, 8 snapshot, 16 outcome,
+    /// 32 companion, 64 note (chat). Bit 128 (packet) is reserved and ignored.
+    constexpr uint32_t STREAMS_ALL = (1u << (STREAM_COUNT - 1)) - 1;
 
     constexpr std::string_view StreamName(Stream stream)
     {
@@ -126,11 +134,11 @@ namespace Animus::Capture::Format
         CompanionDecision = 50,
         CompanionCommand = 51,
         CompanionRating = 52,
-        Annotation = 60,
-        RecordingStart = 61,
-        RecordingEnd = 62,
+        Annotation = 60,            // reserved (format 4, never written since 5)
+        RecordingStart = 61,        // reserved (format 4)
+        RecordingEnd = 62,          // reserved (format 4)
         Chat = 63,
-        RawPacket = 70,
+        RawPacket = 70,             // reserved (format 4)
     };
 
     /// The stream a record type is written to.
@@ -313,6 +321,7 @@ namespace Animus::Capture::Format
         uint16_t LatencyMs = 0;
         uint32_t ClientBuild = 0;
         uint8_t Kind = 0;               // 0 human player, 1 Animus companion
+        uint32_t Instance = 0;          // format 5: the map instance (0 on a world map and in an older file)
 
         /// SessionStart, or SessionContext (the same payload) when `context`.
         void Write(Out& out, bool context = false) const
@@ -333,6 +342,7 @@ namespace Animus::Capture::Format
             out.Put<uint16_t>(LatencyMs);
             out.Put<uint32_t>(ClientBuild);
             out.Put<uint8_t>(Kind);
+            out.Put<uint32_t>(Instance);
             out.End(start);
         }
     };
@@ -343,6 +353,8 @@ namespace Animus::Capture::Format
         uint64_t Player = 0;
         uint64_t Session = 0;
         uint8_t Reason = 0;             // 0 logout, 1 disconnect, 2 shutdown
+        uint32_t Map = 0;               // format 5: where the session ended, map and instance
+        uint32_t Instance = 0;
 
         void Write(Out& out) const
         {
@@ -351,6 +363,8 @@ namespace Animus::Capture::Format
             out.Put<uint64_t>(Player);
             out.Put<uint64_t>(Session);
             out.Put<uint8_t>(Reason);
+            out.Put<uint32_t>(Map);
+            out.Put<uint32_t>(Instance);
             out.End(start);
         }
     };
@@ -425,8 +439,8 @@ namespace Animus::Capture::Format
         }
     };
 
-    /// Format 4, a recording's: what the player carries and wears -- every item of the equipment, the backpack, the
-    /// bags and the bag slots themselves -- at the recording's start and, at most once a second, after a change.
+    /// What the player carries and wears -- every item of the equipment, the backpack, the bags and the bag slots
+    /// themselves -- at login and, at most once a second, after a change (format 4).
     struct InventoryItem
     {
         uint8_t Bag = 0;                // INVENTORY_SLOT_BAG_0 (255) for the equipment and the backpack
@@ -469,7 +483,7 @@ namespace Animus::Capture::Format
         }
     };
 
-    /// Format 4, a recording's: the action bars (every button that holds something), at the start and on change.
+    /// The action bars (every button that holds something), at login and on change (format 4).
     struct ActionButton
     {
         uint8_t Button = 0;
@@ -500,7 +514,7 @@ namespace Animus::Capture::Format
         }
     };
 
-    /// Format 4, a recording's: the active spec's talents (id and rank) and glyphs, at the start and on change.
+    /// The active spec's talents (id and rank) and glyphs, at login and on change (format 4).
     struct TalentRank
     {
         uint32_t Talent = 0;
@@ -1040,11 +1054,18 @@ namespace Animus::Capture::Format
         uint32_t _phase = 0;
     };
 
-    // ---- §2.5 snapshot, format 4: a recording's surroundings ------------------------------------------------------
+    // ---- §2.5 snapshot: the surroundings (format 4; change-driven since format 5) ---------------------------------
 
-    /// One unit the recording player's client can see, as the server has it this tick (FORMAT §2.5 UnitState): every
-    /// field a tool could want to work the fight out from, its auras and its full threat list. One record per unit
-    /// per Recording.UnitMs, the nearest Recording.MaxUnits within Recording.UnitRange.
+    /// One unit on a map instance, as the server has it (FORMAT §2.5 UnitState): every field a tool could want to
+    /// work the fight out from, its auras and its full threat list. Since format 5 the capture visits every creature
+    /// and player on a map with a human on it once per Animus.Capture.UnitMs (the whole map when instanced, else
+    /// within Animus.Capture.UnitRange yards of a human) and writes a unit's record only when something changed:
+    /// position by more than Animus.Capture.MoveYards or facing by more than 0.1 rad, or any of health, power,
+    /// level, target, victim, the cast, the motion type, the flags, the death state, the reaction, the aura set or
+    /// the threat set. A missing record means "unchanged since the unit's last". A unit gone from the map (or the
+    /// range) gets one last record with flag 128. `Player` is the observer the relative fields (`Kind`, `Reaction`)
+    /// refer to: the lowest human guid on the map that pass. Flags 4, 8, 32 and 64 are observer-independent since
+    /// format 5 (see Flags).
     struct UnitStateAura
     {
         uint32_t Spell = 0;
@@ -1101,8 +1122,10 @@ namespace Animus::Capture::Format
         float HomeY = 0.0f;
         float HomeZ = 0.0f;
         uint32_t FormationLeaderSpawn = 0;
-        uint8_t Flags = 0;              // 1 combat, 2 evading, 4 party, 8 my pet, 16 companion, 32 engaged with my
-                                        // group, 64 tapped by me
+        uint8_t Flags = 0;              // 1 combat, 2 evading, 4 grouped with a human player, 8 a human player's pet
+                                        // or guardian, 16 companion, 32 engaged with players (a human or their pet
+                                        // on its threat list), 64 tapped by a player, 128 gone (format 5: the
+                                        // unit's last record)
         UnitStateAura const* Auras = nullptr;
         uint8_t AuraCount = 0;
         UnitStateThreat const* Threats = nullptr;
@@ -1170,8 +1193,10 @@ namespace Animus::Capture::Format
         }
     };
 
-    /// A game object the recording player's client can see (FORMAT §2.5 GameObjectState): every one at the
-    /// recording's start and at each map entry (`event` 0 seen), then each one whose state changed (1) or went (2).
+    /// A game object on a map instance (FORMAT §2.5 GameObjectState): every one the first time the capture sees it
+    /// (`event` 0 seen), then each one whose state changed (1) or went (2). Since format 5 the capture visits the
+    /// objects as it does the units (the whole map when instanced, else within UnitRange of a human); `Player` is
+    /// the observer of that pass.
     struct GameObjectState
     {
         uint64_t Ms = 0;
@@ -1210,7 +1235,7 @@ namespace Animus::Capture::Format
         }
     };
 
-    /// The recording player's own numbers (FORMAT §2.5 PlayerDetail), once a second and on change.
+    /// A player's own numbers (FORMAT §2.5 PlayerDetail), every Animus.Capture.DetailMs.
     struct PlayerDetail
     {
         uint64_t Ms = 0;
@@ -1267,7 +1292,8 @@ namespace Animus::Capture::Format
     };
 
     /// The map's spawn table (FORMAT §2.5 MapSpawns), creatures and game objects, so a tool never needs the world
-    /// database: written once per map a recording enters, in parts of at most MAP_SPAWNS_PART entries.
+    /// database: written at a map instance's first pass (and at its first pass of each hour, so an hour's files stand
+    /// alone), in parts of at most MAP_SPAWNS_PART entries.
     constexpr uint16_t MAP_SPAWNS_PART = 1500;
 
     struct MapSpawn
@@ -1320,8 +1346,8 @@ namespace Animus::Capture::Format
         }
     };
 
-    /// Which of a map instance's spawned creatures are alive (FORMAT §2.5 InstanceCreatures): at the recording's
-    /// start, at each map entry and at its end, in parts of at most INSTANCE_CREATURES_PART.
+    /// Which of a map instance's spawned creatures are alive (FORMAT §2.5 InstanceCreatures): at the instance's first
+    /// pass (and its first of each hour) and whenever a human leaves it, in parts of at most INSTANCE_CREATURES_PART.
     constexpr uint16_t INSTANCE_CREATURES_PART = 10000;
 
     struct InstanceCreature
@@ -1538,7 +1564,7 @@ namespace Animus::Capture::Format
         }
     };
 
-    /// A unit entering, leaving or evading a fight on a recording's map (FORMAT §2.6 CombatEdge, format 4): the
+    /// A unit entering, leaving or evading a fight on a map with a human on it (FORMAT §2.6 CombatEdge, format 4): the
     /// unit and the other side when the hook knows it, both positions. The first creature engaged of a pull.
     struct CombatEdge
     {
@@ -1652,164 +1678,11 @@ namespace Animus::Capture::Format
         }
     };
 
-    // ---- §2.8 note (format 4, a recording's) ----------------------------------------------------------------------
+    // ---- §2.8 note: chat (format 4; every player's since format 5) ------------------------------------------------
 
-    /// A free-text note the recording player typed (FORMAT §2.8 Annotation), with where they stood, what they
-    /// targeted and the state of the moment.
-    struct Annotation
-    {
-        uint64_t Ms = 0;
-        uint64_t Player = 0;
-        uint32_t Seq = 0;
-        uint16_t Kind = 1;              // 1 note
-        uint32_t Map = 0;
-        uint32_t Instance = 0;
-        uint32_t Zone = 0;
-        uint32_t Area = 0;
-        float X = 0.0f;
-        float Y = 0.0f;
-        float Z = 0.0f;
-        float O = 0.0f;
-        uint64_t Target = 0;
-        uint32_t TargetSpawnId = 0;
-        uint32_t TargetEntry = 0;
-        TargetKind TargetKindOf = TargetKind::None;
-        float TargetHealthPct = 0.0f;
-        float TargetDistance = 0.0f;
-        uint8_t State = 0;              // 1 combat, 2 dead, 4 mounted, 8 casting, 16 swimming, 32 falling, 64 god
-        float HealthPct = 0.0f;
-        float PowerPct = 0.0f;
-        uint8_t PowerType = 0;
-        uint8_t ThreatOnMe = 0;         // creatures with the player on their threat list
-        uint8_t HostilesNear = 0;       // hostile units within 30 yards
-        uint8_t PartyAlive = 0;
-        uint8_t PartySize = 0;
-        uint32_t ClientMs = 0;
-        std::string_view Text;
-
-        void Write(Out& out) const
-        {
-            std::size_t const start = out.Begin(Type::Annotation);
-            out.Put<uint64_t>(Ms);
-            out.Put<uint64_t>(Player);
-            out.Put<uint32_t>(Seq);
-            out.Put<uint16_t>(Kind);
-            out.Put<uint32_t>(Map);
-            out.Put<uint32_t>(Instance);
-            out.Put<uint32_t>(Zone);
-            out.Put<uint32_t>(Area);
-            out.Put<float>(X);
-            out.Put<float>(Y);
-            out.Put<float>(Z);
-            out.Put<float>(O);
-            out.Put<uint64_t>(Target);
-            out.Put<uint32_t>(TargetSpawnId);
-            out.Put<uint32_t>(TargetEntry);
-            out.Put<uint8_t>(uint8_t(TargetKindOf));
-            out.Put<float>(TargetHealthPct);
-            out.Put<float>(TargetDistance);
-            out.Put<uint8_t>(State);
-            out.Put<float>(HealthPct);
-            out.Put<float>(PowerPct);
-            out.Put<uint8_t>(PowerType);
-            out.Put<uint8_t>(ThreatOnMe);
-            out.Put<uint8_t>(HostilesNear);
-            out.Put<uint8_t>(PartyAlive);
-            out.Put<uint8_t>(PartySize);
-            out.Put<uint32_t>(ClientMs);
-            std::size_t const length = std::min<std::size_t>(Text.size(), 0xFFFF);
-            out.Put<uint16_t>(uint16_t(length));
-            out.PutBytes(Text.data(), length);
-            out.End(start);
-        }
-    };
-
-    /// The first record of a recording (FORMAT §2.8 RecordingStart): who, where, and under what settings.
-    struct RecordingStart
-    {
-        uint64_t Ms = 0;
-        uint64_t Player = 0;
-        uint64_t Session = 0;
-        std::string_view Id;            // char[64]: the recording's directory name
-        uint8_t Class = 0;
-        uint8_t Race = 0;
-        uint8_t Gender = 0;
-        uint8_t Level = 0;
-        uint32_t Map = 0;
-        uint32_t Instance = 0;
-        uint32_t Zone = 0;
-        uint32_t Area = 0;
-        float X = 0.0f;
-        float Y = 0.0f;
-        float Z = 0.0f;
-        float O = 0.0f;
-        uint16_t SnapshotMs = 0;
-        uint16_t UnitMs = 0;
-        uint32_t Streams = 0;
-        uint8_t Flags = 0;              // 1 god, 2 game master, 4 party fill off
-        std::string_view Name;          // the character's name
-
-        void Write(Out& out) const
-        {
-            std::size_t const start = out.Begin(Type::RecordingStart);
-            out.Put<uint64_t>(Ms);
-            out.Put<uint64_t>(Player);
-            out.Put<uint64_t>(Session);
-            out.PutChars<64>(Id);
-            out.Put<uint8_t>(Class);
-            out.Put<uint8_t>(Race);
-            out.Put<uint8_t>(Gender);
-            out.Put<uint8_t>(Level);
-            out.Put<uint32_t>(Map);
-            out.Put<uint32_t>(Instance);
-            out.Put<uint32_t>(Zone);
-            out.Put<uint32_t>(Area);
-            out.Put<float>(X);
-            out.Put<float>(Y);
-            out.Put<float>(Z);
-            out.Put<float>(O);
-            out.Put<uint16_t>(SnapshotMs);
-            out.Put<uint16_t>(UnitMs);
-            out.Put<uint32_t>(Streams);
-            out.Put<uint8_t>(Flags);
-            std::size_t const length = std::min<std::size_t>(Name.size(), 0xFF);
-            out.Put<uint16_t>(uint16_t(length));
-            out.PutBytes(Name.data(), length);
-            out.End(start);
-        }
-    };
-
-    /// The last record of a recording (FORMAT §2.8 RecordingEnd): why it ended and the player's verdict.
-    struct RecordingEnd
-    {
-        uint64_t Ms = 0;
-        uint64_t Player = 0;
-        uint64_t Session = 0;
-        uint8_t Reason = 0;             // 0 stop, 1 logout, 2 disconnect, 3 shutdown, 4 disk, 5 max minutes
-        uint8_t Verdict = 0;            // 0 none, 1 keep, 2 discard
-        uint32_t Notes = 0;
-        uint32_t Seconds = 0;
-        std::string_view Title;
-
-        void Write(Out& out) const
-        {
-            std::size_t const start = out.Begin(Type::RecordingEnd);
-            out.Put<uint64_t>(Ms);
-            out.Put<uint64_t>(Player);
-            out.Put<uint64_t>(Session);
-            out.Put<uint8_t>(Reason);
-            out.Put<uint8_t>(Verdict);
-            out.Put<uint32_t>(Notes);
-            out.Put<uint32_t>(Seconds);
-            std::size_t const length = std::min<std::size_t>(Title.size(), 0xFFFF);
-            out.Put<uint16_t>(uint16_t(length));
-            out.PutBytes(Title.data(), length);
-            out.End(start);
-        }
-    };
-
-    /// A chat line the recording player sent or was shown (FORMAT §2.8 Chat). Another real player's text, outside
-    /// the recorder's group, is redacted (the length kept) unless Animus.Capture.Recording.OthersChat.
+    /// A chat line a player sent or was shown (FORMAT §2.8 Chat): say, yell, emote, whispers, party, raid, guild
+    /// and channel text, creatures' and the system's lines, text emotes. Never redacted since format 5 (`Redacted`
+    /// is always 0; format 4 redacted other players' text outside the recorder's group).
     struct Chat
     {
         uint64_t Ms = 0;
@@ -1821,7 +1694,7 @@ namespace Animus::Capture::Format
         uint8_t SenderKind = 0;         // 0 self, 1 group player, 2 companion, 3 creature, 4 other player, 5 system
         uint32_t SenderEntry = 0;
         uint64_t Receiver = 0;
-        uint8_t Redacted = 0;
+        uint8_t Redacted = 0;           // always 0 since format 5
         std::string_view Text;
 
         void Write(Out& out) const
@@ -1840,44 +1713,6 @@ namespace Animus::Capture::Format
             std::size_t const length = std::min<std::size_t>(Text.size(), 0xFFFF);
             out.Put<uint16_t>(uint16_t(length));
             out.PutBytes(Text.data(), length);
-            out.End(start);
-        }
-    };
-
-    // ---- §2.9 packet (format 4, a recording's) --------------------------------------------------------------------
-
-    /// A chunk of a packet between the recording player's client and the server (FORMAT §2.9 RawPacket), as sent:
-    /// every opcode both ways but those Animus.Capture.Recording.PacketSkip names; a payload longer than
-    /// RAW_PACKET_CHUNK bytes is written in chunks (`offset` into `total`, flag 2 on all but the last) and one past
-    /// Recording.PacketMaxBytes is cut (flag 1).
-    constexpr std::size_t RAW_PACKET_CHUNK = 60000;
-
-    struct RawPacket
-    {
-        uint64_t Ms = 0;
-        uint64_t Player = 0;
-        uint8_t Direction = 0;          // 0 client to server, 1 server to client
-        uint16_t Opcode = 0;
-        uint32_t ServerMs = 0;          // getMSTime()
-        uint32_t Total = 0;
-        uint32_t Offset = 0;
-        uint8_t Flags = 0;              // 1 truncated, 2 continued in the next chunk
-        uint8_t const* Bytes = nullptr;
-        uint16_t Length = 0;
-
-        void Write(Out& out) const
-        {
-            std::size_t const start = out.Begin(Type::RawPacket);
-            out.Put<uint64_t>(Ms);
-            out.Put<uint64_t>(Player);
-            out.Put<uint8_t>(Direction);
-            out.Put<uint16_t>(Opcode);
-            out.Put<uint32_t>(ServerMs);
-            out.Put<uint32_t>(Total);
-            out.Put<uint32_t>(Offset);
-            out.Put<uint8_t>(Flags);
-            out.Put<uint16_t>(Length);
-            out.PutBytes(Bytes, Length);
             out.End(start);
         }
     };
