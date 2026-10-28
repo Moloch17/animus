@@ -25,6 +25,7 @@
 #include "CompanionClient.h"
 #include "CommandScript.h"
 #include "Log.h"
+#include "ObjectAccessor.h"
 #include "Optional.h"
 #include "Player.h"
 #include "PlayerScript.h"
@@ -72,19 +73,20 @@ namespace
     {
         { "animus", SEC_PLAYER,
           "Syntax: .animus <command>\r\n\r\nAnimus followers and settings. Commands: follow, dismiss, partyfill, "
-          "prepare; game masters also models. .animus help lists them with their syntax." },
+          "prepare; game masters also models, and every one of those on another character by name. .animus help lists "
+          "them with their syntax." },
         { "animus help", SEC_PLAYER, "Syntax: .animus help\r\n\r\nEvery .animus command with its syntax." },
         { "animus follow", SEC_PLAYER,
           "Syntax: .animus follow [$count]\r\n\r\n$count (1-4) followers of your level and faction join your party, "
           "which you lead (made when you have none; never a raid), each played by its class's follow model. Alone: "
           "the followers you have. Needs Animus.Follow.Security and a map with a camera scene (Animus.Vision.Maps)." },
-        { "animus dismiss", SEC_PLAYER, "Syntax: .animus dismiss\r\n\r\nYour followers leave (they are never "
+        { "animus dismiss", SEC_PLAYER, "Syntax: .animus dismiss [$name]\r\n\r\nYour followers leave (they are never "
           "saved)." },
-        { "animus partyfill", SEC_PLAYER, "Syntax: .animus partyfill [on|off]\r\n\r\nWhether your own dungeon parties "
+        { "animus partyfill", SEC_PLAYER, "Syntax: .animus partyfill [on|off] [$name]\r\n\r\nWhether your own dungeon parties "
           "are filled with bots (saved per character); alone, the current setting and the realm's." },
         { "animus partyfill realm", SEC_GAMEMASTER, "Syntax: .animus partyfill realm on|off\r\n\r\nThe realm's "
           "dungeon party fill for every player, until the next .reload config." },
-        { "animus prepare", SEC_PLAYER, "Syntax: .animus prepare $level $spec\r\n\r\nYour character set to that "
+        { "animus prepare", SEC_PLAYER, "Syntax: .animus prepare $level $spec [$name]\r\n\r\nYour character set to that "
           "level, geared, talented and taught for the spec (its name or index: .animus prepare 18 arms). Everything "
           "you wear and carry is mailed to you first. Needs the account security Animus.Prepare.Security." },
         { "animus models", SEC_GAMEMASTER, "Syntax: .animus models\r\n\r\nEvery class's model for the configured "
@@ -159,28 +161,59 @@ namespace
             return true;
         }
 
-        /// .animus follow <n>: n (1-4) followers join your party, played by the follow models. With no count: the
-        /// followers you have. Animus.Follow.Security says who may.
-        static bool HandleFollowCommand(ChatHandler* handler, Optional<uint32> count)
+        /// **Another character by name** (the user, 2026-10-28): every command that acts on a character takes an
+        /// optional last word, a character's name, and a game master may run it on that character instead of
+        /// themselves (online; found whatever the case typed). Anyone else naming a character is refused. Returns
+        /// the character to act on, or null after the refusal was sent.
+        static Player* TargetOf(ChatHandler* handler, Optional<std::string_view> name)
         {
             Player* caller = handler->GetPlayer();
+            if (!name || name->empty())
+                return caller;
+            if (!caller || !caller->GetSession() || caller->GetSession()->GetSecurity() < SEC_GAMEMASTER)
+            {
+                Reply(handler, false, "Only a game master may run this on another character.");
+                return nullptr;
+            }
+            Player* target = ObjectAccessor::FindPlayerByName(std::string(*name));
+            if (!target || !target->IsInWorld())
+            {
+                Reply(handler, false, Acore::StringFormat("No character named {} is online.", *name));
+                return nullptr;
+            }
+            return target;
+        }
+
+        /// .animus follow <n> [name]: n (1-4) followers join your party (a game master: the named character's),
+        /// played by the follow models. With no count: the followers you have. Animus.Follow.Security says who may.
+        static bool HandleFollowCommand(ChatHandler* handler, Optional<uint32> count, Optional<std::string_view> name)
+        {
+            Player* caller = handler->GetPlayer();
+            Player* target = TargetOf(handler, name);
+            if (!target)
+                return true;
             if (!count)
-                return ReplyLines(handler, sAnimusMod->List(caller), "You have no followers; .animus follow <1-4>.");
+                return ReplyLines(handler, sAnimusMod->List(target), target == caller
+                    ? "You have no followers; .animus follow <1-4>."
+                    : Acore::StringFormat("{} has no followers.", target->GetName()));
             if (!sAnimusMod->MaySummon(caller))
                 return Reply(handler, false, "Followers are not for your account on this realm (Animus.Follow.Security).");
             std::string message;
             std::vector<std::string> warnings;
-            bool const ok = sAnimusMod->Summon(caller, *count, message, warnings);
+            bool const ok = sAnimusMod->Summon(target, *count, message, warnings);
             for (std::string const& warning : warnings)
                 handler->SendSysMessage(warning);
             return Reply(handler, ok, message);
         }
 
-        /// .animus dismiss: your followers leave, unsaved.
-        static bool HandleDismissCommand(ChatHandler* handler)
+        /// .animus dismiss [name]: your followers leave, unsaved (a game master: the named character's).
+        static bool HandleDismissCommand(ChatHandler* handler, Optional<std::string_view> name)
         {
+            Player* target = TargetOf(handler, name);
+            if (!target)
+                return true;
             std::string message;
-            return Reply(handler, sAnimusMod->Dismiss(handler->GetPlayer(), message), message);
+            return Reply(handler, sAnimusMod->Dismiss(target, message), message);
         }
 
         /// .animus models: every class's model for the configured stage, whether it loads (and if not, why), and
@@ -190,15 +223,26 @@ namespace
             return ReplyLines(handler, sAnimusMod->ModelStatus(), "No classes.");
         }
 
-        /// .animus partyfill [on|off]: whether your own dungeon party is filled with bots.
-        static bool HandlePartyFillCommand(ChatHandler* handler, Optional<std::string_view> state)
+        /// .animus partyfill [on|off] [name]: whether your own dungeon party is filled with bots (a game master: the
+        /// named character's).
+        static bool HandlePartyFillCommand(ChatHandler* handler, Optional<std::string_view> state,
+            Optional<std::string_view> name)
         {
-            Player* player = handler->GetPlayer();
+            // `.animus partyfill Bob`: the name alone, for the status.
+            if (state && !name && *state != "on" && *state != "off")
+            {
+                name = state;
+                state = std::nullopt;
+            }
+            Player* player = TargetOf(handler, name);
+            if (!player)
+                return true;
             std::string message;
             if (!state)
             {
                 Animus::AnimusMod::PartyFillStatus const fill = sAnimusMod->PartyFillState(player);
-                return Reply(handler, true, Acore::StringFormat("Your dungeon party fill is {}; the realm's is {}{}.",
+                return Reply(handler, true, Acore::StringFormat("{} dungeon party fill is {}; the realm's is {}{}.",
+                    player == handler->GetPlayer() ? "Your" : player->GetName() + "'s",
                     fill.Mine ? "on" : "off", fill.Realm ? "on" : "off", fill.Overridden ? " (a game master's override "
                     "until the next config reload)" : ""));
             }
@@ -217,13 +261,16 @@ namespace
             return Reply(handler, sAnimusMod->PartyFillRealm(*state == "on", message), message);
         }
 
-        /// .animus prepare <level> <spec>: your character at that level, geared and talented for the spec (an index
-        /// or a name of your class's specs).
-        static bool HandlePrepareCommand(ChatHandler* handler, Optional<uint8> level, Optional<std::string_view> spec)
+        /// .animus prepare <level> <spec> [name]: your character at that level, geared and talented for the spec (an
+        /// index or a name of the class's specs); a game master: the named character.
+        static bool HandlePrepareCommand(ChatHandler* handler, Optional<uint8> level, Optional<std::string_view> spec,
+            Optional<std::string_view> name)
         {
             if (!level || !spec)
                 return Usage(handler, "animus prepare");
-            Player* player = handler->GetPlayer();
+            Player* player = TargetOf(handler, name);
+            if (!player)
+                return true;
             std::vector<std::string> const specs = Animus::Prepare::Specs(player);
             uint8 index = 0;
             bool found = false;
@@ -241,7 +288,8 @@ namespace
                 return Reply(handler, false, Acore::StringFormat("The spec is one of: {}.", names));
             }
             std::string message;
-            return Reply(handler, Animus::Prepare::Prepare(player, *level, index, message), message);
+            return Reply(handler, Animus::Prepare::Prepare(player, handler->GetPlayer(), *level, index, message),
+                message);
         }
     };
 

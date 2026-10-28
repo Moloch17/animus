@@ -20,6 +20,7 @@
 #include "AnimusMod.h"
 #include "CharacterPrep.h"
 #include "Chat.h"
+#include "ObjectAccessor.h"
 #include "Player.h"
 #include "WorldSession.h"
 #include "SharedDefines.h"
@@ -198,13 +199,29 @@ bool Animus::Addon::Handle(Player* player, std::string_view msg)
         SendSpecs(player);
     else if (request == "prepare")
     {
-        // prepare <level> <spec index>
-        std::optional<uint8> const level = words.size() == 3 ? Number<uint8>(words[1]) : std::nullopt;
-        std::optional<uint8> const spec = words.size() == 3 ? Number<uint8>(words[2]) : std::nullopt;
+        // prepare <level> <spec index> [name]: the name for a game master preparing another character.
+        bool const sized = words.size() == 3 || words.size() == 4;
+        std::optional<uint8> const level = sized ? Number<uint8>(words[1]) : std::nullopt;
+        std::optional<uint8> const spec = sized ? Number<uint8>(words[2]) : std::nullopt;
+        Player* target = player;
+        if (level && spec && words.size() == 4)
+        {
+            if (player->GetSession()->GetSecurity() < SEC_GAMEMASTER)
+            {
+                SendResult(player, false, "Only a game master may prepare another character.");
+                return true;
+            }
+            target = ObjectAccessor::FindPlayerByName(std::string(words[3]));
+            if (!target || !target->IsInWorld())
+            {
+                SendResult(player, false, Acore::StringFormat("No character named {} is online.", words[3]));
+                return true;
+            }
+        }
         if (!level || !spec)
             SendResult(player, false, "Prepare takes a level and a spec.");
         else
-            SendResult(player, Animus::Prepare::Prepare(player, *level, *spec, message), message);
+            SendResult(player, Animus::Prepare::Prepare(target, player, *level, *spec, message), message);
     }
     else
         SendResult(player, false, Acore::StringFormat("Unknown request {}.", request));

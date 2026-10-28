@@ -175,9 +175,9 @@ void Animus::Prepare::Levels(Player const* player, uint8& minLevel, uint8& maxLe
         minLevel = maxLevel;
 }
 
-bool Animus::Prepare::Prepare(Player* player, uint8 level, uint8 spec, std::string& message)
+bool Animus::Prepare::Prepare(Player* player, Player const* by, uint8 level, uint8 spec, std::string& message)
 {
-    if (!Allowed(player))
+    if (!Allowed(by ? by : player))
     {
         message = "Prepare is not for your account on this realm (Animus.Prepare.Security).";
         return false;

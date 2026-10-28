@@ -44,8 +44,13 @@ namespace Animus::Prepare
     /// The levels Prepare takes for the player's class: its minimum (a death knight's 55) and the realm's maximum.
     void Levels(Player const* player, uint8& minLevel, uint8& maxLevel);
     /// Prepare `player` at `level` for spec index `spec`. False with `message` when refused; on success `message`
-    /// says what was done and where the old things went.
-    bool Prepare(Player* player, uint8 level, uint8 spec, std::string& message);
+    /// says what was done and where the old things went. `by` is who asked (the player itself, or a game master
+    /// preparing another character by name, 2026-10-28): Animus.Prepare.Security is checked on them.
+    bool Prepare(Player* player, Player const* by, uint8 level, uint8 spec, std::string& message);
+    inline bool Prepare(Player* player, uint8 level, uint8 spec, std::string& message)
+    {
+        return Prepare(player, player, level, spec, message);
+    }
 }
 
 #endif
